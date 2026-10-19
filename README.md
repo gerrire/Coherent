@@ -1,1 +1,129 @@
 # Coherent
+
+Coherent — приложение для общения с личными сообщениями, голосовыми и видеозвонками и демонстрацией экрана. Проект развивается как самостоятельный продукт на Python и FastAPI. Интерфейс использует тёмную палитру с насыщенным фиолетовым акцентом.
+
+## Текущий этап
+
+Сейчас готов первый рабочий срез:
+
+- регистрация по адресу почты, имени пользователя и паролю;
+- вход и выход из аккаунта;
+- сохранение сессии в защищённой от JavaScript cookie;
+- CSRF-защита изменяющих запросов;
+- поиск пользователей по имени;
+- отправка, принятие и отмена заявок в друзья;
+- личные текстовые беседы с историей, загрузкой ранних сообщений и доставкой новых сообщений через WebSocket;
+- список друзей и адаптивный интерфейс в тёмно-фиолетовой палитре;
+- PostgreSQL для разработки и Alembic для миграций.
+
+Начать беседу можно с любым найденным пользователем — добавление в друзья не требуется. Звонки, групповой чат и медиа-вложения пока не подключены. Следующий этап MVP — вызовы и медиафункции.
+
+Исходные продуктовые решения и условия приёмки сохранены в [спецификации MVP](docs/MVP.md), техническая схема — в [описании архитектуры](docs/architecture.md).
+
+## Технологии
+
+| Часть | Технологии |
+| --- | --- |
+| Backend | Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic |
+| База данных | PostgreSQL 17, Alembic |
+| Frontend | React, TypeScript, Vite |
+| Авторизация | Argon2 для паролей, JWT в HttpOnly cookie, CSRF-токен |
+
+## Структура проекта
+
+```text
+backend/
+  alembic/                 Миграции базы данных
+  src/coherent_api/
+    api/                    HTTP-маршруты и зависимости
+    core/                   Настройки и безопасность
+    db/                     Базовый класс моделей и подключение к БД
+    models/                 Аккаунты, друзья, беседы и сообщения
+    schemas/                Схемы запросов и ответов
+    services/               Логика аккаунтов, друзей и переписки
+  tests/                    Тесты API
+frontend/
+  src/
+    components/             Авторизация, друзья и личные беседы
+    lib/                    Клиент API
+compose.yaml                PostgreSQL для локальной разработки
+docs/                       Спецификация MVP и архитектура
+```
+
+## Запуск локально
+
+Нужны Python 3.12 или новее, Node.js 20.19+ и Docker Compose.
+
+### 1. Подготовить окружение и базу данных
+
+Из корневой папки репозитория:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e "backend[dev]"
+cp .env.example .env
+docker compose up -d database
+```
+
+В `.env` замени `SECRET_KEY` на случайную строку. Для локальной разработки оставь `APP_ENV=development` и `COOKIE_SECURE=false`.
+
+Для локальной базы Compose использует пользователя `coherent`, пароль `coherent` и порт хоста `5433`, чтобы не мешать другой PostgreSQL на `5432`. Если меняешь порт, обнови `POSTGRES_PORT` и `DATABASE_URL` в `.env`. Если меняешь пароль, обнови его и в `DATABASE_URL` в `.env`, и в настройках базы данных в `compose.yaml`.
+
+### 2. Запустить API
+
+В новом терминале из корня репозитория:
+
+```bash
+source .venv/bin/activate
+cd backend
+alembic upgrade head
+uvicorn coherent_api.main:app --app-dir src --reload
+```
+
+API будет доступен на `http://127.0.0.1:8000`, интерактивная документация — на `http://127.0.0.1:8000/api/docs`.
+
+Если `alembic upgrade head` сообщает `password authentication failed`, сначала проверь, что `DATABASE_URL` указывает на порт Coherent из `POSTGRES_PORT`. Уже созданный Docker-том также мог сохранить пароль от старой конфигурации. Тогда обнови пароль роли в работающем контейнере, не удаляя данные:
+
+```bash
+docker compose exec database psql -U coherent -d coherent -c "ALTER ROLE coherent WITH PASSWORD 'coherent';"
+```
+
+После этого повтори `alembic upgrade head`. Если подключение всё ещё не удаётся, проверь опубликованный порт (`docker compose ps`) и `DATABASE_URL` в `.env`.
+
+### 3. Запустить интерфейс
+
+В ещё одном терминале:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Открой адрес, показанный Vite, обычно `http://localhost:5173`. Vite перенаправляет запросы `/api` на локальный backend.
+
+## Проверки
+
+Из корневой папки:
+
+```bash
+source .venv/bin/activate
+cd backend
+pytest
+ruff check src tests
+```
+
+Сборка frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+## Настройки перед развёртыванием
+
+Перед публичным запуском задай сильный `SECRET_KEY`, включи `APP_ENV=production` и `COOKIE_SECURE=true`, укажи адрес production-интерфейса в `CORS_ORIGINS` и настрой HTTPS. Не добавляй `.env` и реальные пароли в Git.
+
+Пока события сообщений рассылаются через память одного процесса API. Для нескольких процессов или серверов потребуется общий канал событий; клиентский опрос раз в 15 секунд служит запасным способом обновления.

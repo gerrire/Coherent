@@ -1,0 +1,158 @@
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  created_at: string;
+}
+
+export type RelationshipStatus =
+  | "none"
+  | "outgoing_pending"
+  | "incoming_pending"
+  | "friends";
+
+export interface UserSearchResult {
+  id: string;
+  username: string;
+  relationship: RelationshipStatus;
+  request_id: string | null;
+}
+
+export interface Friend {
+  id: string;
+  username: string;
+  since: string;
+}
+
+export interface FriendRequest {
+  request_id: string;
+  user_id: string;
+  username: string;
+  created_at: string;
+}
+
+export interface FriendRequests {
+  incoming: FriendRequest[];
+  outgoing: FriendRequest[];
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  other_user: { id: string; username: string };
+  created_at: string;
+  updated_at: string;
+  last_message: Message | null;
+}
+
+export interface MessagePage {
+  messages: Message[];
+  has_more: boolean;
+}
+
+interface AuthResponse {
+  user: User;
+}
+
+interface ApiErrorBody {
+  detail?: string | Array<{ msg?: string }>;
+}
+
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+let csrfToken: string | null = null;
+
+export async function initializeCsrf(): Promise<void> {
+  const response = await fetch("/api/v1/auth/csrf", { credentials: "include" });
+  if (!response.ok) {
+    throw new ApiError("Не удалось подготовить защищённое соединение.", response.status);
+  }
+  const result: { csrf_token: string } = await response.json();
+  csrfToken = result.csrf_token;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && csrfToken === null) {
+    await initializeCsrf();
+  }
+
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
+
+  const response = await fetch(path, { ...init, method, headers, credentials: "include" });
+  if (response.status === 204) return undefined as T;
+
+  const result = await response.json().catch(() => ({} as ApiErrorBody));
+  if (!response.ok) {
+    const detail = (result as ApiErrorBody).detail;
+    const message = Array.isArray(detail) ? detail.map((item) => item.msg).join(". ") : detail;
+    throw new ApiError(
+      message || "Не получилось выполнить запрос. Попробуй ещё раз.",
+      response.status,
+    );
+  }
+  return result as T;
+}
+
+export const api = {
+  me: () => request<User>("/api/v1/auth/me"),
+  register: (payload: { email: string; username: string; password: string }) =>
+    request<AuthResponse>("/api/v1/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  login: (payload: { email: string; password: string }) =>
+    request<AuthResponse>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
+  searchUsers: (query: string) =>
+    request<UserSearchResult[]>(`/api/v1/users/search?query=${encodeURIComponent(query)}`),
+  friends: () => request<{ friends: Friend[] }>("/api/v1/friends"),
+  friendRequests: () => request<FriendRequests>("/api/v1/friends/requests"),
+  sendFriendRequest: (targetUserId: string) =>
+    request<{ request_id: string; status: "pending" | "accepted" }>(
+      "/api/v1/friends/requests",
+      { method: "POST", body: JSON.stringify({ target_user_id: targetUserId }) },
+    ),
+  acceptFriendRequest: (requestId: string) =>
+    request<{ request_id: string; status: "accepted" }>(
+      `/api/v1/friends/requests/${requestId}/accept`,
+      { method: "POST" },
+    ),
+  removeFriendRequest: (requestId: string) =>
+    request<void>(`/api/v1/friends/requests/${requestId}`, { method: "DELETE" }),
+  conversations: () =>
+    request<{ conversations: Conversation[] }>("/api/v1/conversations"),
+  openConversation: (userId: string) =>
+    request<Conversation>("/api/v1/conversations", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+  messages: (conversationId: string, before?: string) =>
+    request<MessagePage>(
+      `/api/v1/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
+    ),
+  sendMessage: (conversationId: string, body: string) =>
+    request<Message>(`/api/v1/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+};
