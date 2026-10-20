@@ -3268,6 +3268,19 @@ a {
 .media-settings-scroll small,
 .media-settings-note { color: #a99ab8; font-size: 10px; font-weight: 400; line-height: 1.5; }
 .media-settings-divider { height: 1px; background: rgba(195, 158, 234, .15); }
+.media-voice-profiles { display: flex; flex-direction: column; gap: 7px; color: #d7c9e4; font-size: 11px; font-weight: 600; }
+.media-voice-profiles > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.media-voice-profiles button {
+  min-height: 34px;
+  border: 1px solid #574267;
+  border-radius: 8px;
+  background: #191427;
+  color: #d7c9e4;
+  font: inherit;
+  cursor: pointer;
+}
+.media-voice-profiles button.active { border-color: #af72eb; background: #503271; color: #fff; }
+.media-voice-profiles button:disabled { opacity: .55; cursor: default; }
 .media-settings-scroll > label.media-setting-check { flex-direction: row; align-items: center; gap: 9px; }
 .media-setting-check input { accent-color: #ac72e9; }
 .media-setting-option { display: flex; flex-direction: column; gap: 2px; }

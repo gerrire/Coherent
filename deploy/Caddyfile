@@ -1,5 +1,4 @@
-https://{$PUBLIC_IP} {
-    tls /etc/letsencrypt/live/coherent-ip/fullchain.pem /etc/letsencrypt/live/coherent-ip/privkey.pem
+(coherent-site) {
     encode zstd gzip
 
     handle /api/* {
@@ -11,6 +10,23 @@ https://{$PUBLIC_IP} {
         try_files {path} /index.html
         file_server
     }
+}
+
+{$PUBLIC_DOMAIN} {
+    import coherent-site
+}
+
+www.{$PUBLIC_DOMAIN} {
+    redir https://{$PUBLIC_DOMAIN}{uri} permanent
+}
+
+https://{$PUBLIC_IP} {
+    tls /etc/letsencrypt/live/coherent-ip/fullchain.pem /etc/letsencrypt/live/coherent-ip/privkey.pem
+    import coherent-site
+}
+
+{$PUBLIC_DOMAIN}:8443 {
+    reverse_proxy 127.0.0.1:7880
 }
 
 https://{$PUBLIC_IP}:8443 {

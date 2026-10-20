@@ -29,7 +29,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { ConnectionQuality, RoomEvent, Track, type Participant, type Room } from "livekit-client";
+import { AudioPresets, ConnectionQuality, RoomEvent, Track, type Participant, type Room } from "livekit-client";
 import { api, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
@@ -271,8 +271,9 @@ function CallRoom({
   const roomOptions = useMemo(() => ({
     adaptiveStream: true,
     dynacast: true,
+    audioCaptureDefaults: { voiceIsolation: false },
     publishDefaults: {
-      audioPreset: { maxBitrate: 48_000, priority: "high" as const },
+      audioPreset: { ...AudioPresets.musicHighQuality, priority: "high" as const },
       dtx: false,
       red: true,
     },

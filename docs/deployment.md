@@ -3,20 +3,20 @@
 ## Адреса и схема
 
 ```text
-https://31.76.77.197       ──► Caddy ──► интерфейс и /api/* ──► FastAPI ──► PostgreSQL
-wss://31.76.77.197:8443    ──► Caddy ──► LiveKit
+https://coherent-web.ru        ──► Caddy ──► интерфейс и /api/* ──► FastAPI ──► PostgreSQL
+wss://coherent-web.ru:8443     ──► Caddy ──► LiveKit
 браузеры ──WebRTC/UDP или TCP────────► LiveKit ──► Redis
 ```
 
-Все сервисы работают на финском VPS. Собственный домен пока не требуется. Для браузерного доступа к камере и микрофону сайт открывается по HTTPS с сертификатом Let's Encrypt для публичного IP. Он действует около шести дней, поэтому автоматическое продление обязательно. Домен `coherent-web.ru` пока не меняем.
+Все сервисы работают на финском VPS через Docker Compose. Caddy обслуживает интерфейс, проксирует API и LiveKit, автоматически получает и продлевает HTTPS-сертификаты для `coherent-web.ru` и `www.coherent-web.ru`. Адрес `www` перенаправляется на основной домен. Доступ по `https://31.76.77.197` остаётся запасным вариантом: для него используется отдельный короткоживущий IP-сертификат Let's Encrypt и Certbot.
 
 В production используются отдельные случайные ключи LiveKit и Redis. Локальный `compose.yaml` запускает LiveKit в режиме разработки с известными ключами; его нельзя выставлять в интернет. API пока запускается одним процессом Uvicorn, поскольку уведомления чата хранятся в памяти процесса.
 
 ## Первый запуск
 
-1. Установить Docker Engine и Compose plugin, настроить SSH и брандмауэр. Открыть 80, 443 и 8443 TCP, 7881 TCP, 7882–7883 UDP. Порты PostgreSQL, Redis, API и LiveKit 7880 публично не открывать.
-2. Клонировать репозиторий на VPS, создать закрытый `deploy/.env` по образцу `deploy/.env.example` со случайными `SECRET_KEY`, паролем PostgreSQL и ключами LiveKit. Никогда не добавлять этот файл в Git.
-3. Установить Certbot версии 5.4 или новее, например официальным snap-пакетом. Создать `/var/www/certbot/.well-known/acme-challenge` и обеспечить выдачу файлов из этого каталога по `http://31.76.77.197/.well-known/acme-challenge/`.
+1. Направить A-записи `coherent-web.ru` и `www.coherent-web.ru` на публичный IP VPS. Установить Docker Engine и Compose plugin, настроить SSH и брандмауэр. Открыть 80, 443 и 8443 TCP, 7881 TCP, 7882–7883 UDP. Порты PostgreSQL, Redis, API и LiveKit 7880 публично не открывать.
+2. Клонировать репозиторий на VPS, создать закрытый `deploy/.env` по образцу `deploy/.env.example` с `PUBLIC_DOMAIN=coherent-web.ru`, случайными `SECRET_KEY`, паролем PostgreSQL и ключами LiveKit. Никогда не добавлять этот файл в Git.
+3. Для запасного доступа по IP установить Certbot версии 5.4 или новее, например официальным snap-пакетом. Создать `/var/www/certbot/.well-known/acme-challenge` и обеспечить выдачу файлов из этого каталога по `http://31.76.77.197/.well-known/acme-challenge/`.
 4. Получить сертификат:
 
    ```sh

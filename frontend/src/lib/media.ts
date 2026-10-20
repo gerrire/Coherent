@@ -69,23 +69,32 @@ export const defaultMediaPreferences: MediaPreferences = {
   videoQuality: "1080p",
   screenShareQuality: "1080p",
   screenShareContent: "text",
-  noiseSuppression: true,
+  noiseSuppression: false,
   echoCancellation: true,
-  autoGainControl: true,
+  autoGainControl: false,
 };
 
 export function loadMediaPreferences(): MediaPreferences {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<MediaPreferences> & { qualityDefaultsVersion?: number };
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<MediaPreferences> & {
+      qualityDefaultsVersion?: number;
+      audioDefaultsVersion?: number;
+    };
     const codecs: VideoCodec[] = ["vp8", "h264", "vp9", "av1"];
     const qualities: VideoQuality[] = ["360p", "720p", "1080p"];
     const legacyDefaults = saved.qualityDefaultsVersion !== 2
       && saved.videoCodec === "vp8" && saved.videoQuality === "720p";
     const storedCodec = legacyDefaults ? "h264" : saved.videoCodec;
     const storedQuality = legacyDefaults ? "1080p" : saved.videoQuality;
+    const legacyAudioDefaults = saved.audioDefaultsVersion !== 1
+      && saved.noiseSuppression === true
+      && saved.echoCancellation === true
+      && saved.autoGainControl === true;
     return {
       ...defaultMediaPreferences,
       ...saved,
+      noiseSuppression: legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression,
+      autoGainControl: legacyAudioDefaults ? false : saved.autoGainControl ?? defaultMediaPreferences.autoGainControl,
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
       videoQuality: qualities.includes(storedQuality as VideoQuality) ? storedQuality! : "1080p",
       screenShareQuality: saved.screenShareQuality === "native" || saved.screenShareQuality === "720p"
@@ -99,7 +108,7 @@ export function loadMediaPreferences(): MediaPreferences {
 
 export function saveMediaPreferences(value: MediaPreferences): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2 }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2, audioDefaultsVersion: 1 }));
   } catch {
     // The current call still works when browser storage is unavailable.
   }
@@ -111,6 +120,7 @@ export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions 
     noiseSuppression: value.noiseSuppression,
     echoCancellation: value.echoCancellation,
     autoGainControl: value.autoGainControl,
+    voiceIsolation: false,
   };
 }
 
