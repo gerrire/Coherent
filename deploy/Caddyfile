@@ -17,5 +17,12 @@
 }
 
 http://{$PUBLIC_IP} {
-    redir https://{$SITE_HOST}{uri} permanent
+    handle /.well-known/acme-challenge/* {
+        root * /var/www/certbot
+        file_server
+    }
+
+    handle {
+        redir https://{$SITE_HOST}{uri} permanent
+    }
 }
