@@ -73,7 +73,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
     ));
   }
 
-  const outputSupported = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+  const outputSupported = typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
   const processingSupported = supportedAudioProcessing();
   const naturalVoice = !media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
   const noisyVoice = media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
@@ -109,6 +109,11 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
             <option value="">По умолчанию</option>
             {deviceOptions("audioinput")}
           </select>
+        </label>
+        <label className="media-volume-setting">
+          <span>Громкость микрофона <strong>{media.microphoneVolume}%</strong></span>
+          <input type="range" min="0" max="200" step="5" value={media.microphoneVolume} onChange={(event) => void change({ microphoneVolume: Number(event.target.value) })} />
+          <small>100% — исходный уровень. Усиление выше 100% может вызвать искажения на громком микрофоне.</small>
         </label>
         <label>
           Камера
@@ -163,7 +168,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
             <button type="button" className={naturalVoice ? "active" : ""} disabled={busy} onClick={() => chooseVoiceProfile(false)}>Естественный</button>
             <button type="button" className={noisyVoice ? "active" : ""} disabled={busy || !processingSupported.noiseSuppression} onClick={() => chooseVoiceProfile(true)}>Шумное место</button>
           </div>
-          <small>Естественный режим сохраняет тембр голоса. Для динамиков подавление эха остаётся включённым.</small>
+          <small>Естественный режим мягко приглушает шипение между словами и сохраняет тихую речь. В шумном месте действует подавление браузера. Для динамиков подавление эха остаётся включённым.</small>
         </div>
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={media.noiseSuppression && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked })} />

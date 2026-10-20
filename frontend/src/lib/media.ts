@@ -3,6 +3,7 @@ import {
   Track,
   VideoPresets,
   type AudioCaptureOptions,
+  LocalAudioTrack,
   type Room,
   type ScreenShareCaptureOptions,
   type TrackPublishOptions,
@@ -19,6 +20,7 @@ export interface MediaPreferences {
   cameraEnabled: boolean;
   deafened: boolean;
   microphoneId: string;
+  microphoneVolume: number;
   cameraId: string;
   speakerId: string;
   videoCodec: VideoCodec;
@@ -46,9 +48,10 @@ export function supportedAudioProcessing(): { noiseSuppression: boolean; echoCan
 }
 
 export function readAudioProcessing(room: Room | null): AudioProcessingState | null {
-  const track = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
-  if (!track || track.readyState !== "live") return null;
-  const settings = track.getSettings();
+  const localTrack = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+  const track = localTrack instanceof LocalAudioTrack ? localTrack : null;
+  if (!track || track.mediaStreamTrack.readyState !== "live") return null;
+  const settings = track.getSourceTrackSettings();
   return {
     noiseSuppression: typeof settings.noiseSuppression === "boolean" ? settings.noiseSuppression : null,
     echoCancellation: typeof settings.echoCancellation === "boolean" ? settings.echoCancellation : null,
@@ -63,6 +66,7 @@ export const defaultMediaPreferences: MediaPreferences = {
   cameraEnabled: false,
   deafened: false,
   microphoneId: "",
+  microphoneVolume: 100,
   cameraId: "",
   speakerId: "",
   videoCodec: "h264",
@@ -93,6 +97,8 @@ export function loadMediaPreferences(): MediaPreferences {
     return {
       ...defaultMediaPreferences,
       ...saved,
+      microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
+        ? Math.min(200, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
       noiseSuppression: legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression,
       autoGainControl: legacyAudioDefaults ? false : saved.autoGainControl ?? defaultMediaPreferences.autoGainControl,
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",

@@ -28,6 +28,7 @@ from coherent_api.services.messages import (
 RING_SECONDS = 60
 MAX_CALL_HOURS = 4
 MAX_CALL_MEMBERS = 10
+REJOIN_MINUTES = 5
 logger = logging.getLogger(__name__)
 
 
@@ -123,7 +124,7 @@ async def current_calls(session: AsyncSession, user: User) -> CurrentCallsRespon
         .where(
             Call.status.in_(("ringing", "active")),
             CallMember.user_id == user.id,
-            CallMember.state.in_(("invited", "joined")),
+            CallMember.state.in_(("invited", "joined", "left")),
         )
         .order_by(Call.created_at.desc())
     )
@@ -184,6 +185,21 @@ async def start_call(
     if len(users) != len(participant_ids):
         raise CallInviteError
     await expire_calls(session, participant_ids)
+    reconnect = await session.scalar(
+        select(Call)
+        .join(CallMember, CallMember.call_id == Call.id)
+        .where(
+            Call.conversation_id == conversation_id,
+            Call.status == "active",
+            Call.expires_at > datetime.now(UTC),
+            CallMember.user_id == user.id,
+            CallMember.state == "left",
+        )
+        .order_by(Call.created_at.desc())
+        .limit(1)
+    )
+    if reconnect is not None:
+        return await accept_call(session, user, reconnect.id)
     existing = await busy_call(session, participant_ids)
     if existing is not None:
         raise CallBusyError
@@ -225,22 +241,32 @@ async def accept_call(session: AsyncSession, user: User, call_id: UUID) -> CallR
     call = await get_call(session, user, call_id)
     member = await session.get(CallMember, (call_id, user.id))
     assert member is not None
-    if member.state != "invited":
+    if member.state != "invited" and not (call.status == "active" and member.state == "left"):
         raise CallForbiddenError
     if call.status not in ("ringing", "active"):
         raise CallStateError
     if is_expired(call):
-        call.status = "missed"
+        call.status = "missed" if call.status == "ringing" else "ended"
         call.ended_at = datetime.now(UTC)
         await release_members(session, call.id, call.ended_at)
         await session.commit()
         raise CallStateError
     now = datetime.now(UTC)
+    if await busy_call(session, (user.id,)) not in (None, call.id):
+        raise CallBusyError
+    was_empty = call.status == "active" and not await session.scalar(
+        select(func.count()).select_from(CallMember).where(
+            CallMember.call_id == call_id, CallMember.state == "joined"
+        )
+    )
     member.state = "joined"
     member.joined_at = now
+    member.left_at = None
     if call.status == "ringing":
         call.status = "active"
         call.answered_at = now
+        call.expires_at = now + timedelta(hours=MAX_CALL_HOURS)
+    elif was_empty:
         call.expires_at = now + timedelta(hours=MAX_CALL_HOURS)
     await session.commit()
     return await call_response(session, call)
@@ -272,12 +298,8 @@ async def end_call(session: AsyncSession, user: User, call_id: UUID) -> tuple[Ca
             .select_from(CallMember)
             .where(CallMember.call_id == call_id, CallMember.state == "joined")
         )
-        total = await session.scalar(
-            select(func.count()).select_from(CallMember).where(CallMember.call_id == call_id)
-        )
-        if not joined or (total == 2 and joined == 1):
-            call.status = "ended"
-            was_active = True
+        if not joined:
+            call.expires_at = now + timedelta(minutes=REJOIN_MINUTES)
     if call.status not in ("ringing", "active"):
         call.ended_at = now
         await release_members(session, call.id, now)

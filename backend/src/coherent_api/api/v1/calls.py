@@ -85,8 +85,10 @@ async def answer_call(
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
     except CallForbiddenError as error:
         raise HTTPException(
-            status_code=403, detail="Принять звонок может только приглашённый участник"
+            status_code=403, detail="К этому звонку нельзя подключиться"
         ) from error
+    except CallBusyError as error:
+        raise HTTPException(status_code=409, detail="Сначала выйди из другого звонка") from error
     except CallStateError as error:
         raise HTTPException(status_code=409, detail="Этот вызов уже недоступен") from error
     await publish_call(request, call)

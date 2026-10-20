@@ -38,6 +38,7 @@ import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
+import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
 
 interface ChatShellProps {
   user: User;
@@ -64,6 +65,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
   const [currentCall, setCurrentCall] = useState<Call | null>(null);
+  const [availableCalls, setAvailableCalls] = useState<Call[]>([]);
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
   const [showGroupPicker, setShowGroupPicker] = useState(false);
@@ -76,6 +78,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const mediaQueue = useRef<Promise<void>>(Promise.resolve());
   const initial = user.username.slice(0, 1).toUpperCase();
   const selectedConversation = showWelcome ? undefined : conversations.find((item) => item.id === activeConversationId);
+  const busyInCall = Boolean(currentCall?.participants.some((participant) =>
+    participant.user_id === user.id && (participant.state === "joined" || participant.state === "invited")
+  ));
+  const resumableCall = availableCalls.find((call) => call.conversation_id === activeConversationId
+    && call.status === "active"
+    && call.participants.some((participant) => participant.user_id === user.id && participant.state === "left"));
   const callCompact = Boolean(currentCall && (section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
   const callPanelReady = Boolean(currentCall?.status === "active"
     && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
@@ -93,8 +101,21 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
 
   const refreshCalls = useCallback(async () => {
     const result = await api.currentCalls();
-    setCurrentCall(result.calls[0] ?? null);
-  }, []);
+    setAvailableCalls(result.calls);
+    setCurrentCall((current) => result.calls.find((call) => call.participants.some((participant) =>
+      participant.user_id === user.id && participant.state === "joined"
+    )) ?? result.calls.find((call) => call.participants.some((participant) =>
+      participant.user_id === user.id && participant.state === "invited"
+    )) ?? result.calls.find((call) => call.id === current?.id) ?? result.calls[0] ?? null);
+  }, [user.id]);
+
+  useEffect(() => {
+    if (busyInCall) return;
+    const matching = availableCalls.find((call) => call.conversation_id === activeConversationId
+      && call.status === "active"
+      && call.participants.some((participant) => participant.user_id === user.id && participant.state === "left"));
+    if (matching && matching.id !== currentCall?.id) setCurrentCall(matching);
+  }, [activeConversationId, availableCalls, busyInCall, currentCall?.id, user.id]);
 
   useEffect(() => {
     void refreshConversations().catch((error: unknown) => {
@@ -109,7 +130,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }, [refreshCalls]);
 
   useEffect(() => {
-    if (!currentCall || (currentCall.status === "ringing" && currentCall.callee_id === user.id)) {
+    if (!currentCall || !currentCall.participants.some((participant) =>
+      participant.user_id === user.id && participant.state === "joined"
+    )) {
       return;
     }
     const callId = currentCall.id;
@@ -247,6 +270,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             }
           }
         }
+        if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined || patch.microphoneVolume !== undefined
+          || patch.noiseSuppression !== undefined || microphoneCaptureChanged || patch.microphoneId !== undefined)) {
+          await applyMicrophoneProcessing(room, next.microphoneVolume, !next.noiseSuppression);
+        }
         if (patch.cameraId !== undefined && next.cameraEnabled) {
           if (!await room.switchActiveDevice("videoinput", next.cameraId || "default")) {
             throw new Error("Не удалось выбрать камеру.");
@@ -290,7 +317,11 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }
 
   async function startCall() {
-    if (!activeConversationId || currentCall || callPending) return;
+    if (!activeConversationId || busyInCall || callPending) return;
+    if (resumableCall) {
+      await acceptCall(resumableCall);
+      return;
+    }
     setCallPending(true);
     setCallError("");
     try {
@@ -304,7 +335,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }
 
   async function createGroupCall(userIds: string[]) {
-    if (currentCall || callPending) return;
+    if (busyInCall || callPending) return;
     setCallPending(true);
     setCallError("");
     try {
@@ -334,13 +365,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setConversations((current) => current.map((item) => item.id === conversationId ? updated : item));
   }
 
-  async function acceptCall() {
-    if (!currentCall || callPending) return;
+  async function acceptCall(target: Call | null = currentCall) {
+    if (!target || callPending) return;
     setCallPending(true);
     setCallError("");
     try {
-      const call = await api.acceptCall(currentCall.id);
+      const call = await api.acceptCall(target.id);
       setCurrentCall(call);
+      setAvailableCalls((current) => current.map((item) => item.id === call.id ? call : item));
       setActiveConversationId(call.conversation_id);
       setSection("messages");
       setShowWelcome(false);
@@ -358,8 +390,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallPending(true);
     setCallError("");
     try {
-      await api.endCall(currentCall.id);
-      setCurrentCall(null);
+      const call = await api.endCall(currentCall.id);
+      setCurrentCall(call.status === "active" ? call : null);
+      setAvailableCalls((current) => call.status === "active"
+        ? current.some((item) => item.id === call.id) ? current.map((item) => item.id === call.id ? call : item) : [call, ...current]
+        : current.filter((item) => item.id !== call.id));
+      void refreshCalls().catch(() => undefined);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось завершить звонок.");
     } finally {
@@ -506,7 +542,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
 
         <div className="sidebar-section-title">
           <span>БЕСЕДЫ</span>
-          <button aria-label="Создать группу" title="Создать групповой звонок" onClick={() => setShowGroupPicker(true)} disabled={Boolean(currentCall) || callPending}>
+          <button aria-label="Создать группу" title="Создать групповой звонок" onClick={() => setShowGroupPicker(true)} disabled={busyInCall || callPending}>
             <Plus size={16} />
           </button>
         </div>
@@ -565,9 +601,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               <button
                 className="header-icon header-call-button"
                 onClick={() => void startCall().catch(() => undefined)}
-                disabled={Boolean(currentCall) || callPending}
-                aria-label={`Позвонить: ${conversationTitle(selectedConversation)}`}
-                title="Начать голосовой звонок"
+                disabled={busyInCall || callPending}
+                aria-label={`${resumableCall ? "Вернуться в звонок" : "Позвонить"}: ${conversationTitle(selectedConversation)}`}
+                title={resumableCall ? "Вернуться в звонок" : "Начать голосовой звонок"}
               >
                 <Phone size={19} />
               </button>
@@ -576,7 +612,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               <button
                 className="header-icon header-call-button"
                 onClick={() => setShowGroupPicker(true)}
-                disabled={Boolean(currentCall) || callPending}
+                disabled={busyInCall || callPending}
                 aria-label="Начать групповой звонок"
                 title="Начать групповой звонок"
               >

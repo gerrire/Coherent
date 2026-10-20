@@ -1261,6 +1261,7 @@ a {
 
 .call-invite-accept { background: #268a63; }
 .call-invite-accept:hover { background: #32a776; }
+.call-invite-actions .call-invite-rejoin { width: auto; gap: 7px; padding: 0 11px; font-size: 11px; font-weight: 700; }
 .call-invite-end, .call-control-end { background: #c34461 !important; color: white !important; }
 .call-invite-end:hover, .call-control-end:hover { background: #db5371 !important; }
 .call-invite-actions button:disabled, .call-control:disabled { opacity: .5; cursor: wait; }
@@ -1284,7 +1285,7 @@ a {
   color: #f4effa;
 }
 
-.call-surface-expanded { height: clamp(305px, 44vh, 500px); }
+.call-surface-expanded { height: clamp(380px, 55vh, 640px); }
 .call-surface-compact { height: 68px; background: #28233b; }
 .call-surface:fullscreen, .call-surface-maximized {
   display: flex;
@@ -1395,7 +1396,7 @@ a {
 }
 
 .call-stage-grid {
-  --call-tile-width: min(45%, 620px, 170cqh);
+  --call-tile-width: min(48%, 700px, 170cqh);
   display: flex;
   flex-wrap: wrap;
   align-content: safe center;
@@ -1407,7 +1408,6 @@ a {
   flex: 0 1 var(--call-tile-width);
   width: var(--call-tile-width);
 }
-.call-stage-with-screens > .call-tile-screen { flex-basis: min(48%, 760px, 120cqh); width: min(48%, 760px, 120cqh); }
 
 .call-tile {
   position: relative;
@@ -1460,8 +1460,8 @@ a {
 
 .call-stage-sharing { grid-template-columns: minmax(0, 1fr) 220px; }
 .call-stage-sharing > .call-tile { max-height: 100%; }
-.call-stage-grid.call-stage-group { --call-tile-width: min(44%, 560px, 78cqh); }
-.call-stage-grid.call-stage-many { --call-tile-width: min(30%, 420px, 78cqh); }
+.call-stage-grid.call-stage-group { --call-tile-width: min(47%, 620px, 94cqh); }
+.call-stage-grid.call-stage-many { --call-tile-width: min(31%, 460px, 85cqh); }
 .call-stage-grid.call-stage-dense { --call-tile-width: min(32%, 380px, 65cqh); }
 .call-stage-grid.call-stage-dense.call-stage-many { --call-tile-width: min(22%, 300px, 58cqh); }
 
@@ -1550,6 +1550,8 @@ a {
 
 .call-control:hover { background: #5a496c; }
 .call-control[data-lk-enabled="false"] { background: #302a3e; color: #a69bb3; }
+.call-control-screen[data-lk-enabled="false"] { background: #433a56; color: #f0e8f8; }
+.call-control-screen[data-lk-enabled="false"]:hover { background: #5a496c; }
 .call-start-audio { margin-right: 12px; border: 0; border-radius: 8px; padding: 7px 10px; background: #52456a; color: #fff; cursor: pointer; }
 .call-surface-compact .lk-room-container { flex-direction: row; align-items: center; }
 .call-surface-compact .call-surface-header { flex: 1; min-width: 0; height: 68px; background: transparent; }
@@ -1589,7 +1591,7 @@ a {
 @media (max-width: 680px) {
   .messages-intro { padding: 14px 15px; }
   .call-invite { top: 62px; right: 10px; width: min(340px, calc(100% - 20px)); }
-  .call-surface-expanded { height: min(340px, 47vh); }
+  .call-surface-expanded { height: min(440px, 58vh); }
   .call-stage { padding: 8px; }
   .call-stage-grid { --call-tile-width: min(100%, 480px) !important; }
   .call-stage-sharing, .call-surface:fullscreen .call-stage-sharing, .call-surface-maximized .call-stage-sharing { display: flex; flex-direction: column; }
@@ -1598,7 +1600,6 @@ a {
   .call-sidebar-heading { display: none; }
   .call-sidebar-person, .call-share-picker { flex: 0 0 150px; }
   .call-sidebar-preview { height: 68px; aspect-ratio: auto; }
-  .call-stage-with-screens > .call-tile-screen { flex-basis: min(100%, 480px); width: min(100%, 480px); }
   .call-waiting-label { display: none; }
   .call-surface-controls { min-height: 58px; }
   .call-control { width: 38px; height: 38px; }
@@ -3282,6 +3283,9 @@ a {
 .media-voice-profiles button.active { border-color: #af72eb; background: #503271; color: #fff; }
 .media-voice-profiles button:disabled { opacity: .55; cursor: default; }
 .media-settings-scroll > label.media-setting-check { flex-direction: row; align-items: center; gap: 9px; }
+.media-volume-setting > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.media-volume-setting strong { color: #efdcff; font-size: 12px; }
+.media-volume-setting input[type="range"] { width: 100%; accent-color: #ad76e8; cursor: pointer; }
 .media-setting-check input { accent-color: #ac72e9; }
 .media-setting-option { display: flex; flex-direction: column; gap: 2px; }
 .media-setting-check:has(input:disabled) .media-setting-option { opacity: .55; }

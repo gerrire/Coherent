@@ -42,6 +42,7 @@ import {
 } from "../lib/media";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ParticipantPicker from "./ParticipantPicker";
+import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
 
 type ViewMode = "grid" | "focus";
 type TileDensity = "normal" | "compact";
@@ -51,7 +52,7 @@ function loadParticipantVolumes(): Record<string, number> {
   try {
     const stored = JSON.parse(localStorage.getItem(VOLUME_STORAGE_KEY) || "{}") as Record<string, number>;
     return Object.fromEntries(Object.entries(stored).filter(([id, value]) =>
-      id.length > 0 && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
+      id.length > 0 && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 200
     ));
   } catch {
     return {};
@@ -99,6 +100,7 @@ export default function CallPanel({
 }: CallPanelProps) {
   const self = call.participants.find((participant) => participant.user_id === currentUserId);
   const incoming = self?.state === "invited";
+  const reconnectable = call.status === "active" && self?.state === "left";
   const group = isGroupConversation || call.participants.length > 2;
   const peer = call.caller_id === currentUserId ? call.callee_username : call.caller_username;
   const title = group ? conversationTitle || "Групповой звонок" : peer;
@@ -146,24 +148,27 @@ export default function CallPanel({
     }
   }
 
-  if (incoming || call.status === "ringing") {
+  if (incoming || call.status === "ringing" || reconnectable) {
     return (
       <aside className="call-invite" aria-label={`Звонок с ${peer}`}>
         <div className="call-invite-avatar">{peer.slice(0, 1).toUpperCase()}</div>
         <div className="call-invite-copy">
-          <span>{incoming ? (group ? "ПРИГЛАШЕНИЕ В ГРУППУ" : "ВХОДЯЩИЙ ЗВОНОК") : "ИСХОДЯЩИЙ ЗВОНОК"}</span>
+          <span>{reconnectable ? "ЗВОНОК ПРОДОЛЖАЕТСЯ" : incoming ? (group ? "ПРИГЛАШЕНИЕ В ГРУППУ" : "ВХОДЯЩИЙ ЗВОНОК") : "ИСХОДЯЩИЙ ЗВОНОК"}</span>
           <strong>{incoming ? call.caller_username : title}</strong>
-          <small>{incoming ? (group ? `Участников: ${occupied}` : "Хочет поговорить с тобой") : "Ожидаем ответа..."}</small>
+          <small>{reconnectable ? call.participants.some((participant) => participant.state === "joined")
+            ? `${call.participants.filter((participant) => participant.state === "joined").length} в звонке · можно вернуться`
+            : `Можно вернуться до ${new Date(call.expires_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`
+            : incoming ? (group ? `Участников: ${occupied}` : "Хочет поговорить с тобой") : "Ожидаем ответа..."}</small>
         </div>
         <div className="call-invite-actions">
-          {incoming && (
-            <button className="call-invite-accept" onClick={onAccept} disabled={pending} aria-label="Принять звонок" title="Принять">
-              <Phone size={18} />
+          {(incoming || reconnectable) && (
+            <button className={`call-invite-accept ${reconnectable ? "call-invite-rejoin" : ""}`} onClick={onAccept} disabled={pending} aria-label={reconnectable ? "Вернуться в звонок" : "Принять звонок"} title={reconnectable ? "Вернуться" : "Принять"}>
+              <Phone size={18} />{reconnectable && <span>Вернуться</span>}
             </button>
           )}
-          <button className="call-invite-end" onClick={onEnd} disabled={pending} aria-label={incoming ? "Отклонить звонок" : "Отменить звонок"} title={incoming ? "Отклонить" : "Отменить"}>
+          {!reconnectable && <button className="call-invite-end" onClick={onEnd} disabled={pending} aria-label={incoming ? "Отклонить звонок" : "Отменить звонок"} title={incoming ? "Отклонить" : "Отменить"}>
             <PhoneOff size={18} />
-          </button>
+          </button>}
         </div>
         {error && <p className="call-invite-error" role="alert">{error}</p>}
       </aside>
@@ -271,6 +276,7 @@ function CallRoom({
   const roomOptions = useMemo(() => ({
     adaptiveStream: true,
     dynacast: true,
+    webAudioMix: true,
     audioCaptureDefaults: { voiceIsolation: false },
     publishDefaults: {
       audioPreset: { ...AudioPresets.musicHighQuality, priority: "high" as const },
@@ -383,6 +389,7 @@ function CallMediaBridge({
       const selected = mediaRef.current;
       if (selected.microphoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(selected));
+        await applyMicrophoneProcessing(room, selected.microphoneVolume, !selected.noiseSuppression);
       }
       if (selected.cameraEnabled) {
         await room.localParticipant.setCameraEnabled(
@@ -520,6 +527,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
   const invited = call.participants.filter((member) =>
     member.state === "invited" && !participants.some((participant) => participant.identity === member.user_id)
   );
+  const tileCount = screens.length + participants.length + invited.length;
   const denseClass = density === "compact" ? "call-stage-dense" : "";
   const selectedVolumeParticipant = participants.find((participant) => participant.identity === volumeOpenFor);
 
@@ -589,7 +597,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
           <span className="call-sidebar-person-name">{label}</span>
           {!participant.isLocal && <label className="call-sidebar-volume">
             <span>{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />} {volume}%</span>
-            <input aria-label={`Громкость: ${label}`} type="range" min="0" max="100" value={volume} onChange={(event) => onVolumeChange(participant.identity, Number(event.target.value))} />
+            <input aria-label={`Громкость: ${label}`} type="range" min="0" max="200" value={volume} onChange={(event) => onVolumeChange(participant.identity, Number(event.target.value))} />
           </label>}
         </div>;
       })}
@@ -604,7 +612,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
     </div>
     <label>
       Громкость: {volumes[selectedVolumeParticipant.identity] ?? 100}%
-      <input type="range" min="0" max="100" value={volumes[selectedVolumeParticipant.identity] ?? 100} onChange={(event) => onVolumeChange(selectedVolumeParticipant.identity, Number(event.target.value))} />
+      <input type="range" min="0" max="200" value={volumes[selectedVolumeParticipant.identity] ?? 100} onChange={(event) => onVolumeChange(selectedVolumeParticipant.identity, Number(event.target.value))} />
     </label>
   </aside>;
 
@@ -623,7 +631,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
 
   if (screens.length > 0) {
     return <>
-      <div className={`call-stage call-stage-grid call-stage-with-screens ${denseClass}`}>
+      <div className={`call-stage call-stage-grid call-stage-with-screens ${denseClass} ${tileCount > 2 ? "call-stage-group" : ""} ${tileCount > 4 ? "call-stage-many" : ""}`}>
         {screens.map((item) => <div className="call-tile call-tile-screen" key={`screen-${item.participant.identity}`}>
           <VideoTrack trackRef={item} />
           <span className="call-tile-name">{screenLabel(item.participant)}</span>
