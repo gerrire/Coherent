@@ -35,6 +35,38 @@ class FriendRequestPermissionError(Exception):
     pass
 
 
+async def get_relationship(
+    session: AsyncSession, current_user: User, target_user_id: UUID
+) -> UserSearchItem:
+    target = await session.get(User, target_user_id)
+    if target is None or target.id == current_user.id:
+        raise UserNotFoundError
+    relation = await session.scalar(
+        select(FriendRequest).where(
+            or_(
+                (FriendRequest.sender_id == current_user.id)
+                & (FriendRequest.recipient_id == target_user_id),
+                (FriendRequest.sender_id == target_user_id)
+                & (FriendRequest.recipient_id == current_user.id),
+            )
+        )
+    )
+    if relation is None:
+        return UserSearchItem(id=target.id, username=target.username, relationship="none")
+    if relation.status == "accepted":
+        status = "friends"
+    elif relation.sender_id == current_user.id:
+        status = "outgoing_pending"
+    else:
+        status = "incoming_pending"
+    return UserSearchItem(
+        id=target.id,
+        username=target.username,
+        relationship=status,
+        request_id=relation.id,
+    )
+
+
 async def search_users(
     session: AsyncSession,
     current_user: User,

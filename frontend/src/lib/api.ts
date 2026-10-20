@@ -68,6 +68,11 @@ export interface Call {
   expires_at: string;
   answered_at: string | null;
   ended_at: string | null;
+  participants: Array<{
+    user_id: string;
+    username: string;
+    state: "invited" | "joined" | "declined" | "left";
+  }>;
 }
 
 export interface CallJoin {
@@ -143,6 +148,8 @@ export const api = {
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
   searchUsers: (query: string) =>
     request<UserSearchResult[]>(`/api/v1/users/search?query=${encodeURIComponent(query)}`),
+  relationship: (userId: string) =>
+    request<UserSearchResult>(`/api/v1/users/${userId}/relationship`),
   friends: () => request<{ friends: Friend[] }>("/api/v1/friends"),
   friendRequests: () => request<FriendRequests>("/api/v1/friends/requests"),
   sendFriendRequest: (targetUserId: string) =>
@@ -174,8 +181,16 @@ export const api = {
       body: JSON.stringify({ body }),
     }),
   currentCalls: () => request<{ calls: Call[] }>("/api/v1/calls/current"),
-  startCall: (conversationId: string) =>
-    request<Call>(`/api/v1/conversations/${conversationId}/calls`, { method: "POST" }),
+  startCall: (conversationId: string, inviteeIds: string[] = []) =>
+    request<Call>(`/api/v1/conversations/${conversationId}/calls`, {
+      method: "POST",
+      body: JSON.stringify({ invitee_ids: inviteeIds }),
+    }),
+  inviteCall: (callId: string, userIds: string[]) =>
+    request<Call>(`/api/v1/calls/${callId}/invite`, {
+      method: "POST",
+      body: JSON.stringify({ user_ids: userIds }),
+    }),
   acceptCall: (callId: string) =>
     request<Call>(`/api/v1/calls/${callId}/accept`, { method: "POST" }),
   endCall: (callId: string) =>

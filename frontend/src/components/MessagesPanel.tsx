@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { MessageCircle, Send } from "lucide-react";
-import { api, type Conversation, type Message } from "../lib/api";
+import { Check, Clock3, MessageCircle, Send, UserCheck, UserPlus } from "lucide-react";
+import { api, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
@@ -36,11 +36,53 @@ export default function MessagesPanel({
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
+  const [friendError, setFriendError] = useState("");
+  const [relationship, setRelationship] = useState<UserSearchResult | null>(null);
+  const [friendBusy, setFriendBusy] = useState(false);
   const [retry, setRetry] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<string | null>(null);
   const hasLoadedPage = useRef(false);
   const nearBottom = useRef(true);
+  const relationshipTarget = useRef(conversation.other_user.id);
+  relationshipTarget.current = conversation.other_user.id;
+
+  useEffect(() => {
+    let active = true;
+    setRelationship(null);
+    setFriendError("");
+    api.relationship(conversation.other_user.id).then((result) => {
+      if (active) setRelationship(result);
+    }).catch((reason: unknown) => {
+      if (active) setFriendError(reason instanceof Error ? reason.message : "Не удалось загрузить статус дружбы.");
+    });
+    return () => { active = false; };
+  }, [conversation.other_user.id]);
+
+  async function friendAction() {
+    if (!relationship || friendBusy || relationship.relationship === "friends") return;
+    const targetId = conversation.other_user.id;
+    setFriendBusy(true);
+    setFriendError("");
+    try {
+      if (relationship.relationship === "incoming_pending" && relationship.request_id) {
+        await api.acceptFriendRequest(relationship.request_id);
+      } else if (relationship.relationship === "outgoing_pending" && relationship.request_id) {
+        await api.removeFriendRequest(relationship.request_id);
+      } else {
+        await api.sendFriendRequest(targetId);
+      }
+      const updated = await api.relationship(targetId);
+      if (relationshipTarget.current === targetId) setRelationship(updated);
+    } catch (reason) {
+      if (relationshipTarget.current === targetId) {
+        setFriendError(reason instanceof Error ? reason.message : "Не удалось обновить заявку.");
+        setRelationship(await api.relationship(targetId).catch(() => relationship));
+      }
+    } finally {
+      setFriendBusy(false);
+    }
+  }
 
   useEffect(() => {
     const changed = conversationRef.current !== conversation.id;
@@ -134,11 +176,31 @@ export default function MessagesPanel({
     <div className="messages-panel">
       <div className="messages-intro">
         <span className="avatar avatar-user">{conversation.other_user.username[0]?.toUpperCase()}</span>
-        <div>
-          <h1>{conversation.other_user.username}</h1>
+        <div className="messages-intro-copy">
+          <div className="messages-intro-heading">
+            <h1>{conversation.other_user.username}</h1>
+            {relationship && (
+              <button
+                className={`chat-friend-button chat-friend-${relationship.relationship}`}
+                onClick={() => void friendAction()}
+                disabled={friendBusy || relationship.relationship === "friends"}
+                title={relationship.relationship === "outgoing_pending" ? "Отменить заявку" : undefined}
+              >
+                {relationship.relationship === "friends" ? <UserCheck size={14} />
+                  : relationship.relationship === "incoming_pending" ? <Check size={14} />
+                    : relationship.relationship === "outgoing_pending" ? <Clock3 size={14} />
+                      : <UserPlus size={14} />}
+                {relationship.relationship === "friends" ? "Ваш друг"
+                  : relationship.relationship === "incoming_pending" ? "Принять заявку"
+                    : relationship.relationship === "outgoing_pending" ? "Заявка отправлена"
+                      : "В друзья"}
+              </button>
+            )}
+          </div>
           <p>Личная беседа. Сообщения сохраняются в Coherent.</p>
         </div>
       </div>
+      {friendError && <p className="call-inline-error" role="alert">{friendError}</p>}
       {callError && <p className="call-inline-error" role="alert">{callError}</p>}
 
       <div

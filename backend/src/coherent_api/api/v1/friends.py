@@ -20,6 +20,7 @@ from coherent_api.services.friends import (
     create_friend_request,
     get_friend_requests,
     get_friends,
+    get_relationship,
     remove_friend_request,
     search_users,
 )
@@ -42,6 +43,16 @@ async def find_users(
 @router.get("/friends", response_model=FriendsResponse)
 async def list_friends(user: CurrentUser, session: SessionDep) -> FriendsResponse:
     return await get_friends(session, user)
+
+
+@router.get("/users/{user_id}/relationship", response_model=UserSearchItem)
+async def user_relationship(
+    user_id: UUID, user: CurrentUser, session: SessionDep
+) -> UserSearchItem:
+    try:
+        return await get_relationship(session, user, user_id)
+    except UserNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Пользователь не найден") from error
 
 
 @router.get("/friends/requests", response_model=FriendRequestsResponse)

@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from uuid import UUID
 
 from fastapi import WebSocket
@@ -20,8 +21,8 @@ class MessageEvents:
         if not sockets:
             self.connections.pop(user_id, None)
 
-    async def publish(self, user_ids: tuple[UUID, UUID], payload: dict) -> None:
-        for user_id in user_ids:
+    async def publish(self, user_ids: Iterable[UUID], payload: dict) -> None:
+        for user_id in set(user_ids):
             for websocket in tuple(self.connections.get(user_id, ())):
                 try:
                     await websocket.send_json(payload)

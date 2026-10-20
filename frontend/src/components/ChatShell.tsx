@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   ChevronDown,
@@ -8,17 +8,31 @@ import {
   LogOut,
   MessageCircle,
   Mic,
+  MicOff,
   MoreHorizontal,
   Phone,
   Plus,
   Search,
   Settings,
   Users,
+  UsersRound,
   Video,
+  VideoOff,
+  VolumeX,
 } from "lucide-react";
+import { ConnectionState, type Room } from "livekit-client";
 import { api, type Call, type Conversation, type User } from "../lib/api";
+import {
+  cameraCapture,
+  loadMediaPreferences,
+  microphoneCapture,
+  saveMediaPreferences,
+  type MediaPreferences,
+} from "../lib/media";
 import FriendsPanel from "./FriendsPanel";
+import MediaSettingsPanel from "./MediaSettingsPanel";
 import MessagesPanel from "./MessagesPanel";
+import ParticipantPicker from "./ParticipantPicker";
 
 interface ChatShellProps {
   user: User;
@@ -39,8 +53,19 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [currentCall, setCurrentCall] = useState<Call | null>(null);
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [controlError, setControlError] = useState("");
+  const [media, setMedia] = useState(loadMediaPreferences);
+  const mediaRef = useRef(media);
+  const roomRef = useRef<Room | null>(null);
+  const mediaQueue = useRef<Promise<void>>(Promise.resolve());
   const initial = user.username.slice(0, 1).toUpperCase();
   const selectedConversation = conversations.find((item) => item.id === activeConversationId);
+  const callCompact = Boolean(currentCall && (section !== "messages" || activeConversationId !== currentCall.conversation_id));
+  const callPanelReady = Boolean(currentCall?.status === "active"
+    && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
+    && !callCompact);
   const visibleConversations = conversations.filter((item) =>
     item.other_user.username.toLowerCase().includes(conversationQuery.trim().toLowerCase()),
   );
@@ -129,17 +154,107 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     };
   }, [refreshConversations, refreshCalls]);
 
-  async function startCall() {
+  const setActiveRoom = useCallback((room: Room | null) => {
+    roomRef.current = room;
+  }, []);
+
+  const updateMedia = useCallback((patch: Partial<MediaPreferences>): Promise<void> => {
+    const operation = mediaQueue.current.then(async () => {
+      const current = mediaRef.current;
+      const next = { ...current, ...patch };
+      const room = roomRef.current;
+      if (room?.state === ConnectionState.Connected) {
+        const participant = room.localParticipant;
+        const microphoneCaptureChanged = patch.noiseSuppression !== undefined
+          || patch.echoCancellation !== undefined;
+        const cameraCaptureChanged = patch.videoCodec !== undefined
+          || patch.videoQuality !== undefined;
+
+        if (patch.microphoneEnabled !== undefined || microphoneCaptureChanged) {
+          if (microphoneCaptureChanged && current.microphoneEnabled) {
+            await participant.setMicrophoneEnabled(false);
+          }
+          try {
+            await participant.setMicrophoneEnabled(next.microphoneEnabled, microphoneCapture(next));
+          } catch (reason) {
+            if (microphoneCaptureChanged && current.microphoneEnabled) {
+              await participant.setMicrophoneEnabled(true, microphoneCapture(current)).catch(() => undefined);
+            }
+            throw reason;
+          }
+        }
+        if (patch.cameraEnabled !== undefined || cameraCaptureChanged) {
+          if (cameraCaptureChanged && current.cameraEnabled) {
+            await participant.setCameraEnabled(false);
+          }
+          try {
+            await participant.setCameraEnabled(
+              next.cameraEnabled,
+              cameraCapture(next),
+              { videoCodec: next.videoCodec },
+            );
+          } catch (reason) {
+            if (cameraCaptureChanged && current.cameraEnabled) {
+              await participant.setCameraEnabled(
+                true,
+                cameraCapture(current),
+                { videoCodec: current.videoCodec },
+              ).catch(() => undefined);
+            }
+            throw reason;
+          }
+        }
+        if (patch.microphoneId !== undefined && next.microphoneEnabled) {
+          if (!await room.switchActiveDevice("audioinput", next.microphoneId || "default")) {
+            throw new Error("Не удалось выбрать микрофон.");
+          }
+        }
+        if (patch.cameraId !== undefined && next.cameraEnabled) {
+          if (!await room.switchActiveDevice("videoinput", next.cameraId || "default")) {
+            throw new Error("Не удалось выбрать камеру.");
+          }
+        }
+        if (patch.speakerId !== undefined) {
+          if (!await room.switchActiveDevice("audiooutput", next.speakerId || "default")) {
+            throw new Error("Браузер не смог переключить вывод звука.");
+          }
+        }
+      }
+      mediaRef.current = next;
+      setMedia(next);
+      saveMediaPreferences(next);
+      setControlError("");
+    });
+    mediaQueue.current = operation.catch(() => undefined);
+    return operation;
+  }, []);
+
+  function changeMedia(patch: Partial<MediaPreferences>) {
+    return updateMedia(patch).catch((reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : "Не удалось изменить настройку.";
+      setControlError(message);
+      throw reason;
+    });
+  }
+
+  async function startCall(inviteeIds: string[] = []) {
     if (!activeConversationId || currentCall || callPending) return;
     setCallPending(true);
     setCallError("");
     try {
-      setCurrentCall(await api.startCall(activeConversationId));
+      setCurrentCall(await api.startCall(activeConversationId, inviteeIds));
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
+      throw reason;
     } finally {
       setCallPending(false);
     }
+  }
+
+  async function inviteToCall(userIds: string[]) {
+    if (!currentCall) return;
+    const call = await api.inviteCall(currentCall.id, userIds);
+    setCurrentCall(call);
   }
 
   async function acceptCall() {
@@ -214,9 +329,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className="rail-spacer" />
         <button
           className="rail-item rail-voice"
-          aria-label="Голосовые настройки появятся со звонками"
-          title="Появится со звонками"
-          disabled
+          aria-label="Открыть настройки звука и видео"
+          title="Настройки звука и видео"
+          onClick={() => setSettingsOpen((open) => !open)}
         >
           <Headphones size={20} />
         </button>
@@ -312,7 +427,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <header className="content-header">
           <div className="header-location">
             <MessageCircle size={19} />
-            <span>{section === "messages" ? selectedConversation?.other_user.username ?? "Сообщения" : "Друзья"}</span>
+            <span>{section === "messages" ? selectedConversation?.other_user.username ?? (currentCall?.status === "active" ? "Групповой звонок" : "Сообщения") : "Друзья"}</span>
             <span className="header-divider" />
             <span className="header-subtle">Личное пространство</span>
           </div>
@@ -324,12 +439,23 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             {section === "messages" && selectedConversation && (
               <button
                 className="header-icon header-call-button"
-                onClick={() => void startCall()}
+                onClick={() => void startCall().catch(() => undefined)}
                 disabled={Boolean(currentCall) || callPending}
                 aria-label={`Позвонить ${selectedConversation.other_user.username}`}
                 title="Начать голосовой звонок"
               >
                 <Phone size={19} />
+              </button>
+            )}
+            {section === "messages" && selectedConversation && (
+              <button
+                className="header-icon header-call-button"
+                onClick={() => setShowGroupPicker(true)}
+                disabled={Boolean(currentCall) || callPending}
+                aria-label="Начать групповой звонок"
+                title="Начать групповой звонок"
+              >
+                <UsersRound size={19} />
               </button>
             )}
             <button className="header-icon" aria-label="Уведомления появятся позже" disabled>
@@ -361,9 +487,15 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <CallPanel
               call={currentCall}
               currentUserId={user.id}
-              compact={section !== "messages" || activeConversationId !== currentCall.conversation_id}
+              compact={callCompact}
               error={callError}
               pending={callPending}
+              media={media}
+              settingsOpen={settingsOpen}
+              onToggleSettings={() => setSettingsOpen((open) => !open)}
+              onMediaChange={changeMedia}
+              onRoomReady={setActiveRoom}
+              onInvite={inviteToCall}
               onAccept={() => void acceptCall()}
               onEnd={() => void endCall()}
               onFocus={() => {
@@ -386,24 +518,26 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className={`welcome-content ${section === "friends" ? "friends-content" : ""}`}>
           {section === "messages" ? (
             <>
-              <div className="welcome-eyebrow">
-                <span className="welcome-pulse" /> ПЕРВОЕ ПРОСТРАНСТВО COHERENT
-              </div>
-              <WelcomeArt />
-              <div className="welcome-copy">
-                <h1>Хорошие разговоры<br /><span>начинаются здесь.</span></h1>
-                <p>Найди своих людей — и оставайся рядом, где бы вы ни были.</p>
-                <button
-                  className="primary-button welcome-button"
-                  onClick={() => setSection("friends")}
-                >
-                  <Users size={17} /> Найти собеседника <span className="button-arrow">↗</span>
-                </button>
-                <div className="next-step-note">
-                  <span className="note-line" />
-                  <span>Ты уже внутри. Найди пользователя и начни беседу.</span>
+              {currentCall?.status === "active" ? (
+                <div className="welcome-copy">
+                  <h1>Групповой звонок<br /><span>уже идёт.</span></h1>
+                  <p>Управление участниками, звуком и видео находится в панели звонка выше.</p>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="welcome-eyebrow">
+                    <span className="welcome-pulse" /> ПЕРВОЕ ПРОСТРАНСТВО COHERENT
+                  </div>
+                  <WelcomeArt />
+                  <div className="welcome-copy">
+                    <h1>Хорошие разговоры<br /><span>начинаются здесь.</span></h1>
+                    <p>Найди своих людей — и оставайся рядом, где бы вы ни были.</p>
+                    <button className="primary-button welcome-button" onClick={() => setSection("friends")}>
+                      <Users size={17} /> Найти собеседника <span className="button-arrow">↗</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <FriendsPanel onStartConversation={startConversation} />
@@ -414,7 +548,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <footer className="app-statusbar">
           <span><i className="status-dot" /> Сессия активна</span>
           <span>Coherent <b>·</b> ранняя версия</span>
-          <button aria-label="Настройки появятся позже" disabled>
+          <button aria-label="Настройки звука и видео" onClick={() => setSettingsOpen((open) => !open)}>
             <Settings size={15} />
           </button>
         </footer>
@@ -446,24 +580,38 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </span>
           <button
             className="account-settings"
-            aria-label="Открыть профиль"
-            onClick={() => setShowProfile((visible) => !visible)}
+            aria-label="Настройки звука и видео"
+            onClick={() => setSettingsOpen((open) => !open)}
           >
             <Settings size={16} />
           </button>
         </div>
         <div className="account-controls">
-          <button aria-label="Микрофон появится со звонками" title="Появится со звонками" disabled>
-            <Mic size={16} />
+          <button className={media.microphoneEnabled ? "is-on" : "is-off"} aria-label={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} title={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} onClick={() => void changeMedia({ microphoneEnabled: !media.microphoneEnabled }).catch(() => undefined)}>
+            {media.microphoneEnabled ? <Mic size={16} /> : <MicOff size={16} />}
           </button>
-          <button aria-label="Настройки звука появятся со звонками" title="Появится со звонками" disabled>
-            <Headphones size={16} />
+          <button className={media.deafened ? "is-off" : "is-on"} aria-label={media.deafened ? "Включить звук собеседников" : "Не слышать собеседников"} title={media.deafened ? "Включить звук" : "Не слышать собеседников"} onClick={() => void changeMedia({ deafened: !media.deafened }).catch(() => undefined)}>
+            {media.deafened ? <VolumeX size={16} /> : <Headphones size={16} />}
           </button>
-          <button aria-label="Видео появится со звонками" title="Появится со звонками" disabled>
-            <Video size={16} />
+          <button className={media.cameraEnabled ? "is-on" : "is-off"} aria-label={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} title={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} onClick={() => void changeMedia({ cameraEnabled: !media.cameraEnabled }).catch(() => undefined)}>
+            {media.cameraEnabled ? <Video size={16} /> : <VideoOff size={16} />}
           </button>
         </div>
       </div>
+      {controlError && <div className="media-control-error" role="alert">{controlError}</div>}
+      {settingsOpen && !callPanelReady && (
+        <MediaSettingsPanel media={media} onChange={changeMedia} onClose={() => setSettingsOpen(false)} />
+      )}
+      {showGroupPicker && selectedConversation && (
+        <ParticipantPicker
+          title="Новый групповой звонок"
+          submitLabel="Позвонить"
+          excludedIds={[user.id, selectedConversation.other_user.id]}
+          maxSelect={8}
+          onSubmit={(ids) => startCall(ids)}
+          onClose={() => setShowGroupPicker(false)}
+        />
+      )}
     </main>
   );
 }
