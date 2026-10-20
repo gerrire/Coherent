@@ -1,0 +1,21 @@
+{$SITE_HOST} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+{$MEDIA_HOST} {
+    reverse_proxy 127.0.0.1:7880
+}
+
+http://{$PUBLIC_IP} {
+    redir https://{$SITE_HOST}{uri} permanent
+}
