@@ -1,4 +1,5 @@
-{$SITE_HOST} {
+https://{$PUBLIC_IP} {
+    tls /etc/letsencrypt/live/coherent-ip/fullchain.pem /etc/letsencrypt/live/coherent-ip/privkey.pem
     encode zstd gzip
 
     handle /api/* {
@@ -12,7 +13,8 @@
     }
 }
 
-{$MEDIA_HOST} {
+https://{$PUBLIC_IP}:8443 {
+    tls /etc/letsencrypt/live/coherent-ip/fullchain.pem /etc/letsencrypt/live/coherent-ip/privkey.pem
     reverse_proxy 127.0.0.1:7880
 }
 
@@ -23,6 +25,6 @@ http://{$PUBLIC_IP} {
     }
 
     handle {
-        redir https://{$SITE_HOST}{uri} permanent
+        redir https://{$PUBLIC_IP}{uri} permanent
     }
 }

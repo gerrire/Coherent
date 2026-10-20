@@ -36,9 +36,9 @@ services:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in deploy/.env}
       DATABASE_URL: postgresql+asyncpg://coherent:${POSTGRES_PASSWORD}@database:5432/coherent
-      CORS_ORIGINS: '["https://${SITE_HOST:?Set SITE_HOST in deploy/.env}"]'
+      CORS_ORIGINS: '["https://${PUBLIC_IP:?Set PUBLIC_IP in deploy/.env}"]'
       COOKIE_SECURE: "true"
-      LIVEKIT_URL: wss://${MEDIA_HOST:?Set MEDIA_HOST in deploy/.env}
+      LIVEKIT_URL: wss://${PUBLIC_IP}:8443
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in deploy/.env}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in deploy/.env}
     ports:
@@ -82,13 +82,12 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SITE_HOST: ${SITE_HOST}
-      MEDIA_HOST: ${MEDIA_HOST}
-      PUBLIC_IP: ${PUBLIC_IP}
+      PUBLIC_IP: ${PUBLIC_IP:?Set PUBLIC_IP in deploy/.env}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
       - /var/www/certbot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       api:
         condition: service_healthy
