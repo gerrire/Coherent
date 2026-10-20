@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Settings2, X } from "lucide-react";
-import type { MediaPreferences, VideoCodec } from "../lib/media";
+import { supportedAudioProcessing, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
 
 interface MediaSettingsPanelProps {
   media: MediaPreferences;
+  audioProcessingState: AudioProcessingState | null;
   onChange: (patch: Partial<MediaPreferences>) => Promise<void>;
   onClose: () => void;
 }
@@ -15,7 +16,7 @@ const codecNames: Record<VideoCodec, string> = {
   av1: "AV1",
 };
 
-export default function MediaSettingsPanel({ media, onChange, onClose }: MediaSettingsPanelProps) {
+export default function MediaSettingsPanel({ media, audioProcessingState, onChange, onClose }: MediaSettingsPanelProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -73,6 +74,16 @@ export default function MediaSettingsPanel({ media, onChange, onClose }: MediaSe
   }
 
   const outputSupported = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+  const processingSupported = supportedAudioProcessing();
+
+  function processingCaption(key: keyof AudioProcessingState, enabled: boolean) {
+    if (!processingSupported[key]) return "Браузер не поддерживает эту функцию.";
+    if (!media.microphoneEnabled || !audioProcessingState) return "Применится при включении микрофона.";
+    const actual = audioProcessingState[key];
+    if (actual === null) return "Браузер не сообщает текущее состояние.";
+    if (actual !== enabled) return "Браузер применил другое значение.";
+    return enabled ? "Работает на микрофоне." : "Выключено на микрофоне.";
+  }
 
   return (
     <aside className="media-settings-panel" aria-label="Настройки звонка">
@@ -120,18 +131,18 @@ export default function MediaSettingsPanel({ media, onChange, onClose }: MediaSe
           </select>
         </label>
         <label className="media-setting-check">
-          <input type="checkbox" disabled={busy} checked={media.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked })} />
-          Подавление шума
+          <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={media.noiseSuppression && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked })} />
+          <span className="media-setting-option">Подавление шума<small>{processingCaption("noiseSuppression", media.noiseSuppression)}</small></span>
         </label>
         <label className="media-setting-check">
-          <input type="checkbox" disabled={busy} checked={media.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
-          Подавление эха
+          <input type="checkbox" disabled={busy || !processingSupported.echoCancellation} checked={media.echoCancellation && processingSupported.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
+          <span className="media-setting-option">Подавление эха<small>{processingCaption("echoCancellation", media.echoCancellation)}</small></span>
         </label>
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy} checked={media.deafened} onChange={(event) => void change({ deafened: event.target.checked })} />
           Не слышать собеседников
         </label>
-        <p className="media-settings-note">Звук и видео настраиваются для твоего устройства. Кодек и качество передаваемой камеры применяются сразу.</p>
+        <p className="media-settings-note">Подавление шума и эха выполняет браузер на твоём микрофоне. Доступность и результат зависят от браузера и устройства.</p>
       </div>
     </aside>
   );

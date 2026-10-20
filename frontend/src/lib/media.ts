@@ -1,4 +1,4 @@
-import { VideoPresets, type AudioCaptureOptions, type VideoCaptureOptions } from "livekit-client";
+import { Track, VideoPresets, type AudioCaptureOptions, type Room, type VideoCaptureOptions } from "livekit-client";
 
 export type VideoCodec = "vp8" | "h264" | "vp9" | "av1";
 export type VideoQuality = "360p" | "720p" | "1080p";
@@ -14,6 +14,29 @@ export interface MediaPreferences {
   videoQuality: VideoQuality;
   noiseSuppression: boolean;
   echoCancellation: boolean;
+}
+
+export interface AudioProcessingState {
+  noiseSuppression: boolean | null;
+  echoCancellation: boolean | null;
+}
+
+export function supportedAudioProcessing(): { noiseSuppression: boolean; echoCancellation: boolean } {
+  const supported = navigator.mediaDevices?.getSupportedConstraints();
+  return {
+    noiseSuppression: supported?.noiseSuppression === true,
+    echoCancellation: supported?.echoCancellation === true,
+  };
+}
+
+export function readAudioProcessing(room: Room | null): AudioProcessingState | null {
+  const track = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+  if (!track || track.readyState !== "live") return null;
+  const settings = track.getSettings();
+  return {
+    noiseSuppression: typeof settings.noiseSuppression === "boolean" ? settings.noiseSuppression : null,
+    echoCancellation: typeof settings.echoCancellation === "boolean" ? settings.echoCancellation : null,
+  };
 }
 
 const STORAGE_KEY = "coherent.media-preferences";

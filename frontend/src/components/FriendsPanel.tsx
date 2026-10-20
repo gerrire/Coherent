@@ -6,10 +6,12 @@ type Tab = "search" | "all" | "requests";
 
 export default function FriendsPanel({
   onStartConversation,
+  initialTab = "search",
 }: {
   onStartConversation: (userId: string) => Promise<void>;
+  initialTab?: Tab;
 }) {
-  const [tab, setTab] = useState<Tab>("search");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserSearchResult[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -21,6 +23,8 @@ export default function FriendsPanel({
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  useEffect(() => setTab(initialTab), [initialTab]);
 
   async function refreshOverview() {
     const [friendResult, requestResult] = await Promise.all([

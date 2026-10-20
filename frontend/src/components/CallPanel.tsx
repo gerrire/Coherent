@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
   StartAudio,
   TrackToggle,
+  useIsSpeaking,
   useLocalParticipant,
   useParticipants,
   useRoomContext,
@@ -26,11 +27,12 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { Track, type Participant, type Room } from "livekit-client";
+import { RoomEvent, Track, type Participant, type Room } from "livekit-client";
 import { api, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
   microphoneCapture,
+  type AudioProcessingState,
   type MediaPreferences,
 } from "../lib/media";
 import MediaSettingsPanel from "./MediaSettingsPanel";
@@ -46,6 +48,7 @@ interface CallPanelProps {
   error: string;
   pending: boolean;
   media: MediaPreferences;
+  audioProcessingState: AudioProcessingState | null;
   settingsOpen: boolean;
   onToggleSettings: () => void;
   onMediaChange: (patch: Partial<MediaPreferences>) => Promise<void>;
@@ -63,6 +66,7 @@ export default function CallPanel({
   error,
   pending,
   media,
+  audioProcessingState,
   settingsOpen,
   onToggleSettings,
   onMediaChange,
@@ -183,7 +187,7 @@ export default function CallPanel({
           </div>
         </div>
       )}
-      {settingsOpen && !compact && <MediaSettingsPanel media={media} onChange={onMediaChange} onClose={onToggleSettings} />}
+      {settingsOpen && !compact && <MediaSettingsPanel media={media} audioProcessingState={audioProcessingState} onChange={onMediaChange} onClose={onToggleSettings} />}
       {inviteOpen && (
         <ParticipantPicker
           title="Добавить в звонок"
@@ -398,8 +402,19 @@ function CallControls({
   );
 }
 
+function ParticipantTile({ participant, camera }: { participant: Participant; camera: ComponentProps<typeof VideoTrack>["trackRef"] | undefined }) {
+  const isSpeaking = useIsSpeaking(participant);
+  const label = participant.isLocal ? "Ты" : participant.name || "Участник";
+  return (
+    <div className={`call-tile ${isSpeaking ? "call-tile-speaking" : ""}`}>
+      {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
+      <span className="call-tile-name">{label}</span>
+    </div>
+  );
+}
+
 function CallStage({ call, mode, density }: { call: Call; mode: ViewMode; density: TileDensity }) {
-  const participants = useParticipants();
+  const participants = useParticipants({ updateOnlyOn: [RoomEvent.ActiveSpeakersChanged] });
   const tracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare]);
   const screen = tracks.find((track) => track.source === Track.Source.ScreenShare);
   const invited = call.participants.filter((member) =>
@@ -411,18 +426,12 @@ function CallStage({ call, mode, density }: { call: Call; mode: ViewMode; densit
     const camera = tracks.find((track) =>
       track.participant.identity === participant.identity && track.source === Track.Source.Camera
     );
-    const label = participant.isLocal ? "Ты" : participant.name || "Участник";
-    return (
-      <div className={`call-tile ${participant.isLocal ? "call-tile-local" : "call-tile-remote"} ${participant.isSpeaking ? "call-tile-speaking" : ""}`} key={participant.identity}>
-        {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
-        <span className="call-tile-name">{label}</span>
-      </div>
-    );
+    return <ParticipantTile key={participant.identity} participant={participant} camera={camera} />;
   }
 
   function invitedTile(member: Call["participants"][number]) {
     return (
-      <div className="call-tile call-tile-remote call-tile-waiting" key={member.user_id}>
+      <div className="call-tile call-tile-waiting" key={member.user_id}>
         <span className="call-tile-avatar">{member.username.slice(0, 1).toUpperCase()}</span>
         <span className="call-tile-name">{member.username}</span>
         <span className="call-waiting-label">Приглашён</span>
@@ -433,7 +442,7 @@ function CallStage({ call, mode, density }: { call: Call; mode: ViewMode; densit
   if (screen) {
     return (
       <div className={`call-stage call-stage-sharing ${denseClass}`}>
-        <div className={`call-tile call-tile-screen ${screen.participant.isLocal ? "call-tile-local" : "call-tile-remote"}`}>
+        <div className="call-tile call-tile-screen">
           <VideoTrack trackRef={screen} />
           <span className="call-tile-name">{screen.participant.isLocal ? "Твой экран" : `Экран: ${screen.participant.name || "участник"}`}</span>
         </div>

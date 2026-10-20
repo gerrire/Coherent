@@ -16,17 +16,21 @@ import {
   Settings,
   Users,
   UsersRound,
+  UserPlus,
   Video,
   VideoOff,
   VolumeX,
 } from "lucide-react";
-import { ConnectionState, type Room } from "livekit-client";
-import { api, type Call, type Conversation, type User } from "../lib/api";
+import { ConnectionState, Track, type Room } from "livekit-client";
+import { api, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
 import {
   cameraCapture,
   loadMediaPreferences,
   microphoneCapture,
+  readAudioProcessing,
   saveMediaPreferences,
+  supportedAudioProcessing,
+  type AudioProcessingState,
   type MediaPreferences,
 } from "../lib/media";
 import FriendsPanel from "./FriendsPanel";
@@ -40,10 +44,18 @@ interface ChatShellProps {
 }
 
 type Section = "messages" | "friends";
+type FriendsTab = "search" | "all" | "requests";
+type ShellPopover = "workspace" | "notifications" | "help" | null;
 const CallPanel = lazy(() => import("./CallPanel"));
 
 export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [section, setSection] = useState<Section>("messages");
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [friendsInitialTab, setFriendsInitialTab] = useState<FriendsTab>("search");
+  const [popover, setPopover] = useState<ShellPopover>(null);
+  const [notificationRequests, setNotificationRequests] = useState<FriendRequest[]>([]);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationError, setNotificationError] = useState("");
   const [showProfile, setShowProfile] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -57,12 +69,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [controlError, setControlError] = useState("");
   const [media, setMedia] = useState(loadMediaPreferences);
+  const [audioProcessingState, setAudioProcessingState] = useState<AudioProcessingState | null>(null);
   const mediaRef = useRef(media);
   const roomRef = useRef<Room | null>(null);
   const mediaQueue = useRef<Promise<void>>(Promise.resolve());
   const initial = user.username.slice(0, 1).toUpperCase();
-  const selectedConversation = conversations.find((item) => item.id === activeConversationId);
-  const callCompact = Boolean(currentCall && (section !== "messages" || activeConversationId !== currentCall.conversation_id));
+  const selectedConversation = showWelcome ? undefined : conversations.find((item) => item.id === activeConversationId);
+  const callCompact = Boolean(currentCall && (section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
   const callPanelReady = Boolean(currentCall?.status === "active"
     && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
     && !callCompact);
@@ -156,12 +169,20 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
 
   const setActiveRoom = useCallback((room: Room | null) => {
     roomRef.current = room;
+    setAudioProcessingState(readAudioProcessing(room));
   }, []);
 
   const updateMedia = useCallback((patch: Partial<MediaPreferences>): Promise<void> => {
     const operation = mediaQueue.current.then(async () => {
       const current = mediaRef.current;
       const next = { ...current, ...patch };
+      const supportedProcessing = supportedAudioProcessing();
+      if (patch.noiseSuppression !== undefined && !supportedProcessing.noiseSuppression) {
+        throw new Error("Этот браузер не поддерживает шумоподавление микрофона.");
+      }
+      if (patch.echoCancellation !== undefined && !supportedProcessing.echoCancellation) {
+        throw new Error("Этот браузер не поддерживает подавление эха.");
+      }
       const room = roomRef.current;
       if (room?.state === ConnectionState.Connected) {
         const participant = room.localParticipant;
@@ -170,17 +191,27 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         const cameraCaptureChanged = patch.videoCodec !== undefined
           || patch.videoQuality !== undefined;
 
-        if (patch.microphoneEnabled !== undefined || microphoneCaptureChanged) {
-          if (microphoneCaptureChanged && current.microphoneEnabled) {
-            await participant.setMicrophoneEnabled(false);
-          }
+        if (patch.microphoneEnabled !== undefined) {
+          const existing = participant.getTrackPublication(Track.Source.Microphone)?.track;
           try {
             await participant.setMicrophoneEnabled(next.microphoneEnabled, microphoneCapture(next));
-          } catch (reason) {
-            if (microphoneCaptureChanged && current.microphoneEnabled) {
-              await participant.setMicrophoneEnabled(true, microphoneCapture(current)).catch(() => undefined);
+            if (next.microphoneEnabled && existing) {
+              await existing.restartTrack(microphoneCapture(next));
             }
+          } catch (reason) {
+            if (existing) await existing.restartTrack(microphoneCapture(current)).catch(() => undefined);
+            await participant.setMicrophoneEnabled(current.microphoneEnabled, microphoneCapture(current)).catch(() => undefined);
             throw reason;
+          }
+        } else if (microphoneCaptureChanged && next.microphoneEnabled) {
+          const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
+          if (track) {
+            try {
+              await track.restartTrack(microphoneCapture(next));
+            } catch (reason) {
+              await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+              throw reason;
+            }
           }
         }
         if (patch.cameraEnabled !== undefined || cameraCaptureChanged) {
@@ -219,6 +250,18 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             throw new Error("Браузер не смог переключить вывод звука.");
           }
         }
+        if (microphoneCaptureChanged && next.microphoneEnabled) {
+          const applied = readAudioProcessing(room);
+          if ((patch.noiseSuppression !== undefined && applied?.noiseSuppression != null
+              && applied.noiseSuppression !== next.noiseSuppression)
+            || (patch.echoCancellation !== undefined && applied?.echoCancellation != null
+              && applied.echoCancellation !== next.echoCancellation)) {
+            const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
+            if (track) await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+            throw new Error("Браузер не применил обработку звука. Настройка сохранена прежней.");
+          }
+        }
+        setAudioProcessingState(readAudioProcessing(room));
       }
       mediaRef.current = next;
       setMedia(next);
@@ -266,6 +309,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       setCurrentCall(call);
       setActiveConversationId(call.conversation_id);
       setSection("messages");
+      setShowWelcome(false);
       void refreshConversations().catch(() => undefined);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось принять звонок.");
@@ -293,36 +337,83 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     const conversation = await api.openConversation(userId);
     setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
     setActiveConversationId(conversation.id);
+    setShowWelcome(false);
     setSection("messages");
     setMessageVersion((current) => current + 1);
     void refreshConversations().catch(() => undefined);
   }
 
+  function openHome() {
+    setSection("messages");
+    setShowWelcome(true);
+    setPopover(null);
+  }
+
+  function openFriends(tab: FriendsTab = "search") {
+    setFriendsInitialTab(tab);
+    setSection("friends");
+    setPopover(null);
+  }
+
+  function openMessages() {
+    setSection("messages");
+    setShowWelcome(false);
+    setPopover(null);
+  }
+
+  function togglePopover(next: Exclude<ShellPopover, null>) {
+    setShowProfile(false);
+    setSettingsOpen(false);
+    if (popover === next) {
+      setPopover(null);
+      return;
+    }
+    setPopover(next);
+    if (next === "notifications") {
+      setNotificationLoading(true);
+      setNotificationError("");
+      void api.friendRequests().then((result) => {
+        setNotificationRequests(result.incoming);
+      }).catch((reason: unknown) => {
+        setNotificationError(reason instanceof Error ? reason.message : "Не удалось загрузить заявки.");
+      }).finally(() => setNotificationLoading(false));
+    }
+  }
+
+  useEffect(() => {
+    if (!popover) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPopover(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [popover]);
+
   return (
     <main className="app-shell">
       <aside className="server-rail">
-        <button className="rail-home active" aria-label="Coherent" disabled>
+        <button className="rail-home active" aria-label="Главная Coherent" title="Главная" onClick={openHome}>
           <span className="brand-mark"><span /><span /><span /></span>
         </button>
         <div className="rail-separator" />
         <button
           className={`rail-item ${section === "messages" ? "selected" : ""}`}
           aria-label="Сообщения"
-          onClick={() => setSection("messages")}
+          onClick={openMessages}
         >
           <MessageCircle size={21} />
         </button>
         <button
           className={`rail-item ${section === "friends" ? "selected" : ""}`}
           aria-label="Друзья"
-          onClick={() => setSection("friends")}
+          onClick={() => openFriends("all")}
         >
           <Users size={21} />
         </button>
         <button
           className="rail-item"
           aria-label="Поиск пользователей"
-          onClick={() => setSection("friends")}
+          onClick={() => openFriends("search")}
         >
           <Compass size={21} />
         </button>
@@ -337,7 +428,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         </button>
         <button
           className="rail-profile"
-          onClick={() => setShowProfile((visible) => !visible)}
+          onClick={() => { setPopover(null); setShowProfile((visible) => !visible); }}
           aria-label="Профиль"
         >
           <span className="avatar avatar-user">{initial}</span>
@@ -346,7 +437,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       </aside>
 
       <aside className="channel-sidebar">
-        <button className="workspace-picker" disabled>
+        <button className="workspace-picker" onClick={() => togglePopover("workspace")} aria-expanded={popover === "workspace"} aria-label="Меню Coherent">
           <span className="workspace-symbol">
             <span className="brand-mark"><span /><span /><span /></span>
           </span>
@@ -367,22 +458,21 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className="sidebar-nav">
           <button
             className={`sidebar-nav-item ${section === "messages" ? "active" : ""}`}
-            onClick={() => setSection("messages")}
+            onClick={openMessages}
           >
             <MessageCircle size={18} /> Личные сообщения
           </button>
-          <button
-            className={`sidebar-nav-item ${section === "friends" ? "active" : ""}`}
-            onClick={() => setSection("friends")}
-          >
-            <Users size={18} /> Друзья
-            <span className="nav-add"><Plus size={15} /></span>
-          </button>
+          <div className={`sidebar-nav-friends ${section === "friends" ? "active" : ""}`}>
+            <button className="sidebar-nav-item" onClick={() => openFriends("all")}>
+              <Users size={18} /> Друзья
+            </button>
+            <button className="nav-add" aria-label="Найти новых друзей" title="Найти новых друзей" onClick={() => openFriends("search")}><Plus size={15} /></button>
+          </div>
         </div>
 
         <div className="sidebar-section-title">
           <span>ЛИЧНЫЕ СООБЩЕНИЯ</span>
-          <button aria-label="Начать беседу" title="Найти собеседника" onClick={() => setSection("friends")}>
+          <button aria-label="Начать беседу" title="Найти собеседника" onClick={() => openFriends("search")}>
             <Plus size={16} />
           </button>
         </div>
@@ -396,6 +486,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 onClick={() => {
                   setActiveConversationId(conversation.id);
                   setSection("messages");
+                  setShowWelcome(false);
                 }}
               >
                 <span className="avatar avatar-user">{conversation.other_user.username[0]?.toUpperCase()}</span>
@@ -432,8 +523,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <span className="header-subtle">Личное пространство</span>
           </div>
           <div className="mobile-nav" aria-label="Разделы">
-            <button className={section === "messages" ? "active" : ""} onClick={() => setSection("messages")} aria-label="Сообщения"><MessageCircle size={18} /></button>
-            <button className={section === "friends" ? "active" : ""} onClick={() => setSection("friends")} aria-label="Друзья"><Users size={18} /></button>
+            <button className={section === "messages" ? "active" : ""} onClick={openMessages} aria-label="Сообщения"><MessageCircle size={18} /></button>
+            <button className={section === "friends" ? "active" : ""} onClick={() => openFriends("all")} aria-label="Друзья"><Users size={18} /></button>
           </div>
           <div className="header-actions">
             {section === "messages" && selectedConversation && (
@@ -458,10 +549,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 <UsersRound size={19} />
               </button>
             )}
-            <button className="header-icon" aria-label="Уведомления появятся позже" disabled>
+            <button className="header-icon" aria-label="Уведомления" title="Уведомления" aria-expanded={popover === "notifications"} onClick={() => togglePopover("notifications")}>
               <Bell size={18} />
             </button>
-            <button className="header-icon" aria-label="Помощь появится позже" disabled>
+            <button className="header-icon" aria-label="Помощь" title="Помощь" aria-expanded={popover === "help"} onClick={() => togglePopover("help")}>
               <CircleHelp size={18} />
             </button>
             <span className="header-user">{user.username}</span>
@@ -474,7 +565,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               <button
                 key={conversation.id}
                 className={activeConversationId === conversation.id ? "active" : ""}
-                onClick={() => setActiveConversationId(conversation.id)}
+                onClick={() => { setActiveConversationId(conversation.id); setShowWelcome(false); }}
               >
                 {conversation.other_user.username}
               </button>
@@ -491,6 +582,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               error={callError}
               pending={callPending}
               media={media}
+              audioProcessingState={audioProcessingState}
               settingsOpen={settingsOpen}
               onToggleSettings={() => setSettingsOpen((open) => !open)}
               onMediaChange={changeMedia}
@@ -501,6 +593,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               onFocus={() => {
                 setActiveConversationId(currentCall.conversation_id);
                 setSection("messages");
+                setShowWelcome(false);
               }}
             />
           </Suspense>
@@ -532,7 +625,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                   <div className="welcome-copy">
                     <h1>Хорошие разговоры<br /><span>начинаются здесь.</span></h1>
                     <p>Найди своих людей — и оставайся рядом, где бы вы ни были.</p>
-                    <button className="primary-button welcome-button" onClick={() => setSection("friends")}>
+                    <button className="primary-button welcome-button" onClick={() => openFriends("search")}>
                       <Users size={17} /> Найти собеседника <span className="button-arrow">↗</span>
                     </button>
                   </div>
@@ -540,7 +633,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               )}
             </>
           ) : (
-            <FriendsPanel onStartConversation={startConversation} />
+            <FriendsPanel initialTab={friendsInitialTab} onStartConversation={startConversation} />
           )}
         </div>
         )}
@@ -553,6 +646,46 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </button>
         </footer>
       </section>
+
+      {popover && <button className="shell-popover-dismiss" aria-label="Закрыть меню" onClick={() => setPopover(null)} />}
+      {popover === "workspace" && (
+        <div className="shell-popover shell-popover-workspace" role="menu" aria-label="Меню Coherent">
+          <strong>Coherent</strong>
+          <button role="menuitem" onClick={openHome}><Compass size={16} /> Главная</button>
+          <button role="menuitem" onClick={openMessages}><MessageCircle size={16} /> Сообщения</button>
+          <button role="menuitem" onClick={() => openFriends("all")}><Users size={16} /> Друзья</button>
+          <button role="menuitem" onClick={() => { setPopover(null); setSettingsOpen(true); }}><Settings size={16} /> Звук и видео</button>
+        </div>
+      )}
+      {popover === "notifications" && (
+        <div className="shell-popover shell-popover-notifications" aria-label="Уведомления">
+          <strong>Уведомления</strong>
+          {currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") && (
+            <button onClick={() => {
+              setPopover(null);
+              setSection("messages");
+              setActiveConversationId(currentCall.conversation_id);
+              setShowWelcome(false);
+            }}><Phone size={16} /> Входящий звонок · открыть</button>
+          )}
+          {notificationLoading && <p>Загружаем заявки...</p>}
+          {notificationError && <p role="alert">{notificationError}</p>}
+          {!notificationLoading && !notificationError && notificationRequests.length === 0 && <p>Новых заявок в друзья нет.</p>}
+          {!notificationLoading && notificationRequests.slice(0, 4).map((request) => (
+            <button key={request.request_id} onClick={() => openFriends("requests")}><UserPlus size={16} /> Заявка от {request.username}</button>
+          ))}
+          <button className="shell-popover-link" onClick={() => openFriends("requests")}>Открыть все заявки →</button>
+        </div>
+      )}
+      {popover === "help" && (
+        <div className="shell-popover shell-popover-help" aria-label="Помощь">
+          <strong>Как пользоваться Coherent</strong>
+          <p>Найди человека по имени, открой беседу и нажми трубку для звонка. Кнопка с людьми рядом начинает групповой звонок.</p>
+          <p>Во время звонка сетка и размер плиток меняются через кнопку отображения. Устройства и обработка микрофона находятся в настройках.</p>
+          <button onClick={() => openFriends("search")}><Search size={16} /> Найти человека</button>
+          <button onClick={() => { setPopover(null); setSettingsOpen(true); }}><Settings size={16} /> Настроить звук и видео</button>
+        </div>
+      )}
 
       {showProfile && (
         <div className="profile-menu">
@@ -600,7 +733,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       </div>
       {controlError && <div className="media-control-error" role="alert">{controlError}</div>}
       {settingsOpen && !callPanelReady && (
-        <MediaSettingsPanel media={media} onChange={changeMedia} onClose={() => setSettingsOpen(false)} />
+        <MediaSettingsPanel media={media} audioProcessingState={audioProcessingState} onChange={changeMedia} onClose={() => setSettingsOpen(false)} />
       )}
       {showGroupPicker && selectedConversation && (
         <ParticipantPicker
