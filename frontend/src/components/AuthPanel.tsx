@@ -14,7 +14,7 @@ interface AuthPanelProps {
 }
 
 export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
-  const [mode, setMode] = useState<"login" | "register">("register");
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);

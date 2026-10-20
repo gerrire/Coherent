@@ -63,12 +63,20 @@ def successful_build(sha: str) -> bool:
 
 
 def healthy() -> None:
+    domain = next(
+        (line.removeprefix("PUBLIC_DOMAIN=").strip()
+         for line in (ROOT / "deploy/.env").read_text().splitlines()
+         if line.startswith("PUBLIC_DOMAIN=")),
+        "",
+    )
+    if not re.fullmatch(r"[a-zA-Z0-9.-]+", domain):
+        raise RuntimeError("PUBLIC_DOMAIN is missing or invalid")
     for attempt in range(12):
         try:
             for url in (
-                "https://31.76.77.197/",
-                "https://31.76.77.197/api/v1/health/ready",
-                "https://31.76.77.197:8443/",
+                f"https://{domain}/",
+                f"https://{domain}/api/v1/health/ready",
+                f"https://{domain}:8443/",
             ):
                 with urlopen(url, timeout=10) as response:
                     if response.status != 200:
