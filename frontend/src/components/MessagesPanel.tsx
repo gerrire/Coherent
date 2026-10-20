@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { MessageCircle, Send } from "lucide-react";
+import { MessageCircle, Phone, Send } from "lucide-react";
 import { api, type Conversation, type Message } from "../lib/api";
 
 interface MessagesPanelProps {
@@ -7,6 +7,9 @@ interface MessagesPanelProps {
   currentUserId: string;
   version: number;
   onSent: () => void;
+  onCall: () => void;
+  callDisabled: boolean;
+  callError: string;
 }
 
 function mergeMessages(first: Message[], second: Message[]): Message[] {
@@ -26,6 +29,9 @@ export default function MessagesPanel({
   currentUserId,
   version,
   onSent,
+  onCall,
+  callDisabled,
+  callError,
 }: MessagesPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -136,7 +142,17 @@ export default function MessagesPanel({
           <h1>{conversation.other_user.username}</h1>
           <p>Личная беседа. Сообщения сохраняются в Coherent.</p>
         </div>
+        <button
+          className="call-start-button"
+          type="button"
+          onClick={onCall}
+          disabled={callDisabled}
+          title={callDisabled ? "Звонок уже идёт" : `Позвонить ${conversation.other_user.username}`}
+        >
+          <Phone size={16} /> <span>Позвонить</span>
+        </button>
       </div>
+      {callError && <p className="call-inline-error" role="alert">{callError}</p>}
 
       <div
         className="message-list"

@@ -57,6 +57,25 @@ export interface MessagePage {
   has_more: boolean;
 }
 
+export interface Call {
+  id: string;
+  conversation_id: string;
+  caller_id: string;
+  caller_username: string;
+  callee_id: string;
+  callee_username: string;
+  status: "ringing" | "active" | "declined" | "cancelled" | "ended" | "missed";
+  created_at: string;
+  expires_at: string;
+  answered_at: string | null;
+  ended_at: string | null;
+}
+
+export interface CallJoin {
+  server_url: string;
+  token: string;
+}
+
 interface AuthResponse {
   user: User;
 }
@@ -155,4 +174,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ body }),
     }),
+  currentCalls: () => request<{ calls: Call[] }>("/api/v1/calls/current"),
+  startCall: (conversationId: string) =>
+    request<Call>(`/api/v1/conversations/${conversationId}/calls`, { method: "POST" }),
+  acceptCall: (callId: string) =>
+    request<Call>(`/api/v1/calls/${callId}/accept`, { method: "POST" }),
+  endCall: (callId: string) =>
+    request<Call>(`/api/v1/calls/${callId}/end`, { method: "POST" }),
+  endCallOnPageHide: (callId: string) => {
+    if (!csrfToken) return;
+    void fetch(`/api/v1/calls/${callId}/end`, {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+  },
+  joinCall: (callId: string) =>
+    request<CallJoin>(`/api/v1/calls/${callId}/join`, { method: "POST" }),
 };

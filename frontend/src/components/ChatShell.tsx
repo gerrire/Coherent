@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Bell,
   ChevronDown,
@@ -15,7 +15,7 @@ import {
   Users,
   Video,
 } from "lucide-react";
-import { api, type Conversation, type User } from "../lib/api";
+import { api, type Call, type Conversation, type User } from "../lib/api";
 import FriendsPanel from "./FriendsPanel";
 import MessagesPanel from "./MessagesPanel";
 
@@ -25,6 +25,7 @@ interface ChatShellProps {
 }
 
 type Section = "messages" | "friends";
+const CallOverlay = lazy(() => import("./CallOverlay"));
 
 export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [section, setSection] = useState<Section>("messages");
@@ -34,6 +35,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [conversationQuery, setConversationQuery] = useState("");
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
+  const [currentCall, setCurrentCall] = useState<Call | null>(null);
+  const [callPending, setCallPending] = useState(false);
+  const [callError, setCallError] = useState("");
   const initial = user.username.slice(0, 1).toUpperCase();
   const selectedConversation = conversations.find((item) => item.id === activeConversationId);
   const visibleConversations = conversations.filter((item) =>
@@ -47,11 +51,32 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setConversationError("");
   }, []);
 
+  const refreshCalls = useCallback(async () => {
+    const result = await api.currentCalls();
+    setCurrentCall(result.calls[0] ?? null);
+  }, []);
+
   useEffect(() => {
     void refreshConversations().catch((error: unknown) => {
       setConversationError(error instanceof Error ? error.message : "Не удалось загрузить беседы.");
     });
   }, [refreshConversations]);
+
+  useEffect(() => {
+    void refreshCalls().catch(() => undefined);
+    const timer = window.setInterval(() => void refreshCalls().catch(() => undefined), 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshCalls]);
+
+  useEffect(() => {
+    if (!currentCall || (currentCall.status === "ringing" && currentCall.callee_id === user.id)) {
+      return;
+    }
+    const callId = currentCall.id;
+    const handlePageHide = () => api.endCallOnPageHide(callId);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [currentCall, user.id]);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -70,6 +95,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as { type?: string };
+          if (payload.type === "call") {
+            void refreshCalls().catch(() => undefined);
+            return;
+          }
           if (payload.type !== "message") return;
           void refreshConversations().catch(() => undefined);
           setMessageVersion((current) => current + 1);
@@ -96,7 +125,52 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, [refreshConversations]);
+  }, [refreshConversations, refreshCalls]);
+
+  async function startCall() {
+    if (!activeConversationId || currentCall || callPending) return;
+    setCallPending(true);
+    setCallError("");
+    try {
+      setCurrentCall(await api.startCall(activeConversationId));
+    } catch (reason) {
+      setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
+    } finally {
+      setCallPending(false);
+    }
+  }
+
+  async function acceptCall() {
+    if (!currentCall || callPending) return;
+    setCallPending(true);
+    setCallError("");
+    try {
+      const call = await api.acceptCall(currentCall.id);
+      setCurrentCall(call);
+      setActiveConversationId(call.conversation_id);
+      setSection("messages");
+      void refreshConversations().catch(() => undefined);
+    } catch (reason) {
+      setCallError(reason instanceof Error ? reason.message : "Не удалось принять звонок.");
+      void refreshCalls().catch(() => undefined);
+    } finally {
+      setCallPending(false);
+    }
+  }
+
+  async function endCall() {
+    if (!currentCall || callPending) return;
+    setCallPending(true);
+    setCallError("");
+    try {
+      await api.endCall(currentCall.id);
+      setCurrentCall(null);
+    } catch (reason) {
+      setCallError(reason instanceof Error ? reason.message : "Не удалось завершить звонок.");
+    } finally {
+      setCallPending(false);
+    }
+  }
 
   async function startConversation(userId: string) {
     const conversation = await api.openConversation(userId);
@@ -275,6 +349,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             currentUserId={user.id}
             version={messageVersion}
             onSent={() => { void refreshConversations().catch(() => undefined); }}
+            onCall={() => void startCall()}
+            callDisabled={Boolean(currentCall) || callPending}
+            callError={callError}
           />
         ) : (
         <div className={`welcome-content ${section === "friends" ? "friends-content" : ""}`}>
@@ -358,6 +435,18 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </button>
         </div>
       </div>
+      {currentCall && (
+        <Suspense fallback={<div className="call-backdrop call-connecting">Подготавливаем звонок...</div>}>
+          <CallOverlay
+            call={currentCall}
+            currentUserId={user.id}
+            error={callError}
+            pending={callPending}
+            onAccept={() => void acceptCall()}
+            onEnd={() => void endCall()}
+          />
+        </Suspense>
+      )}
     </main>
   );
 }

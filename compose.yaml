@@ -16,5 +16,12 @@ services:
       timeout: 3s
       retries: 10
 
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    profiles: ["calls"]
+    restart: unless-stopped
+    network_mode: host
+    command: ["--dev"]
+
 volumes:
   coherent-postgres:
