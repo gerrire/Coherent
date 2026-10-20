@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -13,6 +13,7 @@ import {
   Camera,
   CameraOff,
   Maximize2,
+  MessageCircle,
   Mic,
   MicOff,
   Minimize2,
@@ -32,7 +33,6 @@ interface CallPanelProps {
   onAccept: () => void;
   onEnd: () => void;
   onFocus: () => void;
-  onMinimize: () => void;
 }
 
 export default function CallPanel({
@@ -44,10 +44,45 @@ export default function CallPanel({
   onAccept,
   onEnd,
   onFocus,
-  onMinimize,
 }: CallPanelProps) {
   const incoming = call.callee_id === currentUserId;
   const peer = incoming ? call.caller_username : call.callee_username;
+  const panelRef = useRef<HTMLElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isViewportFullscreen, setIsViewportFullscreen] = useState(false);
+
+  useEffect(() => {
+    const syncFullscreen = () => setIsFullscreen(document.fullscreenElement === panelRef.current);
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
+  useEffect(() => {
+    if (!isViewportFullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsViewportFullscreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isViewportFullscreen]);
+
+  async function toggleFullscreen() {
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (isViewportFullscreen) {
+      setIsViewportFullscreen(false);
+      return;
+    }
+    if (document.fullscreenElement === panel) {
+      await document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    try {
+      await panel.requestFullscreen();
+    } catch {
+      setIsViewportFullscreen(true);
+    }
+  }
 
   if (call.status === "ringing") {
     return (
@@ -74,8 +109,8 @@ export default function CallPanel({
   }
 
   return (
-    <section className={`call-surface ${compact ? "call-surface-compact" : "call-surface-expanded"}`} aria-label={`Разговор с ${peer}`}>
-      <CallRoom call={call} peer={peer} compact={compact} onFocus={onFocus} onMinimize={onMinimize} onEnd={onEnd} pending={pending} />
+    <section ref={panelRef} className={`call-surface ${compact ? "call-surface-compact" : "call-surface-expanded"} ${isViewportFullscreen ? "call-surface-maximized" : ""}`} aria-label={`Разговор с ${peer}`}>
+      <CallRoom call={call} peer={peer} compact={compact} isFullscreen={isFullscreen || isViewportFullscreen} onFocus={onFocus} onToggleFullscreen={() => void toggleFullscreen()} onEnd={onEnd} pending={pending} />
       {error && <p className="call-surface-error" role="alert">{error}</p>}
     </section>
   );
@@ -85,16 +120,18 @@ function CallRoom({
   call,
   peer,
   compact,
+  isFullscreen,
   onFocus,
-  onMinimize,
+  onToggleFullscreen,
   onEnd,
   pending,
 }: {
   call: Call;
   peer: string;
   compact: boolean;
+  isFullscreen: boolean;
   onFocus: () => void;
-  onMinimize: () => void;
+  onToggleFullscreen: () => void;
   onEnd: () => void;
   pending: boolean;
 }) {
@@ -129,13 +166,13 @@ function CallRoom({
         <small>{error || (connected ? `Голосовая связь · ${time}` : "Подключение...")}</small>
       </div>
       {compact && (
-        <button className="call-focus-button" onClick={onFocus} aria-label="Вернуться к звонку" title="Развернуть звонок">
-          <Maximize2 size={17} />
+        <button className="call-focus-button" onClick={onFocus} aria-label="Вернуться к беседе со звонком" title="Вернуться к беседе">
+          <MessageCircle size={17} />
         </button>
       )}
       {!compact && (
-        <button className="call-focus-button" onClick={onMinimize} aria-label="Свернуть звонок" title="Свернуть звонок">
-          <Minimize2 size={17} />
+        <button className="call-focus-button" onClick={onToggleFullscreen} aria-label={isFullscreen ? "Выйти из полноэкранного режима" : "Открыть звонок на весь экран"} title={isFullscreen ? "Выйти из полноэкранного режима" : "На весь экран"}>
+          {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
         </button>
       )}
     </div>

@@ -37,7 +37,6 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
   const [currentCall, setCurrentCall] = useState<Call | null>(null);
-  const [callMinimized, setCallMinimized] = useState(false);
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
   const initial = user.username.slice(0, 1).toUpperCase();
@@ -136,7 +135,6 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallError("");
     try {
       setCurrentCall(await api.startCall(activeConversationId));
-      setCallMinimized(false);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
     } finally {
@@ -151,7 +149,6 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     try {
       const call = await api.acceptCall(currentCall.id);
       setCurrentCall(call);
-      setCallMinimized(false);
       setActiveConversationId(call.conversation_id);
       setSection("messages");
       void refreshConversations().catch(() => undefined);
@@ -170,7 +167,6 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     try {
       await api.endCall(currentCall.id);
       setCurrentCall(null);
-      setCallMinimized(false);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось завершить звонок.");
     } finally {
@@ -365,17 +361,15 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <CallPanel
               call={currentCall}
               currentUserId={user.id}
-              compact={callMinimized || section !== "messages" || activeConversationId !== currentCall.conversation_id}
+              compact={section !== "messages" || activeConversationId !== currentCall.conversation_id}
               error={callError}
               pending={callPending}
               onAccept={() => void acceptCall()}
               onEnd={() => void endCall()}
               onFocus={() => {
-                setCallMinimized(false);
                 setActiveConversationId(currentCall.conversation_id);
                 setSection("messages");
               }}
-              onMinimize={() => setCallMinimized(true)}
             />
           </Suspense>
         )}
