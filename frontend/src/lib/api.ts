@@ -1,6 +1,5 @@
 export interface User {
   id: string;
-  email: string;
   username: string;
   created_at: string;
 }
@@ -131,12 +130,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   me: () => request<User>("/api/v1/auth/me"),
-  register: (payload: { email: string; username: string; password: string }) =>
+  register: (payload: { username: string; password: string }) =>
     request<AuthResponse>("/api/v1/auth/register", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  login: (payload: { email: string; password: string }) =>
+  login: (payload: { username: string; password: string }) =>
     request<AuthResponse>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),

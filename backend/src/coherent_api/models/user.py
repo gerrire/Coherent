@@ -15,7 +15,7 @@ class User(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     username: Mapped[str] = mapped_column(String(32), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

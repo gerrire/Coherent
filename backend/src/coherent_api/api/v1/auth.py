@@ -66,7 +66,11 @@ async def register(
     except AccountAlreadyExistsError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Пользователь с таким адресом почты или именем уже существует",
+            detail=(
+                "Пользователь с таким именем уже существует"
+                if body.email is None
+                else "Пользователь с таким именем или адресом почты уже существует"
+            ),
         ) from error
 
     set_session_cookies(response, user, request)
@@ -85,7 +89,7 @@ async def login(
     except InvalidCredentialsError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверная почта или пароль",
+            detail="Неверное имя пользователя или пароль",
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
 

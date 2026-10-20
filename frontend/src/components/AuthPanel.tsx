@@ -4,7 +4,6 @@ import {
   Eye,
   EyeOff,
   LockKeyhole,
-  Mail,
   Sparkles,
   UserRound,
 } from "lucide-react";
@@ -16,7 +15,6 @@ interface AuthPanelProps {
 
 export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
   const [mode, setMode] = useState<"login" | "register">("register");
-  const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -30,8 +28,8 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
 
     try {
       const result = mode === "register"
-        ? await api.register({ email, username, password })
-        : await api.login({ email, password });
+        ? await api.register({ username, password })
+        : await api.login({ username, password });
       onAuthenticated(result.user);
     } catch (requestError) {
       setError(
@@ -116,35 +114,18 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
             </div>
 
             <form className="auth-form" onSubmit={submit}>
-              {mode === "register" && (
-                <label className="field-label">
-                  Имя пользователя
-                  <span className="input-wrap">
-                    <UserRound size={17} />
-                    <input
-                      autoComplete="username"
-                      value={username}
-                      onChange={(event) => setUsername(event.target.value)}
-                      placeholder="например, alex_dev"
-                      required
-                      minLength={3}
-                      maxLength={32}
-                    />
-                  </span>
-                </label>
-              )}
-
               <label className="field-label">
-                Почта
+                Имя пользователя
                 <span className="input-wrap">
-                  <Mail size={17} />
+                  <UserRound size={17} />
                   <input
-                    autoComplete="email"
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="name@example.com"
+                    autoComplete="username"
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    placeholder="например, alex_dev"
                     required
+                    minLength={mode === "register" ? 3 : 1}
+                    maxLength={32}
                   />
                 </span>
               </label>
@@ -158,7 +139,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder="Не менее 8 символов"
+                    placeholder={mode === "register" ? "Не менее 8 символов" : "Твой пароль"}
                     required
                     minLength={mode === "register" ? 8 : 1}
                     maxLength={128}

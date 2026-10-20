@@ -9,6 +9,7 @@ import {
   MessageCircle,
   Mic,
   MoreHorizontal,
+  Phone,
   Plus,
   Search,
   Settings,
@@ -25,7 +26,7 @@ interface ChatShellProps {
 }
 
 type Section = "messages" | "friends";
-const CallOverlay = lazy(() => import("./CallOverlay"));
+const CallPanel = lazy(() => import("./CallPanel"));
 
 export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [section, setSection] = useState<Section>("messages");
@@ -36,6 +37,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
   const [currentCall, setCurrentCall] = useState<Call | null>(null);
+  const [callMinimized, setCallMinimized] = useState(false);
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
   const initial = user.username.slice(0, 1).toUpperCase();
@@ -97,6 +99,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           const payload = JSON.parse(event.data) as { type?: string };
           if (payload.type === "call") {
             void refreshCalls().catch(() => undefined);
+            void refreshConversations().catch(() => undefined);
             return;
           }
           if (payload.type !== "message") return;
@@ -133,6 +136,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallError("");
     try {
       setCurrentCall(await api.startCall(activeConversationId));
+      setCallMinimized(false);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
     } finally {
@@ -147,6 +151,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     try {
       const call = await api.acceptCall(currentCall.id);
       setCurrentCall(call);
+      setCallMinimized(false);
       setActiveConversationId(call.conversation_id);
       setSection("messages");
       void refreshConversations().catch(() => undefined);
@@ -165,6 +170,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     try {
       await api.endCall(currentCall.id);
       setCurrentCall(null);
+      setCallMinimized(false);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось завершить звонок.");
     } finally {
@@ -319,6 +325,17 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <button className={section === "friends" ? "active" : ""} onClick={() => setSection("friends")} aria-label="Друзья"><Users size={18} /></button>
           </div>
           <div className="header-actions">
+            {section === "messages" && selectedConversation && (
+              <button
+                className="header-icon header-call-button"
+                onClick={() => void startCall()}
+                disabled={Boolean(currentCall) || callPending}
+                aria-label={`Позвонить ${selectedConversation.other_user.username}`}
+                title="Начать голосовой звонок"
+              >
+                <Phone size={19} />
+              </button>
+            )}
             <button className="header-icon" aria-label="Уведомления появятся позже" disabled>
               <Bell size={18} />
             </button>
@@ -343,15 +360,33 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </div>
         )}
 
+        {currentCall && (
+          <Suspense fallback={<div className="call-connect-note">Подготавливаем звонок...</div>}>
+            <CallPanel
+              call={currentCall}
+              currentUserId={user.id}
+              compact={callMinimized || section !== "messages" || activeConversationId !== currentCall.conversation_id}
+              error={callError}
+              pending={callPending}
+              onAccept={() => void acceptCall()}
+              onEnd={() => void endCall()}
+              onFocus={() => {
+                setCallMinimized(false);
+                setActiveConversationId(currentCall.conversation_id);
+                setSection("messages");
+              }}
+              onMinimize={() => setCallMinimized(true)}
+            />
+          </Suspense>
+        )}
+
         {section === "messages" && selectedConversation ? (
           <MessagesPanel
             conversation={selectedConversation}
             currentUserId={user.id}
             version={messageVersion}
             onSent={() => { void refreshConversations().catch(() => undefined); }}
-            onCall={() => void startCall()}
-            callDisabled={Boolean(currentCall) || callPending}
-            callError={callError}
+            callError={currentCall ? "" : callError}
           />
         ) : (
         <div className={`welcome-content ${section === "friends" ? "friends-content" : ""}`}>
@@ -435,18 +470,6 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </button>
         </div>
       </div>
-      {currentCall && (
-        <Suspense fallback={<div className="call-backdrop call-connecting">Подготавливаем звонок...</div>}>
-          <CallOverlay
-            call={currentCall}
-            currentUserId={user.id}
-            error={callError}
-            pending={callPending}
-            onAccept={() => void acceptCall()}
-            onEnd={() => void endCall()}
-          />
-        </Suspense>
-      )}
     </main>
   );
 }

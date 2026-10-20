@@ -16,9 +16,10 @@ class InvalidCredentialsError(Exception):
 
 
 async def register_user(session: AsyncSession, request: RegisterRequest) -> User:
-    existing_user = await session.scalar(
-        select(User).where(or_(User.email == request.email, User.username == request.username))
-    )
+    duplicate = User.username == request.username
+    if request.email is not None:
+        duplicate = or_(duplicate, User.email == request.email)
+    existing_user = await session.scalar(select(User).where(duplicate))
     if existing_user:
         raise AccountAlreadyExistsError
 
@@ -38,7 +39,12 @@ async def register_user(session: AsyncSession, request: RegisterRequest) -> User
 
 
 async def authenticate_user(session: AsyncSession, request: LoginRequest) -> User:
-    user = await session.scalar(select(User).where(User.email == request.email))
+    identifier = (
+        User.username == request.username
+        if request.username is not None
+        else User.email == request.email
+    )
+    user = await session.scalar(select(User).where(identifier))
     if user is None or not verify_password(request.password, user.password_hash):
         raise InvalidCredentialsError
     return user
