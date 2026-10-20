@@ -178,6 +178,10 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
     || (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg|CriOS/i.test(navigator.userAgent));
   return {
     audio: true,
+    // Keep the selected tab's audio, but do not feed the call's own playback back through system capture.
+    selfBrowserSurface: "exclude",
+    surfaceSwitching: "exclude",
+    systemAudio: "exclude",
     contentHint: value.screenShareContent,
     // Safari 17 can downscale display capture when explicit dimensions are supplied.
     resolution: safari ? undefined : value.screenShareQuality === "native"

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   AudioTrack,
   LiveKitRoom,
@@ -429,6 +429,42 @@ function CallControls({
   pending: boolean;
 }) {
   const { isScreenShareEnabled } = useLocalParticipant();
+  const room = useRoomContext();
+  const checkedShareId = useRef<string | null>(null);
+
+  const protectScreenAudio = useCallback(() => {
+    const video = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
+    const audio = room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio)?.track;
+    if (!video || !audio || checkedShareId.current === video.id) return;
+    const handle = (video as MediaStreamTrack & {
+      getCaptureHandle?: () => { handle: string; origin?: string } | null;
+    }).getCaptureHandle?.();
+    const isCoherentTab = handle?.handle === "coherent" && handle.origin === window.location.origin;
+    const isWholeScreen = (video.getSettings() as MediaTrackSettings & { displaySurface?: string }).displaySurface === "monitor";
+    if (!isCoherentTab && !isWholeScreen) return;
+    checkedShareId.current = video.id;
+    void room.localParticipant.unpublishTrack(audio).then(() => {
+      onError(isCoherentTab
+        ? "Звук вкладки Coherent отключён, чтобы не было эха."
+        : "Звук всего компьютера отключён. Для показа со звуком выбери отдельную вкладку.");
+    }).catch((reason: unknown) => {
+      onError(reason instanceof Error ? reason.message : "Не удалось отключить системный звук.");
+    });
+  }, [room, onError]);
+
+  useEffect(() => {
+    room.on(RoomEvent.LocalTrackPublished, protectScreenAudio);
+    return () => { room.off(RoomEvent.LocalTrackPublished, protectScreenAudio); };
+  }, [room, protectScreenAudio]);
+
+  const onScreenShareChange = useCallback((enabled: boolean) => {
+    if (enabled) {
+      protectScreenAudio();
+    } else {
+      checkedShareId.current = null;
+    }
+  }, [protectScreenAudio]);
+
   function change(patch: Partial<MediaPreferences>) {
     void onMediaChange(patch).catch((reason: unknown) => {
       onError(reason instanceof Error ? reason.message : "Не удалось изменить устройство.");
@@ -442,7 +478,7 @@ function CallControls({
       <button className="call-control call-control-camera" onClick={() => change({ cameraEnabled: !media.cameraEnabled })} aria-label={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} title={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"}>
         {media.cameraEnabled ? <Camera size={20} /> : <CameraOff size={20} />}
       </button>
-      <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)}>
+      <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)} onChange={onScreenShareChange} onClick={() => onError("")}>
         <MonitorUp size={20} />
       </TrackToggle>
       <button className="call-control call-control-end" onClick={onEnd} disabled={pending} aria-label="Выйти из звонка" title="Выйти из звонка">
