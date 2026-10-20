@@ -68,7 +68,9 @@ async def create_call(
             status_code=409, detail="В звонке может быть не более 10 участников"
         ) from error
     except CallInviteError as error:
-        raise HTTPException(status_code=400, detail="Некорректный список участников") from error
+        raise HTTPException(
+            status_code=400, detail=str(error) or "Некорректный список участников"
+        ) from error
     await publish_call(request, call)
     return call
 
@@ -128,7 +130,9 @@ async def invite_call_participants(
             status_code=409, detail="В звонке может быть не более 10 участников"
         ) from error
     except CallInviteError as error:
-        raise HTTPException(status_code=400, detail="Некорректный список участников") from error
+        raise HTTPException(
+            status_code=400, detail=str(error) or "Некорректный список участников"
+        ) from error
     await publish_call(request, call)
     return call
 

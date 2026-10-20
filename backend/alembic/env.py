@@ -9,6 +9,7 @@ from coherent_api.db.base import Base
 from coherent_api.models import call as call_model  # noqa: F401
 from coherent_api.models import call_member as call_member_model  # noqa: F401
 from coherent_api.models import conversation as conversation_model  # noqa: F401
+from coherent_api.models import conversation_member as conversation_member_model  # noqa: F401
 from coherent_api.models import friend_request as friend_request_model  # noqa: F401
 from coherent_api.models import message as message_model  # noqa: F401
 from coherent_api.models import user as user_model  # noqa: F401

@@ -8,20 +8,25 @@ from coherent_api.models.user import User
 from coherent_api.schemas.messages import (
     ConversationResponse,
     ConversationsResponse,
+    CreateGroupRequest,
     MessageResponse,
     MessagesResponse,
     OpenConversationRequest,
+    RenameConversationRequest,
     SendMessageRequest,
 )
 from coherent_api.services.messages import (
     ConversationNotFoundError,
     ConversationUserNotFoundError,
+    GroupMembershipError,
     MessageCursorNotFoundError,
     SelfConversationError,
+    conversation_member_ids,
+    create_group,
     list_conversations,
     list_messages,
     open_conversation,
-    other_user_id,
+    rename_group,
     send_message,
 )
 
@@ -43,6 +48,42 @@ async def create_or_open_conversation(
         raise HTTPException(status_code=400, detail="Нельзя написать самому себе") from error
     except ConversationUserNotFoundError as error:
         raise HTTPException(status_code=404, detail="Пользователь не найден") from error
+
+
+@router.post("/groups", response_model=ConversationResponse, status_code=status.HTTP_201_CREATED)
+async def create_group_conversation(
+    body: CreateGroupRequest, request: Request, user: CurrentUser, session: SessionDep
+) -> ConversationResponse:
+    try:
+        result = await create_group(session, user, body.user_ids, body.name)
+    except GroupMembershipError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except ConversationUserNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Пользователь не найден") from error
+    await request.app.state.message_events.publish(
+        tuple(member.id for member in result.members), {"type": "conversation"}
+    )
+    return result
+
+
+@router.patch("/{conversation_id}", response_model=ConversationResponse)
+async def rename_group_conversation(
+    conversation_id: UUID,
+    body: RenameConversationRequest,
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+) -> ConversationResponse:
+    try:
+        result = await rename_group(session, user, conversation_id, body.name)
+    except ConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    except GroupMembershipError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    await request.app.state.message_events.publish(
+        tuple(member.id for member in result.members), {"type": "conversation"}
+    )
+    return result
 
 
 @router.get("/{conversation_id}/messages", response_model=MessagesResponse)
@@ -79,7 +120,7 @@ async def post_message(
 
     result = MessageResponse.model_validate(message)
     await request.app.state.message_events.publish(
-        (user.id, other_user_id(conversation, user.id)),
+        await conversation_member_ids(session, conversation),
         {
             "type": "message",
             "conversation_id": str(conversation_id),

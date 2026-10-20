@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, MessageCircle, Send, UserCheck, UserPlus } from "lucide-react";
-import { api, type Conversation, type Message, type UserSearchResult } from "../lib/api";
+import { Check, Clock3, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound } from "lucide-react";
+import { api, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
@@ -8,6 +8,7 @@ interface MessagesPanelProps {
   version: number;
   onSent: () => void;
   callError: string;
+  onRename: (conversationId: string, name: string) => Promise<void>;
 }
 
 function mergeMessages(first: Message[], second: Message[]): Message[] {
@@ -28,6 +29,7 @@ export default function MessagesPanel({
   version,
   onSent,
   callError,
+  onRename,
 }: MessagesPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -40,28 +42,34 @@ export default function MessagesPanel({
   const [relationship, setRelationship] = useState<UserSearchResult | null>(null);
   const [friendBusy, setFriendBusy] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [renaming, setRenaming] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<string | null>(null);
   const hasLoadedPage = useRef(false);
   const nearBottom = useRef(true);
-  const relationshipTarget = useRef(conversation.other_user.id);
-  relationshipTarget.current = conversation.other_user.id;
+  const relationshipTarget = useRef(conversation.other_user?.id);
+  relationshipTarget.current = conversation.other_user?.id;
+  const title = conversationTitle(conversation);
+  const peer = conversation.other_user;
 
   useEffect(() => {
     let active = true;
     setRelationship(null);
     setFriendError("");
-    api.relationship(conversation.other_user.id).then((result) => {
+    if (!peer) return;
+    api.relationship(peer.id).then((result) => {
       if (active) setRelationship(result);
     }).catch((reason: unknown) => {
       if (active) setFriendError(reason instanceof Error ? reason.message : "Не удалось загрузить статус дружбы.");
     });
     return () => { active = false; };
-  }, [conversation.other_user.id]);
+  }, [peer?.id]);
 
   async function friendAction() {
-    if (!relationship || friendBusy || relationship.relationship === "friends") return;
-    const targetId = conversation.other_user.id;
+    if (!relationship || !peer || friendBusy || relationship.relationship === "friends") return;
+    const targetId = peer.id;
     setFriendBusy(true);
     setFriendError("");
     try {
@@ -84,6 +92,22 @@ export default function MessagesPanel({
     }
   }
 
+  async function saveGroupName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = groupName.trim();
+    if (!name || renameBusy) return;
+    setRenameBusy(true);
+    setError("");
+    try {
+      await onRename(conversation.id, name);
+      setRenaming(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось переименовать группу.");
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
   useEffect(() => {
     const changed = conversationRef.current !== conversation.id;
     if (changed) {
@@ -95,6 +119,7 @@ export default function MessagesPanel({
       setDraft("");
       setLoading(true);
       setError("");
+      setRenaming(false);
     }
 
     let active = true;
@@ -175,11 +200,14 @@ export default function MessagesPanel({
   return (
     <div className="messages-panel">
       <div className="messages-intro">
-        <span className="avatar avatar-user">{conversation.other_user.username[0]?.toUpperCase()}</span>
+        <span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={25} /> : title[0]?.toUpperCase()}</span>
         <div className="messages-intro-copy">
           <div className="messages-intro-heading">
-            <h1>{conversation.other_user.username}</h1>
-            {relationship && (
+            <h1>{title}</h1>
+            {conversation.kind === "group" && (
+              <button className="chat-friend-button" onClick={() => { setGroupName(title); setRenaming(true); }} title="Изменить название группы" aria-label="Изменить название группы"><Pencil size={14} /> Изменить</button>
+            )}
+            {peer && relationship && (
               <button
                 className={`chat-friend-button chat-friend-${relationship.relationship}`}
                 onClick={() => void friendAction()}
@@ -197,16 +225,23 @@ export default function MessagesPanel({
               </button>
             )}
           </div>
-          <p>Личная беседа. Сообщения сохраняются в Coherent.</p>
+          <p>{conversation.kind === "group"
+            ? `Общий чат · ${conversation.members.map((member) => member.username).join(", ")}`
+            : "Личная беседа. Сообщения сохраняются в Coherent."}</p>
         </div>
       </div>
+      {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>
+        <input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={64} aria-label="Название группы" autoFocus />
+        <button type="submit" disabled={renameBusy || !groupName.trim()}>Сохранить</button>
+        <button type="button" onClick={() => setRenaming(false)}>Отмена</button>
+      </form>}
       {friendError && <p className="call-inline-error" role="alert">{friendError}</p>}
       {callError && <p className="call-inline-error" role="alert">{callError}</p>}
 
       <div
         className="message-list"
         ref={listRef}
-        aria-label={`Сообщения с ${conversation.other_user.username}`}
+        aria-label={`Сообщения: ${title}`}
         onScroll={(event) => {
           const element = event.currentTarget;
           nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
@@ -222,19 +257,20 @@ export default function MessagesPanel({
           <div className="message-empty">
             <MessageCircle size={27} />
             <strong>Начни разговор</strong>
-            <span>Напиши первое сообщение для {conversation.other_user.username}.</span>
+            <span>{conversation.kind === "group" ? "Напиши первое сообщение участникам группы." : `Напиши первое сообщение для ${title}.`}</span>
           </div>
         )}
         {messages.map((message) => {
           const own = message.sender_id === currentUserId;
+          const author = own ? "Ты" : conversation.members.find((member) => member.id === message.sender_id)?.username ?? "Участник";
           return (
             <div className={`message-row ${own ? "message-own" : ""}`} key={message.id}>
               <span className="avatar avatar-user message-avatar">
-                {(own ? "Я" : conversation.other_user.username[0]?.toUpperCase())}
+                {own ? "Я" : author[0]?.toUpperCase()}
               </span>
               <div className="message-entry">
                 <div className="message-meta">
-                  <strong>{own ? "Ты" : conversation.other_user.username}</strong>
+                  <strong>{author}</strong>
                   <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
                 </div>
                 <p>{message.body}</p>
@@ -255,7 +291,7 @@ export default function MessagesPanel({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Написать ${conversation.other_user.username}...`}
+            placeholder={conversation.kind === "group" ? `Написать в ${title}...` : `Написать ${title}...`}
             aria-label="Текст сообщения"
             maxLength={4000}
             rows={2}

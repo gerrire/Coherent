@@ -22,7 +22,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { ConnectionState, Track, type Room } from "livekit-client";
-import { api, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
+import { api, conversationTitle, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
 import {
   cameraCapture,
   loadMediaPreferences,
@@ -80,7 +80,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
     && !callCompact);
   const visibleConversations = conversations.filter((item) =>
-    item.other_user.username.toLowerCase().includes(conversationQuery.trim().toLowerCase()),
+    conversationTitle(item).toLowerCase().includes(conversationQuery.trim().toLowerCase()),
   );
 
   const refreshConversations = useCallback(async () => {
@@ -139,7 +139,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             void refreshConversations().catch(() => undefined);
             return;
           }
-          if (payload.type !== "message") return;
+          if (payload.type !== "message" && payload.type !== "conversation") return;
           void refreshConversations().catch(() => undefined);
           setMessageVersion((current) => current + 1);
         } catch {
@@ -280,14 +280,33 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     });
   }
 
-  async function startCall(inviteeIds: string[] = []) {
+  async function startCall() {
     if (!activeConversationId || currentCall || callPending) return;
     setCallPending(true);
     setCallError("");
     try {
-      setCurrentCall(await api.startCall(activeConversationId, inviteeIds));
+      setCurrentCall(await api.startCall(activeConversationId));
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
+      throw reason;
+    } finally {
+      setCallPending(false);
+    }
+  }
+
+  async function createGroupCall(userIds: string[]) {
+    if (currentCall || callPending) return;
+    setCallPending(true);
+    setCallError("");
+    try {
+      const group = await api.createGroup(userIds);
+      setConversations((current) => [group, ...current]);
+      setActiveConversationId(group.id);
+      setSection("messages");
+      setShowWelcome(false);
+      setCurrentCall(await api.startCall(group.id));
+    } catch (reason) {
+      setCallError(reason instanceof Error ? reason.message : "Не удалось создать групповой звонок.");
       throw reason;
     } finally {
       setCallPending(false);
@@ -298,6 +317,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     if (!currentCall) return;
     const call = await api.inviteCall(currentCall.id, userIds);
     setCurrentCall(call);
+    void refreshConversations().catch(() => undefined);
+  }
+
+  async function renameGroup(conversationId: string, name: string) {
+    const updated = await api.renameGroup(conversationId, name);
+    setConversations((current) => current.map((item) => item.id === conversationId ? updated : item));
   }
 
   async function acceptCall() {
@@ -460,7 +485,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             className={`sidebar-nav-item ${section === "messages" ? "active" : ""}`}
             onClick={openMessages}
           >
-            <MessageCircle size={18} /> Личные сообщения
+            <MessageCircle size={18} /> Сообщения
           </button>
           <div className={`sidebar-nav-friends ${section === "friends" ? "active" : ""}`}>
             <button className="sidebar-nav-item" onClick={() => openFriends("all")}>
@@ -471,8 +496,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         </div>
 
         <div className="sidebar-section-title">
-          <span>ЛИЧНЫЕ СООБЩЕНИЯ</span>
-          <button aria-label="Начать беседу" title="Найти собеседника" onClick={() => openFriends("search")}>
+          <span>БЕСЕДЫ</span>
+          <button aria-label="Создать группу" title="Создать групповой звонок" onClick={() => setShowGroupPicker(true)} disabled={Boolean(currentCall) || callPending}>
             <Plus size={16} />
           </button>
         </div>
@@ -489,9 +514,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                   setShowWelcome(false);
                 }}
               >
-                <span className="avatar avatar-user">{conversation.other_user.username[0]?.toUpperCase()}</span>
+                <span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={18} /> : conversationTitle(conversation)[0]?.toUpperCase()}</span>
                 <span className="conversation-item-copy">
-                  <strong>{conversation.other_user.username}</strong>
+                  <strong>{conversationTitle(conversation)}</strong>
                   <small>{conversation.last_message?.body ?? "Беседа начата"}</small>
                 </span>
               </button>
@@ -518,7 +543,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <header className="content-header">
           <div className="header-location">
             <MessageCircle size={19} />
-            <span>{section === "messages" ? selectedConversation?.other_user.username ?? (currentCall?.status === "active" ? "Групповой звонок" : "Сообщения") : "Друзья"}</span>
+            <span>{section === "messages" ? selectedConversation ? conversationTitle(selectedConversation) : (currentCall?.status === "active" ? "Групповой звонок" : "Сообщения") : "Друзья"}</span>
             <span className="header-divider" />
             <span className="header-subtle">Личное пространство</span>
           </div>
@@ -532,13 +557,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 className="header-icon header-call-button"
                 onClick={() => void startCall().catch(() => undefined)}
                 disabled={Boolean(currentCall) || callPending}
-                aria-label={`Позвонить ${selectedConversation.other_user.username}`}
+                aria-label={`Позвонить: ${conversationTitle(selectedConversation)}`}
                 title="Начать голосовой звонок"
               >
                 <Phone size={19} />
               </button>
             )}
-            {section === "messages" && selectedConversation && (
+            {section === "messages" && selectedConversation?.kind === "direct" && (
               <button
                 className="header-icon header-call-button"
                 onClick={() => setShowGroupPicker(true)}
@@ -567,7 +592,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 className={activeConversationId === conversation.id ? "active" : ""}
                 onClick={() => { setActiveConversationId(conversation.id); setShowWelcome(false); }}
               >
-                {conversation.other_user.username}
+                {conversationTitle(conversation)}
               </button>
             ))}
           </div>
@@ -577,6 +602,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           <Suspense fallback={<div className="call-connect-note">Подготавливаем звонок...</div>}>
             <CallPanel
               call={currentCall}
+              conversationTitle={conversations.find((item) => item.id === currentCall.conversation_id)?.name ?? undefined}
+              isGroupConversation={conversations.find((item) => item.id === currentCall.conversation_id)?.kind === "group"}
               currentUserId={user.id}
               compact={callCompact}
               error={callError}
@@ -606,6 +633,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             version={messageVersion}
             onSent={() => { void refreshConversations().catch(() => undefined); }}
             callError={currentCall ? "" : callError}
+            onRename={renameGroup}
           />
         ) : (
         <div className={`welcome-content ${section === "friends" ? "friends-content" : ""}`}>
@@ -735,13 +763,15 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       {settingsOpen && !callPanelReady && (
         <MediaSettingsPanel media={media} audioProcessingState={audioProcessingState} onChange={changeMedia} onClose={() => setSettingsOpen(false)} />
       )}
-      {showGroupPicker && selectedConversation && (
+      {showGroupPicker && (
         <ParticipantPicker
           title="Новый групповой звонок"
-          submitLabel="Позвонить"
-          excludedIds={[user.id, selectedConversation.other_user.id]}
-          maxSelect={8}
-          onSubmit={(ids) => startCall(ids)}
+          submitLabel="Создать и позвонить"
+          excludedIds={[user.id]}
+          suggestedIds={selectedConversation?.kind === "direct" && selectedConversation.other_user ? [selectedConversation.other_user.id] : []}
+          minSelect={2}
+          maxSelect={9}
+          onSubmit={createGroupCall}
           onClose={() => setShowGroupPicker(false)}
         />
       )}

@@ -8,6 +8,15 @@ class OpenConversationRequest(BaseModel):
     user_id: UUID
 
 
+class CreateGroupRequest(BaseModel):
+    user_ids: list[UUID] = Field(min_length=2, max_length=9)
+    name: str | None = Field(default=None, max_length=64)
+
+
+class RenameConversationRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+
+
 class SendMessageRequest(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
 
@@ -37,7 +46,10 @@ class ConversationUser(BaseModel):
 
 class ConversationResponse(BaseModel):
     id: UUID
-    other_user: ConversationUser
+    kind: str
+    name: str | None = None
+    members: list[ConversationUser] = Field(default_factory=list)
+    other_user: ConversationUser | None = None
     created_at: datetime
     updated_at: datetime
     last_message: MessageResponse | None = None

@@ -45,10 +45,19 @@ export interface Message {
 
 export interface Conversation {
   id: string;
-  other_user: { id: string; username: string };
+  kind: "direct" | "group";
+  name: string | null;
+  members: Array<{ id: string; username: string }>;
+  other_user: { id: string; username: string } | null;
   created_at: string;
   updated_at: string;
   last_message: Message | null;
+}
+
+export function conversationTitle(conversation: Conversation): string {
+  return conversation.kind === "group"
+    ? conversation.name || "Групповой чат"
+    : conversation.other_user?.username || "Личная беседа";
 }
 
 export interface MessagePage {
@@ -171,6 +180,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_id: userId }),
     }),
+  createGroup: (userIds: string[], name?: string) =>
+    request<Conversation>("/api/v1/conversations/groups", {
+      method: "POST",
+      body: JSON.stringify({ user_ids: userIds, name }),
+    }),
+  renameGroup: (conversationId: string, name: string) =>
+    request<Conversation>(`/api/v1/conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
   messages: (conversationId: string, before?: string) =>
     request<MessagePage>(
       `/api/v1/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
@@ -181,10 +200,9 @@ export const api = {
       body: JSON.stringify({ body }),
     }),
   currentCalls: () => request<{ calls: Call[] }>("/api/v1/calls/current"),
-  startCall: (conversationId: string, inviteeIds: string[] = []) =>
+  startCall: (conversationId: string) =>
     request<Call>(`/api/v1/conversations/${conversationId}/calls`, {
       method: "POST",
-      body: JSON.stringify({ invitee_ids: inviteeIds }),
     }),
   inviteCall: (callId: string, userIds: string[]) =>
     request<Call>(`/api/v1/calls/${callId}/invite`, {

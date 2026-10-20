@@ -16,7 +16,14 @@ from coherent_api.schemas.calls import (
     CallResponse,
     CurrentCallsResponse,
 )
-from coherent_api.services.messages import get_conversation, other_user_id
+from coherent_api.services.messages import (
+    GroupMembershipError,
+    add_group_members,
+    conversation_member_ids,
+    get_conversation,
+    other_user_id,
+    validate_friends,
+)
 
 RING_SECONDS = 60
 MAX_CALL_HOURS = 4
@@ -88,7 +95,9 @@ async def call_response(session: AsyncSession, call: Call) -> CallResponse:
 async def expire_calls(session: AsyncSession, user_ids: tuple[UUID, ...]) -> bool:
     now = datetime.now(UTC)
     calls = await session.scalars(
-        select(Call).join(CallMember, CallMember.call_id == Call.id).where(
+        select(Call)
+        .join(CallMember, CallMember.call_id == Call.id)
+        .where(
             Call.status.in_(("ringing", "active")),
             Call.expires_at <= now,
             CallMember.user_id.in_(user_ids),
@@ -150,17 +159,28 @@ async def start_call(
     session: AsyncSession, user: User, conversation_id: UUID, invitee_ids: list[UUID] | None = None
 ) -> CallResponse:
     conversation = await get_conversation(session, user, conversation_id)
-    callee_id = other_user_id(conversation, user.id)
     extras = set(invitee_ids or ())
-    if user.id in extras or callee_id in extras:
-        raise CallInviteError
-    participant_ids = tuple(sorted((user.id, callee_id, *extras)))
+    if conversation.kind == "group":
+        if extras:
+            raise CallInviteError
+        participant_ids = tuple(sorted(await conversation_member_ids(session, conversation)))
+        others = sorted(set(participant_ids) - {user.id})
+        if not others:
+            raise CallInviteError
+        callee_id = others[0]
+    else:
+        callee_id = other_user_id(conversation, user.id)
+        if extras:
+            raise CallInviteError
+        participant_ids = tuple(sorted((user.id, callee_id)))
     if len(participant_ids) > MAX_CALL_MEMBERS:
         raise CallFullError
     # Lock accounts in a stable order so two simultaneous calls cannot reserve one user twice.
-    users = list(await session.scalars(
-        select(User).where(User.id.in_(participant_ids)).order_by(User.id).with_for_update()
-    ))
+    users = list(
+        await session.scalars(
+            select(User).where(User.id.in_(participant_ids)).order_by(User.id).with_for_update()
+        )
+    )
     if len(users) != len(participant_ids):
         raise CallInviteError
     await expire_calls(session, participant_ids)
@@ -179,9 +199,7 @@ async def start_call(
         expires_at=now + timedelta(seconds=RING_SECONDS),
     )
     session.add(call)
-    session.add(
-        CallMember(call_id=call_id, user_id=user.id, state="joined", joined_at=now)
-    )
+    session.add(CallMember(call_id=call_id, user_id=user.id, state="joined", joined_at=now))
     for target_id in sorted(set(participant_ids) - {user.id}):
         session.add(CallMember(call_id=call_id, user_id=target_id, state="invited"))
     await session.commit()
@@ -242,17 +260,17 @@ async def end_call(session: AsyncSession, user: User, call_id: UUID) -> tuple[Ca
         call.status = "cancelled"
     elif call.status == "ringing":
         invited = await session.scalar(
-            select(func.count()).select_from(CallMember).where(
-                CallMember.call_id == call_id, CallMember.state == "invited"
-            )
+            select(func.count())
+            .select_from(CallMember)
+            .where(CallMember.call_id == call_id, CallMember.state == "invited")
         )
         if not invited:
             call.status = "declined"
     elif call.status == "active":
         joined = await session.scalar(
-            select(func.count()).select_from(CallMember).where(
-                CallMember.call_id == call_id, CallMember.state == "joined"
-            )
+            select(func.count())
+            .select_from(CallMember)
+            .where(CallMember.call_id == call_id, CallMember.state == "joined")
         )
         total = await session.scalar(
             select(func.count()).select_from(CallMember).where(CallMember.call_id == call_id)
@@ -273,22 +291,24 @@ async def invite_to_call(
     targets = set(target_ids)
     if not targets or user.id in targets:
         raise CallInviteError
-    users = list(await session.scalars(
-        select(User).where(User.id.in_(targets)).order_by(User.id).with_for_update()
-    ))
+    users = list(
+        await session.scalars(
+            select(User).where(User.id.in_(targets)).order_by(User.id).with_for_update()
+        )
+    )
     if len(users) != len(targets):
         raise CallInviteError
     call = await get_call(session, user, call_id)
+    conversation = await get_conversation(session, user, call.conversation_id)
+    if conversation.kind != "group":
+        raise CallInviteError("Создайте групповой чат для общего звонка")
     inviter = await session.get(CallMember, (call_id, user.id))
     if call.status != "active" or is_expired(call) or inviter is None or inviter.state != "joined":
         raise CallStateError
-    members = list(await session.scalars(
-        select(CallMember).where(CallMember.call_id == call_id)
-    ))
+    members = list(await session.scalars(select(CallMember).where(CallMember.call_id == call_id)))
     by_user = {member.user_id: member for member in members}
     if any(
-        by_user.get(target) and by_user[target].state in ("invited", "joined")
-        for target in targets
+        by_user.get(target) and by_user[target].state in ("invited", "joined") for target in targets
     ):
         raise CallInviteError
     occupied = sum(member.state in ("invited", "joined") for member in members)
@@ -297,6 +317,14 @@ async def invite_to_call(
     await expire_calls(session, tuple(sorted(targets)))
     if await busy_call(session, tuple(sorted(targets))) is not None:
         raise CallBusyError
+    try:
+        await validate_friends(session, user.id, targets)
+        existing_group_members = set(await conversation_member_ids(session, conversation))
+        newcomers = targets - existing_group_members
+        if newcomers:
+            await add_group_members(session, user, conversation, newcomers)
+    except GroupMembershipError as error:
+        raise CallInviteError(str(error)) from error
     now = datetime.now(UTC)
     for target_id in targets:
         existing = by_user.get(target_id)
