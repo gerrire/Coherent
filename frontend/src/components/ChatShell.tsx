@@ -25,6 +25,7 @@ import { ConnectionState, Track, type Room } from "livekit-client";
 import { api, conversationTitle, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
 import {
   cameraCapture,
+  cameraPublish,
   loadMediaPreferences,
   microphoneCapture,
   readAudioProcessing,
@@ -222,14 +223,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             await participant.setCameraEnabled(
               next.cameraEnabled,
               cameraCapture(next),
-              { videoCodec: next.videoCodec },
+              cameraPublish(next),
             );
           } catch (reason) {
             if (cameraCaptureChanged && current.cameraEnabled) {
               await participant.setCameraEnabled(
                 true,
                 cameraCapture(current),
-                { videoCodec: current.videoCodec },
+                cameraPublish(current),
               ).catch(() => undefined);
             }
             throw reason;

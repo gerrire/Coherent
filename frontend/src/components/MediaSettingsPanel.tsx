@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Settings2, X } from "lucide-react";
-import { supportedAudioProcessing, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
+import { supportedAudioProcessing, supportedVideoCodec, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
 
 interface MediaSettingsPanelProps {
   media: MediaPreferences;
@@ -121,13 +121,29 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <select disabled={busy} value={media.videoCodec} onChange={(event) => void change({ videoCodec: event.target.value as VideoCodec })}>
             {codecs.map((codec) => <option key={codec} value={codec}>{codecNames[codec]}</option>)}
           </select>
+          {supportedVideoCodec(media.videoCodec) !== media.videoCodec && <small>Браузер не поддерживает {codecNames[media.videoCodec]}; используется VP8.</small>}
         </label>
         <label>
           Качество камеры
           <select disabled={busy} value={media.videoQuality} onChange={(event) => void change({ videoQuality: event.target.value as MediaPreferences["videoQuality"] })}>
             <option value="360p">Экономия · 360p</option>
             <option value="720p">Сбалансировано · 720p</option>
-            <option value="1080p">Высокое · 1080p</option>
+            <option value="1080p">Максимум · 1080p</option>
+          </select>
+        </label>
+        <label>
+          Качество демонстрации экрана
+          <select disabled={busy} value={media.screenShareQuality} onChange={(event) => void change({ screenShareQuality: event.target.value as MediaPreferences["screenShareQuality"] })}>
+            <option value="1080p">Чёткое · 1080p, 30 кадров/с</option>
+            <option value="native">Оригинал · до 4K, 30 кадров/с</option>
+          </select>
+          <small>Оригинал требует больше ресурсов. Параметры демонстрации применятся при следующем включении показа экрана.</small>
+        </label>
+        <label>
+          Тип демонстрации
+          <select disabled={busy} value={media.screenShareContent} onChange={(event) => void change({ screenShareContent: event.target.value as MediaPreferences["screenShareContent"] })}>
+            <option value="text">Текст и приложения · чёткость</option>
+            <option value="motion">Видео и игры · плавность</option>
           </select>
         </label>
         <label className="media-setting-check">

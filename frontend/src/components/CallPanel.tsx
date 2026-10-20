@@ -33,7 +33,10 @@ import { Track, type Participant, type Room } from "livekit-client";
 import { api, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
+  cameraPublish,
   microphoneCapture,
+  screenShareCapture,
+  screenSharePublish,
   type AudioProcessingState,
   type MediaPreferences,
 } from "../lib/media";
@@ -372,7 +375,7 @@ function CallMediaBridge({
         await room.localParticipant.setCameraEnabled(
           true,
           cameraCapture(selected),
-          { videoCodec: selected.videoCodec },
+          cameraPublish(selected),
         );
       }
       if (selected.speakerId) {
@@ -419,7 +422,7 @@ function CallControls({
       <button className="call-control call-control-camera" onClick={() => change({ cameraEnabled: !media.cameraEnabled })} aria-label={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} title={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"}>
         {media.cameraEnabled ? <Camera size={20} /> : <CameraOff size={20} />}
       </button>
-      <TrackToggle source={Track.Source.ScreenShare} captureOptions={{ audio: true }} publishOptions={{ videoCodec: media.videoCodec }} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)}>
+      <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)}>
         <MonitorUp size={20} />
       </TrackToggle>
       <button className="call-control call-control-end" onClick={onEnd} disabled={pending} aria-label="Выйти из звонка" title="Выйти из звонка">
