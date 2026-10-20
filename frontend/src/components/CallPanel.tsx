@@ -29,7 +29,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { Track, type Participant, type Room } from "livekit-client";
+import { ConnectionQuality, RoomEvent, Track, type Participant, type Room } from "livekit-client";
 import { api, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
@@ -180,6 +180,7 @@ export default function CallPanel({
         isFullscreen={isFullscreen || isViewportFullscreen}
         media={media}
         viewMode={viewMode}
+        onModeChange={setViewMode}
         tileDensity={tileDensity}
         onRoomReady={onRoomReady}
         onMediaChange={onMediaChange}
@@ -199,7 +200,7 @@ export default function CallPanel({
           <span>Раскладка</span>
           <div className="call-view-options">
             <button className={viewMode === "grid" ? "active" : ""} onClick={() => setViewMode("grid")}>Сетка</button>
-            <button className={viewMode === "focus" ? "active" : ""} onClick={() => setViewMode("focus")}>Активный участник</button>
+            <button className={viewMode === "focus" ? "active" : ""} onClick={() => setViewMode("focus")}>Крупный план</button>
           </div>
           <span>Размер плиток</span>
           <div className="call-view-options">
@@ -229,6 +230,7 @@ function CallRoom({
   isFullscreen,
   media,
   viewMode,
+  onModeChange,
   tileDensity,
   onRoomReady,
   onMediaChange,
@@ -247,6 +249,7 @@ function CallRoom({
   isFullscreen: boolean;
   media: MediaPreferences;
   viewMode: ViewMode;
+  onModeChange: (mode: ViewMode) => void;
   tileDensity: TileDensity;
   onRoomReady: (room: Room | null) => void;
   onMediaChange: (patch: Partial<MediaPreferences>) => Promise<void>;
@@ -265,7 +268,15 @@ function CallRoom({
   const [connected, setConnected] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [participantVolumes, setParticipantVolumes] = useState(loadParticipantVolumes);
-  const roomOptions = useMemo(() => ({ adaptiveStream: true, dynacast: true }), []);
+  const roomOptions = useMemo(() => ({
+    adaptiveStream: true,
+    dynacast: true,
+    publishDefaults: {
+      audioPreset: { maxBitrate: 48_000, priority: "high" as const },
+      dtx: false,
+      red: true,
+    },
+  }), []);
 
   useEffect(() => {
     try { localStorage.setItem(VOLUME_STORAGE_KEY, JSON.stringify(participantVolumes)); } catch { /* Storage may be disabled. */ }
@@ -338,7 +349,8 @@ function CallRoom({
       <CallMediaBridge connected={connected} media={media} onRoomReady={onRoomReady} onError={setMediaError} />
       <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} />
       {header}
-      <CallStage call={call} mode={viewMode} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} />
+      <CallConnectionNotice />
+      <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} />
       <div className="call-surface-controls">
         <StartAudio className="call-start-audio" label="Включить звук" />
         <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
@@ -432,6 +444,31 @@ function CallControls({
   );
 }
 
+function CallConnectionNotice() {
+  const room = useRoomContext();
+  const [weakConnection, setWeakConnection] = useState(false);
+
+  useEffect(() => {
+    const update = () => {
+      const participants = [room.localParticipant, ...room.remoteParticipants.values()];
+      setWeakConnection(participants.some((participant) =>
+        participant.connectionQuality === ConnectionQuality.Poor
+        || participant.connectionQuality === ConnectionQuality.Lost
+      ));
+    };
+    update();
+    room.on(RoomEvent.ConnectionQualityChanged, update);
+    room.on(RoomEvent.ParticipantDisconnected, update);
+    return () => {
+      room.off(RoomEvent.ConnectionQualityChanged, update);
+      room.off(RoomEvent.ParticipantDisconnected, update);
+    };
+  }, [room]);
+
+  if (!weakConnection) return null;
+  return <p className="call-network-notice">Связь нестабильна: звук может прерываться. Если идёт демонстрация, попробуй режим 720p в настройках видео.</p>;
+}
+
 function CallAudioRenderer({ muted, volumes }: { muted: boolean; volumes: Record<string, number> }) {
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio], { onlySubscribed: true });
   return <>{tracks.filter((track) => !track.participant.isLocal).map((track) => (
@@ -443,61 +480,75 @@ function CallAudioRenderer({ muted, volumes }: { muted: boolean; volumes: Record
   ))}</>;
 }
 
-function ParticipantTile({ participant, camera, volume, volumeOpen, onToggleVolume, onVolumeChange }: {
+function ParticipantTile({ participant, camera, volume, onVolumeOpen }: {
   participant: Participant;
   camera: ComponentProps<typeof VideoTrack>["trackRef"] | undefined;
   volume: number;
-  volumeOpen: boolean;
-  onToggleVolume: () => void;
-  onVolumeChange: (volume: number) => void;
+  onVolumeOpen: () => void;
 }) {
   const isSpeaking = useIsSpeaking(participant);
   const label = participant.isLocal ? "Ты" : participant.name || "Участник";
   return (
-    <div className={`call-tile ${isSpeaking ? "call-tile-speaking" : ""}`} onContextMenu={participant.isLocal ? undefined : (event) => { event.preventDefault(); onToggleVolume(); }}>
+    <div className={`call-tile ${isSpeaking ? "call-tile-speaking" : ""}`} onContextMenu={participant.isLocal ? undefined : (event) => { event.preventDefault(); onVolumeOpen(); }}>
       {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
       <span className="call-tile-name">{label}</span>
-      {!participant.isLocal && <>
-        <button type="button" className="call-tile-volume-button" onClick={onToggleVolume} title={`Громкость: ${label}`} aria-label={`Громкость: ${label}`} aria-expanded={volumeOpen}>
+      {!participant.isLocal && (
+        <button type="button" className="call-tile-volume-button" onClick={onVolumeOpen} title={`Громкость: ${label}`} aria-label={`Громкость: ${label}`}>
           {volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
         </button>
-        {volumeOpen && <div className="call-tile-volume-panel" onClick={(event) => event.stopPropagation()}>
-          <label htmlFor={`volume-${participant.identity}`}>Громкость {label}: {volume}%</label>
-          <input id={`volume-${participant.identity}`} type="range" min="0" max="100" value={volume} onChange={(event) => onVolumeChange(Number(event.target.value))} />
-        </div>}
-      </>}
+      )}
     </div>
   );
 }
 
-function CallStage({ call, mode, density, volumes, onVolumeChange }: {
+function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange }: {
   call: Call;
   mode: ViewMode;
+  onModeChange: (mode: ViewMode) => void;
   density: TileDensity;
   volumes: Record<string, number>;
   onVolumeChange: (userId: string, volume: number) => void;
 }) {
   const participants = useParticipants();
   const [volumeOpenFor, setVolumeOpenFor] = useState<string | null>(null);
+  const [selectedScreenOwner, setSelectedScreenOwner] = useState<string | null>(null);
+  const previousScreenCount = useRef(0);
   const tracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare]);
-  const screen = tracks.find((track) => track.source === Track.Source.ScreenShare);
+  const screens = tracks.filter((track) => track.source === Track.Source.ScreenShare);
+  const screen = screens.find((track) => track.participant.identity === selectedScreenOwner) ?? screens[0];
   const invited = call.participants.filter((member) =>
     member.state === "invited" && !participants.some((participant) => participant.identity === member.user_id)
   );
   const denseClass = density === "compact" ? "call-stage-dense" : "";
+  const selectedVolumeParticipant = participants.find((participant) => participant.identity === volumeOpenFor);
 
-  function tile(participant: Participant) {
-    const camera = tracks.find((track) =>
+  useEffect(() => {
+    if (previousScreenCount.current === 0 && screens.length > 0) onModeChange("focus");
+    previousScreenCount.current = screens.length;
+  }, [screens.length, onModeChange]);
+
+  useEffect(() => {
+    if (!volumeOpenFor) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setVolumeOpenFor(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [volumeOpenFor]);
+
+  function cameraFor(participant: Participant) {
+    return tracks.find((track) =>
       track.participant.identity === participant.identity && track.source === Track.Source.Camera
     );
+  }
+
+  function tile(participant: Participant) {
     return <ParticipantTile
       key={participant.identity}
       participant={participant}
-      camera={camera}
+      camera={cameraFor(participant)}
       volume={volumes[participant.identity] ?? 100}
-      volumeOpen={volumeOpenFor === participant.identity}
-      onToggleVolume={() => setVolumeOpenFor((current) => current === participant.identity ? null : participant.identity)}
-      onVolumeChange={(volume) => onVolumeChange(participant.identity, volume)}
+      onVolumeOpen={() => setVolumeOpenFor(participant.identity)}
     />;
   }
 
@@ -511,19 +562,77 @@ function CallStage({ call, mode, density, volumes, onVolumeChange }: {
     );
   }
 
-  if (screen) {
-    return (
+  function screenLabel(owner: Participant) {
+    return owner.isLocal ? "Твой экран" : `Экран: ${owner.name || "участник"}`;
+  }
+
+  const sidebar = (
+    <div className="call-stage-sidebar">
+      {screens.length > 1 && <div className="call-share-picker">
+        <strong>Трансляции</strong>
+        {screens.map((item) => <button
+          key={item.participant.identity}
+          className={screen?.participant.identity === item.participant.identity ? "active" : ""}
+          onClick={() => setSelectedScreenOwner(item.participant.identity)}
+        >{screenLabel(item.participant)}</button>)}
+      </div>}
+      <strong className="call-sidebar-heading">Участники</strong>
+      {participants.map((participant) => {
+        const label = participant.isLocal ? "Ты" : participant.name || "Участник";
+        const camera = cameraFor(participant);
+        const volume = volumes[participant.identity] ?? 100;
+        return <div className="call-sidebar-person" key={participant.identity}>
+          <div className="call-sidebar-preview">
+            {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
+          </div>
+          <span className="call-sidebar-person-name">{label}</span>
+          {!participant.isLocal && <label className="call-sidebar-volume">
+            <span>{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />} {volume}%</span>
+            <input aria-label={`Громкость: ${label}`} type="range" min="0" max="100" value={volume} onChange={(event) => onVolumeChange(participant.identity, Number(event.target.value))} />
+          </label>}
+        </div>;
+      })}
+      {invited.map((member) => <div className="call-sidebar-invited" key={member.user_id}>{member.username} · приглашён</div>)}
+    </div>
+  );
+
+  const volumePanel = selectedVolumeParticipant && <aside className="call-volume-popover" aria-label={`Громкость: ${selectedVolumeParticipant.name || "участник"}`}>
+    <div className="call-volume-popover-heading">
+      <strong>{selectedVolumeParticipant.name || "Участник"}</strong>
+      <button onClick={() => setVolumeOpenFor(null)} aria-label="Закрыть громкость"><X size={16} /></button>
+    </div>
+    <label>
+      Громкость: {volumes[selectedVolumeParticipant.identity] ?? 100}%
+      <input type="range" min="0" max="100" value={volumes[selectedVolumeParticipant.identity] ?? 100} onChange={(event) => onVolumeChange(selectedVolumeParticipant.identity, Number(event.target.value))} />
+    </label>
+  </aside>;
+
+  if (screen && mode === "focus") {
+    return <>
       <div className={`call-stage call-stage-sharing ${denseClass}`}>
         <div className="call-tile call-tile-screen">
           <VideoTrack trackRef={screen} />
-          <span className="call-tile-name">{screen.participant.isLocal ? "Твой экран" : `Экран: ${screen.participant.name || "участник"}`}</span>
+          <span className="call-tile-name">{screenLabel(screen.participant)}</span>
         </div>
-        <div className="call-stage-strip">
-          {participants.map(tile)}
-          {invited.map(invitedTile)}
-        </div>
+        {sidebar}
       </div>
-    );
+      {volumePanel}
+    </>;
+  }
+
+  if (screens.length > 0) {
+    return <>
+      <div className={`call-stage call-stage-grid call-stage-with-screens ${denseClass}`}>
+        {screens.map((item) => <div className="call-tile call-tile-screen" key={`screen-${item.participant.identity}`}>
+          <VideoTrack trackRef={item} />
+          <span className="call-tile-name">{screenLabel(item.participant)}</span>
+          <button className="call-screen-focus-button" onClick={() => { setSelectedScreenOwner(item.participant.identity); onModeChange("focus"); }} aria-label={`Крупно: ${screenLabel(item.participant)}`}>Открыть крупно</button>
+        </div>)}
+        {participants.map(tile)}
+        {invited.map(invitedTile)}
+      </div>
+      {volumePanel}
+    </>;
   }
 
   const focused = mode === "focus"
@@ -532,21 +641,20 @@ function CallStage({ call, mode, density, volumes, onVolumeChange }: {
       ?? participants[0]
     : undefined;
   if (focused && participants.length > 1) {
-    return (
+    return <>
       <div className={`call-stage call-stage-sharing ${denseClass}`}>
         {tile(focused)}
-        <div className="call-stage-strip">
-          {participants.filter((participant) => participant.identity !== focused.identity).map(tile)}
-          {invited.map(invitedTile)}
-        </div>
+        {sidebar}
       </div>
-    );
+      {volumePanel}
+    </>;
   }
 
-  return (
+  return <>
     <div className={`call-stage call-stage-grid ${denseClass} ${participants.length + invited.length > 2 ? "call-stage-group" : ""} ${participants.length + invited.length > 4 ? "call-stage-many" : ""}`}>
       {participants.map(tile)}
       {invited.map(invitedTile)}
     </div>
-  );
+    {volumePanel}
+  </>;
 }

@@ -184,35 +184,24 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       if (patch.echoCancellation !== undefined && !supportedProcessing.echoCancellation) {
         throw new Error("Этот браузер не поддерживает подавление эха.");
       }
+      if (patch.autoGainControl !== undefined && !supportedProcessing.autoGainControl) {
+        throw new Error("Этот браузер не поддерживает автоматическую громкость микрофона.");
+      }
       const room = roomRef.current;
       if (room?.state === ConnectionState.Connected) {
         const participant = room.localParticipant;
         const microphoneCaptureChanged = patch.noiseSuppression !== undefined
-          || patch.echoCancellation !== undefined;
+          || patch.echoCancellation !== undefined
+          || patch.autoGainControl !== undefined;
         const cameraCaptureChanged = patch.videoCodec !== undefined
           || patch.videoQuality !== undefined;
 
-        if (patch.microphoneEnabled !== undefined) {
-          const existing = participant.getTrackPublication(Track.Source.Microphone)?.track;
+        if (patch.microphoneEnabled !== undefined && next.microphoneEnabled !== current.microphoneEnabled) {
           try {
             await participant.setMicrophoneEnabled(next.microphoneEnabled, microphoneCapture(next));
-            if (next.microphoneEnabled && existing) {
-              await existing.restartTrack(microphoneCapture(next));
-            }
           } catch (reason) {
-            if (existing) await existing.restartTrack(microphoneCapture(current)).catch(() => undefined);
             await participant.setMicrophoneEnabled(current.microphoneEnabled, microphoneCapture(current)).catch(() => undefined);
             throw reason;
-          }
-        } else if (microphoneCaptureChanged && next.microphoneEnabled) {
-          const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
-          if (track) {
-            try {
-              await track.restartTrack(microphoneCapture(next));
-            } catch (reason) {
-              await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
-              throw reason;
-            }
           }
         }
         if (patch.cameraEnabled !== undefined || cameraCaptureChanged) {
@@ -241,6 +230,23 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             throw new Error("Не удалось выбрать микрофон.");
           }
         }
+        const actualProcessing = readAudioProcessing(room);
+        const needsRefreshAfterUnmute = patch.microphoneEnabled === true && !current.microphoneEnabled
+          && actualProcessing !== null
+          && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== next.noiseSuppression)
+            || (actualProcessing.echoCancellation !== null && actualProcessing.echoCancellation !== next.echoCancellation)
+            || (actualProcessing.autoGainControl !== null && actualProcessing.autoGainControl !== next.autoGainControl));
+        if (next.microphoneEnabled && (microphoneCaptureChanged || needsRefreshAfterUnmute)) {
+          const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
+          if (track) {
+            try {
+              await track.restartTrack(microphoneCapture(next));
+            } catch (reason) {
+              await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+              throw reason;
+            }
+          }
+        }
         if (patch.cameraId !== undefined && next.cameraEnabled) {
           if (!await room.switchActiveDevice("videoinput", next.cameraId || "default")) {
             throw new Error("Не удалось выбрать камеру.");
@@ -256,7 +262,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           if ((patch.noiseSuppression !== undefined && applied?.noiseSuppression != null
               && applied.noiseSuppression !== next.noiseSuppression)
             || (patch.echoCancellation !== undefined && applied?.echoCancellation != null
-              && applied.echoCancellation !== next.echoCancellation)) {
+              && applied.echoCancellation !== next.echoCancellation)
+            || (patch.autoGainControl !== undefined && applied?.autoGainControl != null
+              && applied.autoGainControl !== next.autoGainControl)) {
             const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
             if (track) await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
             throw new Error("Браузер не применил обработку звука. Настройка сохранена прежней.");

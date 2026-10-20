@@ -11,7 +11,7 @@ import {
 
 export type VideoCodec = "vp8" | "h264" | "vp9" | "av1";
 export type VideoQuality = "360p" | "720p" | "1080p";
-export type ScreenShareQuality = "1080p" | "native";
+export type ScreenShareQuality = "720p" | "1080p" | "native";
 export type ScreenShareContent = "text" | "motion";
 
 export interface MediaPreferences {
@@ -27,18 +27,21 @@ export interface MediaPreferences {
   screenShareContent: ScreenShareContent;
   noiseSuppression: boolean;
   echoCancellation: boolean;
+  autoGainControl: boolean;
 }
 
 export interface AudioProcessingState {
   noiseSuppression: boolean | null;
   echoCancellation: boolean | null;
+  autoGainControl: boolean | null;
 }
 
-export function supportedAudioProcessing(): { noiseSuppression: boolean; echoCancellation: boolean } {
+export function supportedAudioProcessing(): { noiseSuppression: boolean; echoCancellation: boolean; autoGainControl: boolean } {
   const supported = navigator.mediaDevices?.getSupportedConstraints();
   return {
     noiseSuppression: supported?.noiseSuppression === true,
     echoCancellation: supported?.echoCancellation === true,
+    autoGainControl: supported?.autoGainControl === true,
   };
 }
 
@@ -49,6 +52,7 @@ export function readAudioProcessing(room: Room | null): AudioProcessingState | n
   return {
     noiseSuppression: typeof settings.noiseSuppression === "boolean" ? settings.noiseSuppression : null,
     echoCancellation: typeof settings.echoCancellation === "boolean" ? settings.echoCancellation : null,
+    autoGainControl: typeof settings.autoGainControl === "boolean" ? settings.autoGainControl : null,
   };
 }
 
@@ -67,6 +71,7 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareContent: "text",
   noiseSuppression: true,
   echoCancellation: true,
+  autoGainControl: true,
 };
 
 export function loadMediaPreferences(): MediaPreferences {
@@ -83,7 +88,8 @@ export function loadMediaPreferences(): MediaPreferences {
       ...saved,
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
       videoQuality: qualities.includes(storedQuality as VideoQuality) ? storedQuality! : "1080p",
-      screenShareQuality: saved.screenShareQuality === "native" ? "native" : "1080p",
+      screenShareQuality: saved.screenShareQuality === "native" || saved.screenShareQuality === "720p"
+        ? saved.screenShareQuality : "1080p",
       screenShareContent: saved.screenShareContent === "motion" ? "motion" : "text",
     };
   } catch {
@@ -104,7 +110,7 @@ export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions 
     deviceId: value.microphoneId || undefined,
     noiseSuppression: value.noiseSuppression,
     echoCancellation: value.echoCancellation,
-    autoGainControl: true,
+    autoGainControl: value.autoGainControl,
   };
 }
 
@@ -144,6 +150,7 @@ export function cameraPublish(value: MediaPreferences): TrackPublishOptions {
     videoEncoding: {
       ...preset.encoding,
       maxBitrate: value.videoQuality === "1080p" ? 5_000_000 : preset.encoding.maxBitrate,
+      priority: "low",
     },
     videoSimulcastLayers: layers,
     simulcast: true,
@@ -159,17 +166,26 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
     // Safari 17 can downscale display capture when explicit dimensions are supplied.
     resolution: safari ? undefined : value.screenShareQuality === "native"
       ? { width: 3840, height: 2160, frameRate: 30 }
-      : ScreenSharePresets.h1080fps30.resolution,
+      : value.screenShareQuality === "720p"
+        ? ScreenSharePresets.h720fps15.resolution
+        : ScreenSharePresets.h1080fps30.resolution,
   };
 }
 
 export function screenSharePublish(value: MediaPreferences): TrackPublishOptions {
   return {
     videoCodec: supportedVideoCodec(value.videoCodec),
-    screenShareEncoding: value.screenShareQuality === "native"
-      ? { maxBitrate: 10_000_000, maxFramerate: 30 }
-      : ScreenSharePresets.h1080fps30.encoding,
-    screenShareSimulcastLayers: [ScreenSharePresets.h720fps15],
+    screenShareEncoding: {
+      ...(value.screenShareQuality === "native"
+        ? { maxBitrate: 10_000_000, maxFramerate: 30 }
+        : value.screenShareQuality === "720p"
+          ? ScreenSharePresets.h720fps15.encoding
+          : ScreenSharePresets.h1080fps30.encoding),
+      priority: "low",
+    },
+    screenShareSimulcastLayers: value.screenShareQuality === "720p"
+      ? [ScreenSharePresets.h360fps15]
+      : [ScreenSharePresets.h720fps15],
     degradationPreference: value.screenShareContent === "text"
       ? "maintain-resolution" : "maintain-framerate",
     simulcast: true,

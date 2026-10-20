@@ -134,6 +134,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         <label>
           Качество демонстрации экрана
           <select disabled={busy} value={media.screenShareQuality} onChange={(event) => void change({ screenShareQuality: event.target.value as MediaPreferences["screenShareQuality"] })}>
+            <option value="720p">Устойчивая связь · 720p, 15 кадров/с</option>
             <option value="1080p">Чёткое · 1080p, 30 кадров/с</option>
             <option value="native">Оригинал · до 4K, 30 кадров/с</option>
           </select>
@@ -153,6 +154,10 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy || !processingSupported.echoCancellation} checked={media.echoCancellation && processingSupported.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
           <span className="media-setting-option">Подавление эха<small>{processingCaption("echoCancellation", media.echoCancellation)}</small></span>
+        </label>
+        <label className="media-setting-check">
+          <input type="checkbox" disabled={busy || !processingSupported.autoGainControl} checked={media.autoGainControl && processingSupported.autoGainControl} onChange={(event) => void change({ autoGainControl: event.target.checked })} />
+          <span className="media-setting-option">Автоматическая громкость микрофона<small>{processingCaption("autoGainControl", media.autoGainControl)}</small></span>
         </label>
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy} checked={media.deafened} onChange={(event) => void change({ deafened: event.target.checked })} />
