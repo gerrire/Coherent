@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy Coherent after a successful GitHub Actions build
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u /usr/local/sbin/coherent-auto-deploy.py
+TimeoutStartSec=45min
+UMask=0077

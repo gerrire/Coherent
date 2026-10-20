@@ -42,9 +42,25 @@ wss://31.76.77.197:8443    ──► Caddy ──► LiveKit
    docker compose --env-file deploy/.env -f deploy/compose.prod.yaml up -d
    ```
 
-## Обновления и резервные копии
+## Автоматическое обновление из GitHub
 
-Получить новый код через SSH и `git pull --ff-only`, собрать образы, выполнить миграции и повторить `up -d`. Скрипт `deploy/backup.sh` делает локальный дамп PostgreSQL с хранением семь дней. Дополнительно нужны копии за пределами VPS и периодическая проверка восстановления.
+Workflow `.github/workflows/build-deploy.yml` собирает API и интерфейс при каждом пуше в `main`. Сервер раз в две минуты проверяет GitHub Actions и разворачивает только текущий коммит `main` с успешной сборкой. Он сам получает код по уже настроенному SSH deploy key, собирает образы, выполняет миграции и обновляет контейнеры. Новые секреты в GitHub и входящие порты для этого не требуются. Неудачная сборка не попадает на VPS; при ошибке развёртывания служба повторит попытку на следующем проходе.
+
+На VPS установить службу один раз из клонированного репозитория:
+
+```sh
+mkdir -p /var/lib/coherent-deploy
+git -C /opt/coherent rev-parse HEAD > /var/lib/coherent-deploy/deployed-sha
+install -m 700 /opt/coherent/deploy/auto-deploy.py /usr/local/sbin/coherent-auto-deploy.py
+install -m 644 /opt/coherent/deploy/coherent-auto-deploy.service /etc/systemd/system/
+install -m 644 /opt/coherent/deploy/coherent-auto-deploy.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now coherent-auto-deploy.timer
+```
+
+Состояние: `systemctl status coherent-auto-deploy.timer`; журнал обновлений: `journalctl -u coherent-auto-deploy.service -n 100`. При изменении самого `deploy/auto-deploy.py` скопировать новую версию в `/usr/local/sbin/` вручную. Служба намеренно использует отдельную копию скрипта, чтобы изменение кода в репозитории само по себе не меняло права развёртывания.
+
+Скрипт `deploy/backup.sh` делает локальный дамп PostgreSQL с хранением семь дней. Дополнительно нужны копии за пределами VPS и периодическая проверка восстановления.
 
 LiveKit использует только публичный интерфейс `ens3`, чтобы не передавать клиентам внутренние адреса Docker. UDP mux использует порты 7882–7883. Если у пользователей со строгой сетью WebRTC не соединяется, потребуется отдельная настройка TURN/TLS. Docker может обходить обычные правила UFW для опубликованных контейнерных портов; внутренние сервисы нельзя публиковать на `0.0.0.0`.
 

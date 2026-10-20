@@ -1,0 +1,10 @@
+[Unit]
+Description=Check GitHub for a successful Coherent build
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

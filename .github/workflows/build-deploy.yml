@@ -1,0 +1,23 @@
+name: Build for deployment
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f deploy/Dockerfile.api -t coherent-api:ci .
+      - name: Build website image
+        run: docker build -f deploy/Dockerfile.web -t coherent-web:ci .
