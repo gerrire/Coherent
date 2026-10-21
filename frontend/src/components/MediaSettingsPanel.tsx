@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMaybeRoomContext } from "@livekit/components-react";
+import { LocalVideoTrack, Track } from "livekit-client";
 import { Settings2, X } from "lucide-react";
 import { supportedAudioProcessing, supportedVideoCodec, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
 
@@ -17,9 +19,60 @@ const codecNames: Record<VideoCodec, string> = {
 };
 
 export default function MediaSettingsPanel({ media, audioProcessingState, onChange, onClose }: MediaSettingsPanelProps) {
+  const room = useMaybeRoomContext();
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [screenDiagnostics, setScreenDiagnostics] = useState<{
+    capture: string;
+    sent: string;
+    bitrate: number | null;
+    limitation: string | null;
+  } | null>(null);
+  const previousScreenSample = useRef<{ trackId: string; bytes: number; timestamp: number } | null>(null);
+
+  useEffect(() => {
+    if (!room) return;
+    let active = true;
+    async function readScreenStats() {
+      const track = room?.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
+      if (!(track instanceof LocalVideoTrack) || !track.sender) {
+        if (active) setScreenDiagnostics(null);
+        previousScreenSample.current = null;
+        return;
+      }
+      const capture = track.mediaStreamTrack.getSettings();
+      const report = await track.sender.getStats().catch(() => null);
+      const outbound = (report ? Array.from(report.values()) : []).filter((entry) => {
+        const stat = entry as RTCStats & { kind?: string; mediaType?: string; bytesSent?: number };
+        return stat.type === "outbound-rtp" && (stat.kind === "video" || stat.mediaType === "video");
+      }) as Array<{
+        bytesSent?: number; timestamp?: number; frameWidth?: number; frameHeight?: number;
+        framesPerSecond?: number; qualityLimitationReason?: string; active?: boolean;
+      }>;
+      const activeStreams = outbound.filter((stat) => stat.active !== false && (stat.framesPerSecond ?? 1) > 0);
+      const sample = (activeStreams.length ? activeStreams : outbound)
+        .sort((first, second) => (second.frameWidth ?? 0) * (second.frameHeight ?? 0) - (first.frameWidth ?? 0) * (first.frameHeight ?? 0))[0];
+      const bytesSent = outbound.reduce((total, stat) => total + (stat.bytesSent ?? 0), 0);
+      if (!active) return;
+      const previous = previousScreenSample.current;
+      const bitrate = sample?.timestamp !== undefined && previous?.trackId === track.mediaStreamTrack.id
+        ? Math.max(0, (bytesSent - previous.bytes) * 8 / Math.max(1, sample.timestamp - previous.timestamp) / 1000)
+        : null;
+      if (sample?.timestamp !== undefined) {
+        previousScreenSample.current = { trackId: track.mediaStreamTrack.id, bytes: bytesSent, timestamp: sample.timestamp };
+      }
+      setScreenDiagnostics({
+        capture: `${capture.width ?? "?"}×${capture.height ?? "?"}${capture.frameRate ? ` · ${Math.round(capture.frameRate)} кадр/с` : ""}`,
+        sent: sample?.frameWidth && sample?.frameHeight ? `${sample.frameWidth}×${sample.frameHeight}${sample.framesPerSecond ? ` · ${Math.round(sample.framesPerSecond)} кадр/с` : ""}` : "ожидание данных",
+        bitrate,
+        limitation: sample?.qualityLimitationReason && sample.qualityLimitationReason !== "none" ? sample.qualityLimitationReason : null,
+      });
+    }
+    void readScreenStats().catch(() => undefined);
+    const timer = window.setInterval(() => void readScreenStats().catch(() => undefined), 2000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [room]);
 
   useEffect(() => {
     let active = true;
@@ -49,9 +102,9 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
       : [];
     const names = new Set(supported.map((codec) => codec.mimeType.toLowerCase()));
     return (Object.keys(codecNames) as VideoCodec[]).filter(
-      (codec) => codec === media.videoCodec || codec === "vp8" || names.has(`video/${codec}`),
+      (codec) => codec === media.videoCodec || codec === media.screenShareCodec || codec === "vp8" || names.has(`video/${codec}`),
     );
-  }, [media.videoCodec]);
+  }, [media.videoCodec, media.screenShareCodec]);
 
   async function change(patch: Partial<MediaPreferences>) {
     setBusy(true);
@@ -75,12 +128,12 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
 
   const outputSupported = typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
   const processingSupported = supportedAudioProcessing();
-  const naturalVoice = !media.noiseSuppression && !media.strongNoiseSuppression && media.echoCancellation && !media.autoGainControl;
-  const noisyVoice = media.noiseSuppression && !media.strongNoiseSuppression && media.echoCancellation && !media.autoGainControl;
+  const naturalVoice = !media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
+  const noisyVoice = media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
 
-  function chooseVoiceProfile(profile: "natural" | "noisy" | "strong") {
-    const patch: Partial<MediaPreferences> = { strongNoiseSuppression: profile === "strong" };
-    if (processingSupported.noiseSuppression) patch.noiseSuppression = profile !== "natural";
+  function chooseVoiceProfile(profile: "natural" | "noisy") {
+    const patch: Partial<MediaPreferences> = {};
+    if (processingSupported.noiseSuppression) patch.noiseSuppression = profile === "noisy";
     if (processingSupported.echoCancellation) patch.echoCancellation = true;
     if (processingSupported.autoGainControl) patch.autoGainControl = false;
     void change(patch);
@@ -146,35 +199,68 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
             <option value="1080p">Максимум · 1080p</option>
           </select>
         </label>
+        <div className="media-settings-divider" />
+        <div className="media-settings-section-heading">
+          <strong>Демонстрация экрана</strong>
+          <small>Для текста приоритет у чёткости. Для видео доступна более плавная передача.</small>
+        </div>
         <label>
-          Качество демонстрации экрана
+          Разрешение
           <select disabled={busy} value={media.screenShareQuality} onChange={(event) => void change({ screenShareQuality: event.target.value as MediaPreferences["screenShareQuality"] })}>
-            <option value="720p">Устойчивая связь · 720p, до 60 кадров/с</option>
-            <option value="1080p">Чёткое · 1080p, до 60 кадров/с</option>
-            <option value="native">Оригинал · до 4K, до 60 кадров/с</option>
+            <option value="720p">1280×720</option>
+            <option value="1080p">1920×1080</option>
+            <option value="1440p">2560×1440</option>
+            <option value="native">Исходное разрешение экрана</option>
           </select>
-          <small>Оригинал требует больше ресурсов. Параметры демонстрации применятся при следующем включении показа экрана.</small>
-          <small>Для передачи звука без эха выбери отдельную вкладку. При показе всего экрана звук компьютера выключен, чтобы участники не слышали собственные голоса.</small>
         </label>
         <label>
-          Тип демонстрации
+          Содержимое
           <select disabled={busy} value={media.screenShareContent} onChange={(event) => void change({ screenShareContent: event.target.value as MediaPreferences["screenShareContent"] })}>
-            <option value="text">Текст и приложения · чёткость</option>
-            <option value="motion">Видео и игры · плавность</option>
+            <option value="text">Текст и приложения — чёткость</option>
+            <option value="motion">Видео и игры — плавность</option>
+          </select>
+          <small>Для текста отправляется один поток без уменьшенной копии; маленькая плитка больше не переключает трансляцию на низкое разрешение.</small>
+        </label>
+        <label>
+          Частота кадров
+          <select disabled={busy} value={media.screenShareFrameRate} onChange={(event) => void change({ screenShareFrameRate: Number(event.target.value) as MediaPreferences["screenShareFrameRate"] })}>
+            <option value={15}>15 кадров/с — для текста</option>
+            <option value={30}>30 кадров/с — сбалансированно</option>
+            <option value={60}>60 кадров/с — для движения</option>
           </select>
         </label>
+        <label className="media-volume-setting">
+          <span>Максимальный битрейт <strong>{media.screenShareBitrateMbps} Мбит/с</strong></span>
+          <input type="range" min="1" max="20" step="1" value={media.screenShareBitrateMbps} onChange={(event) => void change({ screenShareBitrateMbps: Number(event.target.value) })} />
+          <small>Предел передачи, а не гарантированная скорость. Во время показа меняется сразу; для высокого разрешения обычно нужно больше.</small>
+        </label>
+        <label>
+          Кодек демонстрации
+          <select disabled={busy} value={media.screenShareCodec} onChange={(event) => void change({ screenShareCodec: event.target.value as VideoCodec })}>
+            {codecs.map((codec) => <option key={codec} value={codec}>{codecNames[codec]}</option>)}
+          </select>
+          {supportedVideoCodec(media.screenShareCodec) !== media.screenShareCodec && <small>Браузер не поддерживает {codecNames[media.screenShareCodec]}; используется VP8.</small>}
+        </label>
+        {screenDiagnostics && <div className="media-screen-diagnostics">
+          <strong>Текущая трансляция</strong>
+          <span>Захват: {screenDiagnostics.capture}</span>
+          <span>Отправка: {screenDiagnostics.sent}</span>
+          <span>Фактический битрейт: {screenDiagnostics.bitrate === null ? "считаем..." : `${screenDiagnostics.bitrate.toFixed(1)} Мбит/с`}</span>
+          {screenDiagnostics.limitation && <span>Ограничение: {screenDiagnostics.limitation === "bandwidth" ? "скорость сети" : screenDiagnostics.limitation === "cpu" ? "нагрузка на процессор" : screenDiagnostics.limitation}</span>}
+        </div>}
+        <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. При исходном разрешении браузер сам выбирает частоту захвата; настройка ограничивает частоту отправки. Для передачи звука без эха выбирай отдельную вкладку.</p>
+        <div className="media-settings-divider" />
+        <div className="media-settings-section-heading"><strong>Обработка голоса</strong></div>
         <div className="media-voice-profiles">
-          <span>Обработка голоса</span>
           <div>
             <button type="button" className={naturalVoice ? "active" : ""} disabled={busy} onClick={() => chooseVoiceProfile("natural")}>Естественный</button>
             <button type="button" className={noisyVoice ? "active" : ""} disabled={busy || !processingSupported.noiseSuppression} onClick={() => chooseVoiceProfile("noisy")}>Шумное место</button>
-            <button type="button" className={media.strongNoiseSuppression ? "active" : ""} disabled={busy || !processingSupported.noiseSuppression} onClick={() => chooseVoiceProfile("strong")}>Клавиатура и сильный шум</button>
           </div>
-          <small>Сильный режим сочетает подавление браузера с шумовым порогом. Он лучше скрывает клавиши в паузах, но может обрезать очень тихую речь.</small>
+          <small>В шумном месте браузер подавляет фон, а короткие щелчки мыши и клавиатуры в паузах дополнительно приглушаются без снижения уровня речи.</small>
         </div>
         <label className="media-setting-check">
-          <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={(media.noiseSuppression || media.strongNoiseSuppression) && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked, strongNoiseSuppression: false })} />
-          <span className="media-setting-option">Подавление шума<small>{processingCaption("noiseSuppression", media.noiseSuppression || media.strongNoiseSuppression)}</small></span>
+          <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={media.noiseSuppression && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked })} />
+          <span className="media-setting-option">Подавление шума<small>{processingCaption("noiseSuppression", media.noiseSuppression)}</small></span>
         </label>
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy || !processingSupported.echoCancellation} checked={media.echoCancellation && processingSupported.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
@@ -188,7 +274,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <input type="checkbox" disabled={busy} checked={media.deafened} onChange={(event) => void change({ deafened: event.target.checked })} />
           Не слышать собеседников
         </label>
-        <p className="media-settings-note">Подавление шума и эха выполняет браузер. Для сильного режима дополнительно включаются изоляция голоса, если она доступна, и более жёсткий шумовой порог.</p>
+        <p className="media-settings-note">Подавление шума и эха выполняет браузер. Щелчки во время речи могут оставаться слышны, чтобы не обрезать слова.</p>
       </div>
     </aside>
   );

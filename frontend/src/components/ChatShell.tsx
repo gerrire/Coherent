@@ -31,6 +31,7 @@ import {
   readAudioProcessing,
   saveMediaPreferences,
   supportedAudioProcessing,
+  updateScreenShareBitrate,
   type AudioProcessingState,
   type MediaPreferences,
 } from "../lib/media";
@@ -312,7 +313,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       const room = roomRef.current;
       if (room?.state === ConnectionState.Connected) {
         const participant = room.localParticipant;
-        const microphoneCaptureChanged = patch.strongNoiseSuppression !== undefined || patch.noiseSuppression !== undefined
+        const microphoneCaptureChanged = patch.noiseSuppression !== undefined
           || patch.echoCancellation !== undefined
           || patch.autoGainControl !== undefined;
         const cameraCaptureChanged = patch.videoCodec !== undefined
@@ -355,7 +356,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         const actualProcessing = readAudioProcessing(room);
         const needsRefreshAfterUnmute = patch.microphoneEnabled === true && !current.microphoneEnabled
           && actualProcessing !== null
-          && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== (next.noiseSuppression || next.strongNoiseSuppression))
+          && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== next.noiseSuppression)
             || (actualProcessing.echoCancellation !== null && actualProcessing.echoCancellation !== next.echoCancellation)
             || (actualProcessing.autoGainControl !== null && actualProcessing.autoGainControl !== next.autoGainControl));
         if (next.microphoneEnabled && (microphoneCaptureChanged || needsRefreshAfterUnmute)) {
@@ -371,7 +372,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         }
         if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined || patch.microphoneVolume !== undefined
           || microphoneCaptureChanged || patch.microphoneId !== undefined)) {
-          await applyMicrophoneProcessing(room, next.microphoneVolume, next.strongNoiseSuppression ? "strong" : next.noiseSuppression ? "off" : "soft");
+          await applyMicrophoneProcessing(room, next.microphoneVolume, next.noiseSuppression ? "noisy" : "soft");
         }
         if (patch.cameraId !== undefined && next.cameraEnabled) {
           if (!await room.switchActiveDevice("videoinput", next.cameraId || "default")) {
@@ -385,8 +386,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         }
         if (microphoneCaptureChanged && next.microphoneEnabled) {
           const applied = readAudioProcessing(room);
-          if (((patch.noiseSuppression !== undefined || patch.strongNoiseSuppression !== undefined) && applied?.noiseSuppression != null
-              && applied.noiseSuppression !== (next.noiseSuppression || next.strongNoiseSuppression))
+          if ((patch.noiseSuppression !== undefined && applied?.noiseSuppression != null
+              && applied.noiseSuppression !== next.noiseSuppression)
             || (patch.echoCancellation !== undefined && applied?.echoCancellation != null
               && applied.echoCancellation !== next.echoCancellation)
             || (patch.autoGainControl !== undefined && applied?.autoGainControl != null
@@ -395,6 +396,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             if (track) await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
             throw new Error("Браузер не применил обработку звука. Настройка сохранена прежней.");
           }
+        }
+        if (patch.screenShareBitrateMbps !== undefined) {
+          await updateScreenShareBitrate(room, next.screenShareBitrateMbps);
+        }
+        if (patch.deafened !== undefined && next.deafened !== current.deafened) {
+          await participant.setAttributes({ "coherent.deafened": next.deafened ? "true" : "false" }).catch(() => undefined);
         }
         setAudioProcessingState(readAudioProcessing(room));
       }

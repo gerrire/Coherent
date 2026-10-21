@@ -404,6 +404,7 @@ async def join_call(
                 room=room_name(call.id),
                 can_publish=True,
                 can_subscribe=True,
+                can_update_own_metadata=True,
             )
         )
         .with_ttl(timedelta(minutes=2))

@@ -7,6 +7,8 @@ import {
   useIsSpeaking,
   useLocalParticipant,
   useParticipants,
+  useParticipantAttributes,
+  useParticipantTracks,
   useRoomContext,
   useTracks,
   VideoTrack,
@@ -357,7 +359,7 @@ function CallRoom({
       <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} />
       {header}
       <CallConnectionNotice />
-      <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} />
+      <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} media={media} />
       <div className="call-surface-controls">
         <StartAudio className="call-start-audio" label="Включить звук" />
         <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
@@ -387,9 +389,10 @@ function CallMediaBridge({
     let active = true;
     async function prepare() {
       const selected = mediaRef.current;
+      await room.localParticipant.setAttributes({ "coherent.deafened": selected.deafened ? "true" : "false" }).catch(() => undefined);
       if (selected.microphoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(selected));
-        await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.strongNoiseSuppression ? "strong" : selected.noiseSuppression ? "off" : "soft");
+        await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.noiseSuppression ? "noisy" : "soft");
       }
       if (selected.cameraEnabled) {
         await room.localParticipant.setCameraEnabled(
@@ -524,17 +527,32 @@ function CallAudioRenderer({ muted, volumes }: { muted: boolean; volumes: Record
   ))}</>;
 }
 
-function ParticipantTile({ participant, camera, volume, onVolumeOpen }: {
+function ParticipantStatus({ participant, media, inline = false }: { participant: Participant; media: MediaPreferences; inline?: boolean }) {
+  const microphoneTracks = useParticipantTracks([Track.Source.Microphone], participant.identity);
+  const { attributes } = useParticipantAttributes({ participant });
+  const hasActiveMicrophone = microphoneTracks.some((track) => !track.publication.isMuted);
+  const micOff = !hasActiveMicrophone || (participant.isLocal && !media.microphoneEnabled);
+  const deafened = participant.isLocal ? media.deafened : attributes?.["coherent.deafened"] === "true";
+  if (!micOff && !deafened) return null;
+  return <span className={`call-participant-status ${inline ? "call-participant-status-inline" : ""}`}>
+    {micOff && <span title="Микрофон выключен" aria-label="Микрофон выключен"><MicOff size={14} /></span>}
+    {deafened && <span title="Не слышит собеседников" aria-label="Не слышит собеседников"><VolumeX size={14} /></span>}
+  </span>;
+}
+
+function ParticipantTile({ participant, camera, volume, onVolumeOpen, media }: {
   participant: Participant;
   camera: ComponentProps<typeof VideoTrack>["trackRef"] | undefined;
   volume: number;
   onVolumeOpen: () => void;
+  media: MediaPreferences;
 }) {
   const isSpeaking = useIsSpeaking(participant);
   const label = participant.isLocal ? "Ты" : participant.name || "Участник";
   return (
     <div className={`call-tile ${isSpeaking ? "call-tile-speaking" : ""}`} onContextMenu={participant.isLocal ? undefined : (event) => { event.preventDefault(); onVolumeOpen(); }}>
       {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
+      <ParticipantStatus participant={participant} media={media} />
       <span className="call-tile-name">{label}</span>
       {!participant.isLocal && (
         <button type="button" className="call-tile-volume-button" onClick={onVolumeOpen} title={`Громкость: ${label}`} aria-label={`Громкость: ${label}`}>
@@ -545,13 +563,37 @@ function ParticipantTile({ participant, camera, volume, onVolumeOpen }: {
   );
 }
 
-function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange }: {
+function SidebarParticipant({ participant, camera, volume, onVolumeChange, media }: {
+  participant: Participant;
+  camera: ComponentProps<typeof VideoTrack>["trackRef"] | undefined;
+  volume: number;
+  onVolumeChange: (userId: string, volume: number) => void;
+  media: MediaPreferences;
+}) {
+  const label = participant.isLocal ? "Ты" : participant.name || "Участник";
+  return <div className="call-sidebar-person">
+    <div className="call-sidebar-preview">
+      {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
+    </div>
+    <div className="call-sidebar-person-heading">
+      <span className="call-sidebar-person-name">{label}</span>
+      <ParticipantStatus participant={participant} media={media} inline />
+    </div>
+    {!participant.isLocal && <label className="call-sidebar-volume">
+      <span>{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />} {volume}%</span>
+      <input aria-label={`Громкость: ${label}`} type="range" min="0" max="200" value={volume} onChange={(event) => onVolumeChange(participant.identity, Number(event.target.value))} />
+    </label>}
+  </div>;
+}
+
+function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange, media }: {
   call: Call;
   mode: ViewMode;
   onModeChange: (mode: ViewMode) => void;
   density: TileDensity;
   volumes: Record<string, number>;
   onVolumeChange: (userId: string, volume: number) => void;
+  media: MediaPreferences;
 }) {
   const participants = useParticipants();
   const [volumeOpenFor, setVolumeOpenFor] = useState<string | null>(null);
@@ -594,6 +636,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
       participant={participant}
       camera={cameraFor(participant)}
       volume={volumes[participant.identity] ?? 100}
+      media={media}
       onVolumeOpen={() => setVolumeOpenFor(participant.identity)}
     />;
   }
@@ -623,21 +666,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
         >{screenLabel(item.participant)}</button>)}
       </div>}
       <strong className="call-sidebar-heading">Участники</strong>
-      {participants.map((participant) => {
-        const label = participant.isLocal ? "Ты" : participant.name || "Участник";
-        const camera = cameraFor(participant);
-        const volume = volumes[participant.identity] ?? 100;
-        return <div className="call-sidebar-person" key={participant.identity}>
-          <div className="call-sidebar-preview">
-            {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
-          </div>
-          <span className="call-sidebar-person-name">{label}</span>
-          {!participant.isLocal && <label className="call-sidebar-volume">
-            <span>{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />} {volume}%</span>
-            <input aria-label={`Громкость: ${label}`} type="range" min="0" max="200" value={volume} onChange={(event) => onVolumeChange(participant.identity, Number(event.target.value))} />
-          </label>}
-        </div>;
-      })}
+      {participants.map((participant) => <SidebarParticipant key={participant.identity} participant={participant} camera={cameraFor(participant)} volume={volumes[participant.identity] ?? 100} onVolumeChange={onVolumeChange} media={media} />)}
       {invited.map((member) => <div className="call-sidebar-invited" key={member.user_id}>{member.username} · приглашён</div>)}
     </div>
   );

@@ -4,6 +4,7 @@ import {
   VideoPresets,
   type AudioCaptureOptions,
   LocalAudioTrack,
+  LocalVideoTrack,
   type Room,
   type ScreenShareCaptureOptions,
   type TrackPublishOptions,
@@ -12,8 +13,9 @@ import {
 
 export type VideoCodec = "vp8" | "h264" | "vp9" | "av1";
 export type VideoQuality = "360p" | "720p" | "1080p";
-export type ScreenShareQuality = "720p" | "1080p" | "native";
+export type ScreenShareQuality = "720p" | "1080p" | "1440p" | "native";
 export type ScreenShareContent = "text" | "motion";
+export type ScreenShareFrameRate = 15 | 30 | 60;
 
 export interface MediaPreferences {
   microphoneEnabled: boolean;
@@ -27,8 +29,10 @@ export interface MediaPreferences {
   videoQuality: VideoQuality;
   screenShareQuality: ScreenShareQuality;
   screenShareContent: ScreenShareContent;
+  screenShareCodec: VideoCodec;
+  screenShareFrameRate: ScreenShareFrameRate;
+  screenShareBitrateMbps: number;
   noiseSuppression: boolean;
-  strongNoiseSuppression: boolean;
   echoCancellation: boolean;
   autoGainControl: boolean;
 }
@@ -72,10 +76,12 @@ export const defaultMediaPreferences: MediaPreferences = {
   speakerId: "",
   videoCodec: "h264",
   videoQuality: "1080p",
-  screenShareQuality: "1080p",
+  screenShareQuality: "native",
   screenShareContent: "text",
+  screenShareCodec: "h264",
+  screenShareFrameRate: 30,
+  screenShareBitrateMbps: 12,
   noiseSuppression: false,
-  strongNoiseSuppression: false,
   echoCancellation: true,
   autoGainControl: false,
 };
@@ -85,7 +91,10 @@ export function loadMediaPreferences(): MediaPreferences {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<MediaPreferences> & {
       qualityDefaultsVersion?: number;
       audioDefaultsVersion?: number;
+      screenShareDefaultsVersion?: number;
+      strongNoiseSuppression?: boolean;
     };
+    const { strongNoiseSuppression, ...stored } = saved;
     const codecs: VideoCodec[] = ["vp8", "h264", "vp9", "av1"];
     const qualities: VideoQuality[] = ["360p", "720p", "1080p"];
     const legacyDefaults = saved.qualityDefaultsVersion !== 2
@@ -98,17 +107,21 @@ export function loadMediaPreferences(): MediaPreferences {
       && saved.autoGainControl === true;
     return {
       ...defaultMediaPreferences,
-      ...saved,
+      ...stored,
       microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
         ? Math.min(100, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
-      strongNoiseSuppression: saved.strongNoiseSuppression === true,
-      noiseSuppression: legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression,
+      noiseSuppression: strongNoiseSuppression || (legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression),
       autoGainControl: legacyAudioDefaults ? false : saved.autoGainControl ?? defaultMediaPreferences.autoGainControl,
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
       videoQuality: qualities.includes(storedQuality as VideoQuality) ? storedQuality! : "1080p",
-      screenShareQuality: saved.screenShareQuality === "native" || saved.screenShareQuality === "720p"
-        ? saved.screenShareQuality : "1080p",
+      screenShareQuality: saved.screenShareDefaultsVersion !== 1 && saved.screenShareQuality === "1080p"
+        ? "native" : (["720p", "1080p", "1440p", "native"] as ScreenShareQuality[]).includes(saved.screenShareQuality as ScreenShareQuality)
+          ? saved.screenShareQuality! : "native",
       screenShareContent: saved.screenShareContent === "motion" ? "motion" : "text",
+      screenShareCodec: codecs.includes(saved.screenShareCodec as VideoCodec) ? saved.screenShareCodec! : "h264",
+      screenShareFrameRate: saved.screenShareFrameRate === 15 || saved.screenShareFrameRate === 60 ? saved.screenShareFrameRate : 30,
+      screenShareBitrateMbps: typeof saved.screenShareBitrateMbps === "number" && Number.isFinite(saved.screenShareBitrateMbps)
+        ? Math.min(20, Math.max(1, Math.round(saved.screenShareBitrateMbps))) : 12,
     };
   } catch {
     return defaultMediaPreferences;
@@ -117,7 +130,7 @@ export function loadMediaPreferences(): MediaPreferences {
 
 export function saveMediaPreferences(value: MediaPreferences): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2, audioDefaultsVersion: 1 }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2, audioDefaultsVersion: 1, screenShareDefaultsVersion: 1 }));
   } catch {
     // The current call still works when browser storage is unavailable.
   }
@@ -126,10 +139,10 @@ export function saveMediaPreferences(value: MediaPreferences): void {
 export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions {
   return {
     deviceId: value.microphoneId || undefined,
-    noiseSuppression: value.noiseSuppression || value.strongNoiseSuppression,
+    noiseSuppression: value.noiseSuppression,
     echoCancellation: value.echoCancellation,
     autoGainControl: value.autoGainControl,
-    voiceIsolation: value.strongNoiseSuppression,
+    voiceIsolation: false,
   };
 }
 
@@ -187,30 +200,46 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
     systemAudio: "exclude",
     contentHint: value.screenShareContent,
     // Safari 17 can downscale display capture when explicit dimensions are supplied.
-    resolution: safari ? undefined : value.screenShareQuality === "native"
-      ? { width: 3840, height: 2160, frameRate: value.screenShareContent === "motion" ? 60 : 30 }
-      : value.screenShareQuality === "720p"
-        ? { width: 1280, height: 720, frameRate: value.screenShareContent === "motion" ? 60 : 30 }
-        : { width: 1920, height: 1080, frameRate: value.screenShareContent === "motion" ? 60 : 30 },
+    // An explicit zero-sized preset skips LiveKit's 1080p default without constraining native capture.
+    resolution: value.screenShareQuality === "native"
+      ? { width: 0, height: 0, frameRate: value.screenShareFrameRate }
+      : safari ? undefined : {
+        width: value.screenShareQuality === "720p" ? 1280 : value.screenShareQuality === "1440p" ? 2560 : 1920,
+        height: value.screenShareQuality === "720p" ? 720 : value.screenShareQuality === "1440p" ? 1440 : 1080,
+        frameRate: value.screenShareFrameRate,
+      },
   };
 }
 
 export function screenSharePublish(value: MediaPreferences): TrackPublishOptions {
   return {
-    videoCodec: supportedVideoCodec(value.videoCodec),
+    videoCodec: supportedVideoCodec(value.screenShareCodec),
     screenShareEncoding: {
-      ...(value.screenShareQuality === "native"
-        ? { maxBitrate: value.screenShareContent === "motion" ? 12_000_000 : 9_000_000, maxFramerate: value.screenShareContent === "motion" ? 60 : 30 }
-        : value.screenShareQuality === "720p"
-          ? { maxBitrate: 3_500_000, maxFramerate: value.screenShareContent === "motion" ? 60 : 30 }
-          : { maxBitrate: value.screenShareContent === "motion" ? 7_000_000 : 6_000_000, maxFramerate: value.screenShareContent === "motion" ? 60 : 30 }),
+      maxBitrate: value.screenShareBitrateMbps * 1_000_000,
+      maxFramerate: value.screenShareFrameRate,
       priority: "high",
     },
-    screenShareSimulcastLayers: value.screenShareQuality === "720p"
-      ? [ScreenSharePresets.h360fps15]
-      : [ScreenSharePresets.h720fps15],
+    screenShareSimulcastLayers: value.screenShareContent === "motion"
+      ? value.screenShareQuality === "720p" ? [ScreenSharePresets.h360fps15] : [ScreenSharePresets.h720fps15]
+      : [],
     degradationPreference: value.screenShareContent === "text"
       ? "maintain-resolution" : "maintain-framerate",
-    simulcast: true,
+    simulcast: value.screenShareContent === "motion",
   };
+}
+
+export async function updateScreenShareBitrate(room: Room, bitrateMbps: number): Promise<void> {
+  const track = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
+  if (!(track instanceof LocalVideoTrack) || !track.sender) return;
+  const sender = track.sender;
+  const params = sender.getParameters();
+  if (!params.encodings.length) return;
+  const maxBitrate = bitrateMbps * 1_000_000;
+  await sender.setParameters({
+    ...params,
+    encodings: params.encodings.map((encoding, index) => ({
+      ...encoding,
+      maxBitrate: index === params.encodings.length - 1 ? maxBitrate : Math.min(encoding.maxBitrate ?? maxBitrate, maxBitrate),
+    })),
+  });
 }

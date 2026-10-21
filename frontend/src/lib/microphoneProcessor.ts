@@ -23,7 +23,7 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   private highpass?: BiquadFilterNode;
   private destination?: MediaStreamAudioDestinationNode;
 
-  constructor(private volume: number, private gateMode: "off" | "soft" | "strong") {}
+  constructor(private volume: number, private gateMode: "soft" | "noisy") {}
 
   async init({ track, audioContext }: AudioProcessorOptions): Promise<void> {
     this.context = audioContext;
@@ -80,7 +80,7 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     }
   }
 
-  setGateMode(mode: "off" | "soft" | "strong"): void {
+  setGateMode(mode: "soft" | "noisy"): void {
     this.gateMode = mode;
     this.gate?.port.postMessage({ mode });
   }
@@ -105,7 +105,7 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   }
 }
 
-export async function applyMicrophoneProcessing(room: Room, volume: number, gateMode: "off" | "soft" | "strong"): Promise<void> {
+export async function applyMicrophoneProcessing(room: Room, volume: number, gateMode: "soft" | "noisy"): Promise<void> {
   const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
   if (!(track instanceof LocalAudioTrack)) return;
   const processor = track.getProcessor();
