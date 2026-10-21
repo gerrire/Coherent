@@ -7,6 +7,7 @@ interface MessagesPanelProps {
   currentUserId: string;
   version: number;
   onSent: () => void;
+  onRead: (conversationId: string, messageId: string) => Promise<void>;
   callError: string;
   onRename: (conversationId: string, name: string) => Promise<void>;
   peerOnline?: boolean;
@@ -29,6 +30,7 @@ export default function MessagesPanel({
   currentUserId,
   version,
   onSent,
+  onRead,
   callError,
   onRename,
   peerOnline,
@@ -52,6 +54,7 @@ export default function MessagesPanel({
   const hasLoadedPage = useRef(false);
   const nearBottom = useRef(true);
   const relationshipTarget = useRef(conversation.other_user?.id);
+  const lastReadRef = useRef("");
   relationshipTarget.current = conversation.other_user?.id;
   const title = conversationTitle(conversation);
   const peer = conversation.other_user;
@@ -147,6 +150,21 @@ export default function MessagesPanel({
     const list = listRef.current;
     if (list && nearBottom.current) list.scrollTop = list.scrollHeight;
   }, [latestId]);
+
+  useEffect(() => {
+    function markVisibleMessages() {
+      if (document.hidden || !latestId || loading) return;
+      const key = `${conversation.id}:${latestId}`;
+      if (lastReadRef.current === key) return;
+      lastReadRef.current = key;
+      void onRead(conversation.id, latestId).catch(() => {
+        if (lastReadRef.current === key) lastReadRef.current = "";
+      });
+    }
+    markVisibleMessages();
+    document.addEventListener("visibilitychange", markVisibleMessages);
+    return () => document.removeEventListener("visibilitychange", markVisibleMessages);
+  }, [conversation.id, latestId, loading, onRead]);
 
   async function loadOlder() {
     const first = messages[0];

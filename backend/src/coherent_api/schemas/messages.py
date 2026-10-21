@@ -29,6 +29,10 @@ class SendMessageRequest(BaseModel):
         return value
 
 
+class MarkConversationReadRequest(BaseModel):
+    message_id: UUID
+
+
 class MessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,6 +57,7 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_message: MessageResponse | None = None
+    unread: bool = False
 
 
 class ConversationsResponse(BaseModel):

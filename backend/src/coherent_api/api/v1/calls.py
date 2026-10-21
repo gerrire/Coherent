@@ -24,6 +24,7 @@ from coherent_api.services.calls import (
     invite_to_call,
     join_call,
     livekit_ready,
+    remove_livekit_participant,
     start_call,
 )
 from coherent_api.services.messages import ConversationNotFoundError
@@ -103,8 +104,10 @@ async def finish_call(
         call, was_active = await end_call(session, user, call_id)
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
-    if was_active:
+    if was_active or call.status == "ended":
         await close_livekit_room(request.app.state.settings, call.id)
+    elif call.status == "active":
+        await remove_livekit_participant(request.app.state.settings, call.id, user.id)
     await publish_call(request, call)
     return call
 

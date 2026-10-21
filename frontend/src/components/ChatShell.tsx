@@ -61,6 +61,20 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [notificationError, setNotificationError] = useState("");
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
   const [recentNotifications, setRecentNotifications] = useState<Array<{ id: string; title: string; conversationId: string }>>([]);
+  const [hasNewNotifications, setHasNewNotifications] = useState(() => {
+    try {
+      return localStorage.getItem(`coherent.new-notifications.${user.id}`) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(`coherent.dismissed-notifications.${user.id}`) ?? "[]") as string[]);
+    } catch {
+      return new Set<string>();
+    }
+  });
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -93,9 +107,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const activeConversationRef = useRef(activeConversationId);
   const sectionRef = useRef(section);
   const conversationsRef = useRef(conversations);
+  const popoverRef = useRef(popover);
+  const dismissedNotificationIdsRef = useRef(dismissedNotificationIds);
   activeConversationRef.current = activeConversationId;
   sectionRef.current = section;
   conversationsRef.current = conversations;
+  popoverRef.current = popover;
+  dismissedNotificationIdsRef.current = dismissedNotificationIds;
   const initial = user.username.slice(0, 1).toUpperCase();
   const selectedConversation = showWelcome ? undefined : conversations.find((item) => item.id === activeConversationId);
   const busyInCall = Boolean(currentCall?.participants.some((participant) =>
@@ -148,7 +166,16 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }, []);
 
   const showNotification = useCallback((id: string, title: string, body: string, conversationId: string) => {
+    if (dismissedNotificationIdsRef.current.has(id)) return;
     setRecentNotifications((current) => [{ id, title, conversationId }, ...current.filter((item) => item.id !== id)].slice(0, 8));
+    if (popoverRef.current !== "notifications") {
+      setHasNewNotifications(true);
+      try {
+        localStorage.setItem(`coherent.new-notifications.${user.id}`, "1");
+      } catch {
+        // The indicator remains visible until the page is reloaded.
+      }
+    }
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     try {
       const notice = new Notification(title, { body, icon: "/favicon.svg", tag: id });
@@ -163,7 +190,37 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     } catch {
       // The in-app notification remains available if this browser cannot show a system notification.
     }
+  }, [user.id]);
+
+  const markConversationRead = useCallback(async (conversationId: string, messageId: string) => {
+    await api.markConversationRead(conversationId, messageId);
+    setConversations((current) => current.map((item) => item.id === conversationId && item.last_message?.id === messageId
+      ? { ...item, unread: false }
+      : item));
   }, []);
+
+  function clearNotifications() {
+    const ids = [
+      ...recentNotifications.map((item) => item.id),
+      ...notificationRequests.map((item) => `friend-${item.request_id}`),
+      ...(incomingCallId ? [`call-${incomingCallId}`] : []),
+    ];
+    const next = new Set([...dismissedNotificationIds, ...ids].slice(-200));
+    setDismissedNotificationIds(next);
+    dismissedNotificationIdsRef.current = next;
+    try {
+      localStorage.setItem(`coherent.dismissed-notifications.${user.id}`, JSON.stringify([...next]));
+    } catch {
+      // Clearing still works for this session when browser storage is unavailable.
+    }
+    setRecentNotifications([]);
+    setHasNewNotifications(false);
+    try {
+      localStorage.removeItem(`coherent.new-notifications.${user.id}`);
+    } catch {
+      // The indicator is cleared for this session.
+    }
+  }
 
   const refreshCalls = useCallback(async () => {
     const result = await api.currentCalls();
@@ -574,6 +631,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     }
     setPopover(next);
     if (next === "notifications") {
+      setHasNewNotifications(false);
+      try {
+        localStorage.removeItem(`coherent.new-notifications.${user.id}`);
+      } catch {
+        // The indicator is cleared for this session.
+      }
       if (typeof Notification !== "undefined" && Notification.permission === "default") {
         void Notification.requestPermission().then(setNotificationPermission).catch(() => setNotificationPermission("denied"));
       }
@@ -701,6 +764,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                   <strong>{conversationTitle(conversation)}</strong>
                   <small>{conversation.last_message?.body ?? "Беседа начата"}</small>
                 </span>
+                {conversation.unread && <i className="conversation-unread" title="Непрочитанные сообщения" aria-label="Непрочитанные сообщения" />}
                 {conversation.kind === "direct" && conversation.other_user && onlineIds.has(conversation.other_user.id) && <i className="conversation-presence" title="В сети" />}
               </button>
             ))}
@@ -759,6 +823,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             )}
             <button className="header-icon" aria-label="Уведомления" title="Уведомления" aria-expanded={popover === "notifications"} onClick={() => togglePopover("notifications")}>
               <Bell size={18} />
+              {hasNewNotifications && <i className="notification-new-dot" aria-hidden="true" />}
             </button>
             <button className="header-icon" aria-label="Помощь" title="Помощь" aria-expanded={popover === "help"} onClick={() => togglePopover("help")}>
               <CircleHelp size={18} />
@@ -776,6 +841,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 onClick={() => { setActiveConversationId(conversation.id); setShowWelcome(false); }}
               >
                 {conversationTitle(conversation)}
+                {conversation.unread && <i className="mobile-conversation-unread" title="Непрочитанные сообщения" />}
               </button>
             ))}
           </div>
@@ -815,6 +881,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             currentUserId={user.id}
             version={messageVersion}
             onSent={() => { void refreshConversations().catch(() => undefined); }}
+            onRead={markConversationRead}
             callError={currentCall ? "" : callError}
             peerOnline={selectedConversation.other_user ? onlineIds.has(selectedConversation.other_user.id) : undefined}
             onRename={renameGroup}
@@ -871,12 +938,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       )}
       {popover === "notifications" && (
         <div className="shell-popover shell-popover-notifications" aria-label="Уведомления">
-          <strong>Уведомления</strong>
+          <div className="notification-heading"><strong>Уведомления</strong><button onClick={clearNotifications} disabled={recentNotifications.length === 0 && notificationRequests.every((item) => dismissedNotificationIds.has(`friend-${item.request_id}`)) && (!incomingCallId || dismissedNotificationIds.has(`call-${incomingCallId}`))}>Очистить всё</button></div>
           {notificationPermission === "default" && <button className="notification-permission" onClick={() => {
             void Notification.requestPermission().then(setNotificationPermission).catch(() => setNotificationPermission("denied"));
           }}><Bell size={16} /> Включить уведомления браузера</button>}
           {notificationPermission === "denied" && <p>Уведомления браузера отключены. Разреши их в настройках сайта.</p>}
-          {currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") && (
+          {currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") && !dismissedNotificationIds.has(`call-${currentCall.id}`) && (
             <button onClick={() => {
               setPopover(null);
               setSection("messages");
@@ -886,7 +953,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           )}
           {notificationLoading && <p>Загружаем заявки...</p>}
           {notificationError && <p role="alert">{notificationError}</p>}
-          {!notificationLoading && !notificationError && notificationRequests.length === 0 && recentNotifications.length === 0 && <p>Новых уведомлений нет.</p>}
+          {!notificationLoading && !notificationError && notificationRequests.every((item) => dismissedNotificationIds.has(`friend-${item.request_id}`)) && recentNotifications.length === 0 && (!incomingCallId || dismissedNotificationIds.has(`call-${incomingCallId}`)) && <p>Новых уведомлений нет.</p>}
           {recentNotifications.map((notice) => <button className="notification-event" key={notice.id} onClick={() => {
             setPopover(null);
             setSection(notice.conversationId ? "messages" : "friends");
@@ -894,7 +961,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             else setFriendsInitialTab("requests");
             setShowWelcome(false);
           }}><MessageCircle size={16} /> {notice.title}</button>)}
-          {!notificationLoading && notificationRequests.slice(0, 4).map((request) => (
+          {!notificationLoading && notificationRequests.filter((request) => !dismissedNotificationIds.has(`friend-${request.request_id}`)).slice(0, 4).map((request) => (
             <button key={request.request_id} onClick={() => openFriends("requests")}><UserPlus size={16} /> Заявка от {request.username}</button>
           ))}
           <button className="shell-popover-link" onClick={() => openFriends("requests")}>Открыть все заявки →</button>

@@ -274,6 +274,7 @@ function CallRoom({
   pending: boolean;
 }) {
   const [join, setJoin] = useState<CallJoin | null>(null);
+  const [joinAttempt, setJoinAttempt] = useState(0);
   const [error, setError] = useState("");
   const [mediaError, setMediaError] = useState("");
   const [connected, setConnected] = useState(false);
@@ -316,7 +317,14 @@ function CallRoom({
       if (active) setError(reason instanceof Error ? reason.message : "Не удалось подключиться к звонку.");
     });
     return () => { active = false; };
-  }, [call.id]);
+  }, [call.id, joinAttempt]);
+
+  function retryConnection() {
+    setError("");
+    setJoin(null);
+    setConnected(false);
+    setJoinAttempt((attempt) => attempt + 1);
+  }
 
   useEffect(() => {
     const update = () => setSeconds(Math.max(0, Math.floor((Date.now() - Date.parse(call.answered_at ?? call.created_at)) / 1000)));
@@ -352,7 +360,7 @@ function CallRoom({
   );
 
   if (error) {
-    return <>{header}<div className="call-connect-error" role="alert">{error}<button onClick={onEnd}>Выйти</button></div></>;
+    return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>Повторить подключение</button><button onClick={onEnd}>Выйти</button></div></div></>;
   }
   if (!join) return <>{header}<div className="call-connect-note">Подключаем звонок...</div></>;
 

@@ -1044,6 +1044,16 @@ a {
   font-size: 10px;
 }
 
+.conversation-unread, .mobile-conversation-unread {
+  display: block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #f3eefb;
+  box-shadow: 0 0 7px rgba(243, 238, 251, .35);
+}
+
 .conversation-error {
   margin: 4px 7px 8px;
   color: #ffacc3;
@@ -1376,6 +1386,9 @@ a {
 
 .call-connect-error { flex-direction: column; padding: 20px; text-align: center; }
 .call-connect-error button { width: auto; padding: 0 15px; background: #bd4663; }
+.call-connect-error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.call-connect-error button.call-connect-retry { background: #6b42a1; }
+.call-connect-error button.call-connect-retry:hover { background: #8154bb; }
 .call-surface-error { margin: 0; padding: 7px 18px; background: #4a2032; color: #ffb8cc; font-size: 11px; }
 .call-network-notice { flex: 0 0 auto; margin: 0; padding: 7px 18px; background: #453526; color: #f5d9a6; font-size: 11px; }
 
@@ -1872,6 +1885,7 @@ a {
 }
 
 .header-icon {
+  position: relative;
   display: grid;
   place-items: center;
   width: 29px;
@@ -1881,6 +1895,17 @@ a {
   background: transparent;
   color: #897e98;
   cursor: pointer;
+}
+
+.notification-new-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #251d35;
+  border-radius: 50%;
+  background: #fa5f73;
 }
 
 .header-icon:hover {
@@ -2723,6 +2748,9 @@ a {
     border-bottom: 1px solid var(--line);
   }
   .mobile-conversations button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     flex: 0 0 auto;
     padding: 6px 10px;
     border: 1px solid var(--line);
@@ -3477,6 +3505,10 @@ a {
 .shell-popover-notifications { top: 55px; right: 69px; }
 .shell-popover-help { top: 55px; right: 24px; }
 .shell-popover > strong { padding: 6px 8px 9px; border-bottom: 1px solid rgba(195, 158, 234, .14); font-size: 12px; }
+.notification-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px 9px; border-bottom: 1px solid rgba(195, 158, 234, .14); }
+.notification-heading strong { font-size: 12px; }
+.notification-heading button { padding: 2px 0; border: 0; background: none; color: #c99cf1; font: inherit; font-size: 10px; cursor: pointer; }
+.notification-heading button:disabled { color: #756884; cursor: default; }
 .shell-popover > p { margin: 6px 8px; color: #b7a8c7; font-size: 11px; line-height: 1.5; }
 .shell-popover > button {
   display: flex;

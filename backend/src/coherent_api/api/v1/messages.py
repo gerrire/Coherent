@@ -9,6 +9,7 @@ from coherent_api.schemas.messages import (
     ConversationResponse,
     ConversationsResponse,
     CreateGroupRequest,
+    MarkConversationReadRequest,
     MessageResponse,
     MessagesResponse,
     OpenConversationRequest,
@@ -20,11 +21,13 @@ from coherent_api.services.messages import (
     ConversationUserNotFoundError,
     GroupMembershipError,
     MessageCursorNotFoundError,
+    ReadMessageNotFoundError,
     SelfConversationError,
     conversation_member_ids,
     create_group,
     list_conversations,
     list_messages,
+    mark_conversation_read,
     open_conversation,
     rename_group,
     send_message,
@@ -99,6 +102,21 @@ async def get_messages(
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
     except MessageCursorNotFoundError as error:
         raise HTTPException(status_code=400, detail="Сообщение для загрузки не найдено") from error
+
+
+@router.post("/{conversation_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_read(
+    conversation_id: UUID,
+    body: MarkConversationReadRequest,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    try:
+        await mark_conversation_read(session, user, conversation_id, body.message_id)
+    except ConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    except ReadMessageNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено") from error
 
 
 @router.post(

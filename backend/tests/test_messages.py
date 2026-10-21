@@ -140,3 +140,64 @@ def test_new_message_is_delivered_to_recipient(client: TestClient, csrf_token: s
         assert event["type"] == "message"
         assert event["conversation_id"] == conversation_id
         assert event["message"]["body"] == "Сообщение сразу"
+
+
+def test_unread_messages_follow_each_users_read_position(
+    client: TestClient, csrf_token: str
+) -> None:
+    _, alice_token = create_user(client, csrf_token, "alice")
+    bob_id, bob_token = create_user(client, csrf_token, "bob")
+    _, stranger_token = create_user(client, csrf_token, "stranger")
+    client.cookies.delete("coherent_session")
+    conversation_id = client.post(
+        "/api/v1/conversations",
+        headers=auth_headers(alice_token, csrf_token),
+        json={"user_id": bob_id},
+    ).json()["id"]
+    endpoint = f"/api/v1/conversations/{conversation_id}"
+
+    first = client.post(
+        f"{endpoint}/messages",
+        headers=auth_headers(alice_token, csrf_token),
+        json={"body": "Первое"},
+    ).json()["id"]
+    inbox = client.get("/api/v1/conversations", headers=auth_headers(bob_token, csrf_token))
+    assert inbox.json()["conversations"][0]["unread"] is True
+    assert client.get(
+        "/api/v1/conversations", headers=auth_headers(alice_token, csrf_token)
+    ).json()["conversations"][0]["unread"] is False
+    assert client.post(
+        f"{endpoint}/read",
+        headers=auth_headers(stranger_token, csrf_token),
+        json={"message_id": first},
+    ).status_code == 404
+    assert client.post(
+        f"{endpoint}/read",
+        headers=auth_headers(bob_token, csrf_token),
+        json={"message_id": first},
+    ).status_code == 204
+    assert client.get(
+        "/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)
+    ).json()["conversations"][0]["unread"] is False
+
+    second = client.post(
+        f"{endpoint}/messages",
+        headers=auth_headers(alice_token, csrf_token),
+        json={"body": "Второе"},
+    ).json()["id"]
+    assert client.get(
+        "/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)
+    ).json()["conversations"][0]["unread"] is True
+    assert client.post(
+        f"{endpoint}/read",
+        headers=auth_headers(bob_token, csrf_token),
+        json={"message_id": second},
+    ).status_code == 204
+    assert client.post(
+        f"{endpoint}/read",
+        headers=auth_headers(bob_token, csrf_token),
+        json={"message_id": first},
+    ).status_code == 204
+    assert client.get(
+        "/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)
+    ).json()["conversations"][0]["unread"] is False

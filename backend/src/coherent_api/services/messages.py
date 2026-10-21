@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from coherent_api.models.conversation import Conversation
 from coherent_api.models.conversation_member import ConversationMember
+from coherent_api.models.conversation_read import ConversationRead
 from coherent_api.models.friend_request import FriendRequest
 from coherent_api.models.message import Message
 from coherent_api.models.user import User
@@ -32,6 +33,10 @@ class SelfConversationError(Exception):
 
 
 class MessageCursorNotFoundError(Exception):
+    pass
+
+
+class ReadMessageNotFoundError(Exception):
     pass
 
 
@@ -71,6 +76,7 @@ async def conversation_response(
     conversation: Conversation,
     current_user_id: UUID,
     last_message: Message | None = None,
+    last_read: ConversationRead | None = None,
 ) -> ConversationResponse:
     member_ids = await conversation_member_ids(session, conversation)
     users = list(await session.scalars(select(User).where(User.id.in_(member_ids))))
@@ -90,6 +96,15 @@ async def conversation_response(
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         last_message=MessageResponse.model_validate(last_message) if last_message else None,
+        unread=bool(
+            last_message
+            and last_message.sender_id != current_user_id
+            and (
+                last_read is None
+                or (last_message.created_at.replace(tzinfo=UTC), last_message.id)
+                > (last_read.message_created_at.replace(tzinfo=UTC), last_read.message_id)
+            )
+        ),
     )
 
 
@@ -204,7 +219,10 @@ async def open_conversation(
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(1)
     )
-    return await conversation_response(session, conversation, current_user.id, last_message)
+    last_read = await session.get(ConversationRead, (conversation.id, current_user.id))
+    return await conversation_response(
+        session, conversation, current_user.id, last_message, last_read
+    )
 
 
 async def list_conversations(session: AsyncSession, current_user: User) -> ConversationsResponse:
@@ -237,12 +255,61 @@ async def list_conversations(session: AsyncSession, current_user: User) -> Conve
             .limit(100)
         )
     ).all()
+    reads = {
+        item.conversation_id: item
+        for item in await session.scalars(
+            select(ConversationRead).where(
+                ConversationRead.user_id == current_user.id,
+                ConversationRead.conversation_id.in_([conversation.id for conversation, _ in rows]),
+            )
+        )
+    }
     return ConversationsResponse(
         conversations=[
-            await conversation_response(session, conversation, current_user.id, last_message)
+            await conversation_response(
+                session, conversation, current_user.id, last_message, reads.get(conversation.id)
+            )
             for conversation, last_message in rows
         ]
     )
+
+
+async def mark_conversation_read(
+    session: AsyncSession, current_user: User, conversation_id: UUID, message_id: UUID
+) -> None:
+    await get_conversation(session, current_user, conversation_id)
+    message = await session.get(Message, message_id)
+    if message is None or message.conversation_id != conversation_id:
+        raise ReadMessageNotFoundError
+    marker = await session.get(ConversationRead, (conversation_id, current_user.id))
+    if marker is None:
+        session.add(
+            ConversationRead(
+                conversation_id=conversation_id,
+                user_id=current_user.id,
+                message_id=message.id,
+                message_created_at=message.created_at,
+            )
+        )
+    elif (message.created_at.replace(tzinfo=UTC), message.id) > (
+        marker.message_created_at.replace(tzinfo=UTC), marker.message_id
+    ):
+        marker.message_id = message.id
+        marker.message_created_at = message.created_at
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Another device may create the same read position at the same time.
+        await session.rollback()
+        marker = await session.get(ConversationRead, (conversation_id, current_user.id))
+        if marker is None:
+            raise
+        if (message.created_at.replace(tzinfo=UTC), message.id) > (
+            marker.message_created_at.replace(tzinfo=UTC), marker.message_id
+        ):
+            marker.message_id = message.id
+            marker.message_created_at = message.created_at
+            await session.commit()
 
 
 async def get_conversation(

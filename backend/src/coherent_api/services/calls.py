@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -371,17 +372,47 @@ async def close_livekit_room(settings: Settings, call_id: UUID) -> None:
         return
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     try:
-        async with livekit_api.LiveKitAPI(
-            url=settings.livekit_url,
-            api_key=settings.livekit_api_key,
-            api_secret=settings.livekit_api_secret.get_secret_value(),
-        ) as client:
-            await client.room.delete_room(livekit_api.DeleteRoomRequest(room=room_name(call_id)))
+        async with asyncio.timeout(8):
+            async with livekit_api.LiveKitAPI(
+                url=settings.livekit_url,
+                api_key=settings.livekit_api_key,
+                api_secret=settings.livekit_api_secret.get_secret_value(),
+            ) as client:
+                await client.room.delete_room(
+                    livekit_api.DeleteRoomRequest(room=room_name(call_id))
+                )
     except livekit_api.ServerError as error:
         if error.status != 404:
             logger.warning("Could not close LiveKit room %s: %s", call_id, error)
-    except (OSError, TimeoutError) as error:
+    except Exception as error:
         logger.warning("Could not reach LiveKit to close room %s: %s", call_id, error)
+
+
+async def remove_livekit_participant(settings: Settings, call_id: UUID, user_id: UUID) -> None:
+    if not livekit_ready(settings):
+        return
+    assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
+    try:
+        async with asyncio.timeout(8):
+            async with livekit_api.LiveKitAPI(
+                url=settings.livekit_url,
+                api_key=settings.livekit_api_key,
+                api_secret=settings.livekit_api_secret.get_secret_value(),
+            ) as client:
+                await client.room.remove_participant(
+                    livekit_api.RoomParticipantIdentity(
+                        room=room_name(call_id), identity=str(user_id)
+                    )
+                )
+    except livekit_api.ServerError as error:
+        if error.status != 404:
+            logger.warning(
+                "Could not remove participant %s from call %s: %s", user_id, call_id, error
+            )
+    except Exception as error:
+        logger.warning(
+            "Could not reach LiveKit to remove participant from call %s: %s", call_id, error
+        )
 
 
 async def join_call(

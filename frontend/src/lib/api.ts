@@ -52,6 +52,7 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   last_message: Message | null;
+  unread: boolean;
 }
 
 export function conversationTitle(conversation: Conversation): string {
@@ -195,6 +196,11 @@ export const api = {
     request<MessagePage>(
       `/api/v1/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
     ),
+  markConversationRead: (conversationId: string, messageId: string) =>
+    request<void>(`/api/v1/conversations/${conversationId}/read`, {
+      method: "POST",
+      body: JSON.stringify({ message_id: messageId }),
+    }),
   sendMessage: (conversationId: string, body: string) =>
     request<Message>(`/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",

@@ -1,6 +1,7 @@
+import asyncio
 import hmac
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from coherent_api.api.v1.router import api_router
 from coherent_api.core.config import Settings, get_settings
+from coherent_api.services.call_cleanup import call_cleanup_loop
+from coherent_api.services.calls import livekit_ready
 from coherent_api.services.events import MessageEvents
 
 
@@ -23,10 +26,21 @@ def create_app(
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        yield
-        if engine is not None:
-            await engine.dispose()
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        cleanup = None
+        if livekit_ready(app_settings):
+            cleanup = asyncio.create_task(
+                call_cleanup_loop(session_factory, app_settings, application.state.message_events)
+            )
+        try:
+            yield
+        finally:
+            if cleanup is not None:
+                cleanup.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cleanup
+            if engine is not None:
+                await engine.dispose()
 
     app = FastAPI(
         title=app_settings.app_name,

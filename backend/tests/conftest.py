@@ -10,6 +10,7 @@ from coherent_api.core.config import Settings
 from coherent_api.db.base import Base
 from coherent_api.main import create_app
 from coherent_api.models import conversation as conversation_model  # noqa: F401
+from coherent_api.models import conversation_read as conversation_read_model  # noqa: F401
 from coherent_api.models import friend_request as friend_request_model  # noqa: F401
 from coherent_api.models import message as message_model  # noqa: F401
 from coherent_api.models import user as user_model  # noqa: F401
