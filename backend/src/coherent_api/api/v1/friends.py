@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.schemas.friends import (
@@ -24,8 +24,20 @@ from coherent_api.services.friends import (
     remove_friend_request,
     search_users,
 )
+from coherent_api.services.messages import list_conversations
 
 router = APIRouter(tags=["Пользователи и друзья"])
+
+
+@router.get("/users/presence")
+async def online_users(user: CurrentUser, session: SessionDep, request: Request) -> dict[str, list[UUID]]:
+    friends = await get_friends(session, user)
+    conversations = await list_conversations(session, user)
+    visible_ids = {friend.id for friend in friends.friends}
+    visible_ids.update(member.id for conversation in conversations.conversations for member in conversation.members)
+    visible_ids.discard(user.id)
+    connected = request.app.state.message_events.connections
+    return {"online_user_ids": [user_id for user_id in visible_ids if connected.get(user_id)]}
 
 
 @router.get("/users/search", response_model=list[UserSearchItem])

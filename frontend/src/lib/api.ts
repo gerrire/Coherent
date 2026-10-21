@@ -160,6 +160,7 @@ export const api = {
   relationship: (userId: string) =>
     request<UserSearchResult>(`/api/v1/users/${userId}/relationship`),
   friends: () => request<{ friends: Friend[] }>("/api/v1/friends"),
+  presence: () => request<{ online_user_ids: string[] }>("/api/v1/users/presence"),
   friendRequests: () => request<FriendRequests>("/api/v1/friends/requests"),
   sendFriendRequest: (targetUserId: string) =>
     request<{ request_id: string; status: "pending" | "accepted" }>(

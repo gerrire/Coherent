@@ -7,9 +7,11 @@ type Tab = "search" | "all" | "requests";
 export default function FriendsPanel({
   onStartConversation,
   initialTab = "search",
+  onlineIds,
 }: {
   onStartConversation: (userId: string) => Promise<void>;
   initialTab?: Tab;
+  onlineIds: Set<string>;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState("");
@@ -238,7 +240,7 @@ export default function FriendsPanel({
                 <FriendRow
                   key={friend.id}
                   username={friend.username}
-                  detail="В друзьях"
+                  online={onlineIds.has(friend.id)}
                   busy={busyId === friend.id}
                   onMessage={() => startConversation(friend.id)}
                 />
@@ -362,16 +364,16 @@ function UserResultRow({
   );
 }
 
-function FriendRow({ username, detail, busy, onMessage }: {
+function FriendRow({ username, online, busy, onMessage }: {
   username: string;
-  detail: string;
+  online: boolean;
   busy: boolean;
   onMessage: () => void;
 }) {
   return (
     <div className="friend-row">
       <UserIdentity username={username} />
-      <span className="friend-row-status friend-online"><i />{detail}</span>
+      <span className={`friend-row-status ${online ? "friend-online" : "friend-offline"}`}><i />{online ? "В сети" : "Не в сети"}</span>
       <button className="small-action message-action" disabled={busy} onClick={onMessage}>
         <MessageCircle size={14} /> Написать
       </button>

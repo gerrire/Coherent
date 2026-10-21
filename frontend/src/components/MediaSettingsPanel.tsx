@@ -75,12 +75,12 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
 
   const outputSupported = typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
   const processingSupported = supportedAudioProcessing();
-  const naturalVoice = !media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
-  const noisyVoice = media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
+  const naturalVoice = !media.noiseSuppression && !media.strongNoiseSuppression && media.echoCancellation && !media.autoGainControl;
+  const noisyVoice = media.noiseSuppression && !media.strongNoiseSuppression && media.echoCancellation && !media.autoGainControl;
 
-  function chooseVoiceProfile(noiseSuppression: boolean) {
-    const patch: Partial<MediaPreferences> = {};
-    if (processingSupported.noiseSuppression) patch.noiseSuppression = noiseSuppression;
+  function chooseVoiceProfile(profile: "natural" | "noisy" | "strong") {
+    const patch: Partial<MediaPreferences> = { strongNoiseSuppression: profile === "strong" };
+    if (processingSupported.noiseSuppression) patch.noiseSuppression = profile !== "natural";
     if (processingSupported.echoCancellation) patch.echoCancellation = true;
     if (processingSupported.autoGainControl) patch.autoGainControl = false;
     void change(patch);
@@ -112,8 +112,8 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         </label>
         <label className="media-volume-setting">
           <span>Громкость микрофона <strong>{media.microphoneVolume}%</strong></span>
-          <input type="range" min="0" max="200" step="5" value={media.microphoneVolume} onChange={(event) => void change({ microphoneVolume: Number(event.target.value) })} />
-          <small>100% — исходный уровень. Усиление выше 100% может вызвать искажения на громком микрофоне.</small>
+          <input type="range" min="0" max="100" step="5" value={media.microphoneVolume} onChange={(event) => void change({ microphoneVolume: Number(event.target.value) })} />
+          <small>100% — полный уровень. Голос усиливается и выравнивается автоматически, громкие пики ограничиваются.</small>
         </label>
         <label>
           Камера
@@ -149,9 +149,9 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         <label>
           Качество демонстрации экрана
           <select disabled={busy} value={media.screenShareQuality} onChange={(event) => void change({ screenShareQuality: event.target.value as MediaPreferences["screenShareQuality"] })}>
-            <option value="720p">Устойчивая связь · 720p, 15 кадров/с</option>
-            <option value="1080p">Чёткое · 1080p, 30 кадров/с</option>
-            <option value="native">Оригинал · до 4K, 30 кадров/с</option>
+            <option value="720p">Устойчивая связь · 720p, до 60 кадров/с</option>
+            <option value="1080p">Чёткое · 1080p, до 60 кадров/с</option>
+            <option value="native">Оригинал · до 4K, до 60 кадров/с</option>
           </select>
           <small>Оригинал требует больше ресурсов. Параметры демонстрации применятся при следующем включении показа экрана.</small>
           <small>Для передачи звука без эха выбери отдельную вкладку. При показе всего экрана звук компьютера выключен, чтобы участники не слышали собственные голоса.</small>
@@ -166,14 +166,15 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         <div className="media-voice-profiles">
           <span>Обработка голоса</span>
           <div>
-            <button type="button" className={naturalVoice ? "active" : ""} disabled={busy} onClick={() => chooseVoiceProfile(false)}>Естественный</button>
-            <button type="button" className={noisyVoice ? "active" : ""} disabled={busy || !processingSupported.noiseSuppression} onClick={() => chooseVoiceProfile(true)}>Шумное место</button>
+            <button type="button" className={naturalVoice ? "active" : ""} disabled={busy} onClick={() => chooseVoiceProfile("natural")}>Естественный</button>
+            <button type="button" className={noisyVoice ? "active" : ""} disabled={busy || !processingSupported.noiseSuppression} onClick={() => chooseVoiceProfile("noisy")}>Шумное место</button>
+            <button type="button" className={media.strongNoiseSuppression ? "active" : ""} disabled={busy || !processingSupported.noiseSuppression} onClick={() => chooseVoiceProfile("strong")}>Клавиатура и сильный шум</button>
           </div>
-          <small>Естественный режим мягко приглушает шипение между словами и сохраняет тихую речь. В шумном месте действует подавление браузера. Для динамиков подавление эха остаётся включённым.</small>
+          <small>Сильный режим сочетает подавление браузера с шумовым порогом. Он лучше скрывает клавиши в паузах, но может обрезать очень тихую речь.</small>
         </div>
         <label className="media-setting-check">
-          <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={media.noiseSuppression && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked })} />
-          <span className="media-setting-option">Подавление шума<small>{processingCaption("noiseSuppression", media.noiseSuppression)}</small></span>
+          <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={(media.noiseSuppression || media.strongNoiseSuppression) && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked, strongNoiseSuppression: false })} />
+          <span className="media-setting-option">Подавление шума<small>{processingCaption("noiseSuppression", media.noiseSuppression || media.strongNoiseSuppression)}</small></span>
         </label>
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy || !processingSupported.echoCancellation} checked={media.echoCancellation && processingSupported.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
@@ -187,7 +188,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <input type="checkbox" disabled={busy} checked={media.deafened} onChange={(event) => void change({ deafened: event.target.checked })} />
           Не слышать собеседников
         </label>
-        <p className="media-settings-note">Подавление шума и эха выполняет браузер. Усиленная изоляция голоса отключена; если фон тихий, естественный режим обычно звучит лучше.</p>
+        <p className="media-settings-note">Подавление шума и эха выполняет браузер. Для сильного режима дополнительно включаются изоляция голоса, если она доступна, и более жёсткий шумовой порог.</p>
       </div>
     </aside>
   );

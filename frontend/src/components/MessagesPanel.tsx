@@ -9,6 +9,7 @@ interface MessagesPanelProps {
   onSent: () => void;
   callError: string;
   onRename: (conversationId: string, name: string) => Promise<void>;
+  peerOnline?: boolean;
 }
 
 function mergeMessages(first: Message[], second: Message[]): Message[] {
@@ -30,6 +31,7 @@ export default function MessagesPanel({
   onSent,
   callError,
   onRename,
+  peerOnline,
 }: MessagesPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -227,7 +229,7 @@ export default function MessagesPanel({
           </div>
           <p>{conversation.kind === "group"
             ? `Общий чат · ${conversation.members.map((member) => member.username).join(", ")}`
-            : "Личная беседа. Сообщения сохраняются в Coherent."}</p>
+            : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent.`}</p>
         </div>
       </div>
       {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>

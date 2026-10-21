@@ -389,7 +389,7 @@ function CallMediaBridge({
       const selected = mediaRef.current;
       if (selected.microphoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(selected));
-        await applyMicrophoneProcessing(room, selected.microphoneVolume, !selected.noiseSuppression);
+        await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.strongNoiseSuppression ? "strong" : selected.noiseSuppression ? "off" : "soft");
       }
       if (selected.cameraEnabled) {
         await room.localParticipant.setCameraEnabled(
@@ -584,6 +584,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange 
   function cameraFor(participant: Participant) {
     return tracks.find((track) =>
       track.participant.identity === participant.identity && track.source === Track.Source.Camera
+        && !track.publication.isMuted && track.publication.track?.mediaStreamTrack.readyState === "live"
     );
   }
 

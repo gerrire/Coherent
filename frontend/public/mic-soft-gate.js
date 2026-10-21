@@ -1,9 +1,9 @@
 class CoherentSoftGate extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.enabled = true;
+    this.mode = "soft";
     this.gain = 1;
-    this.port.onmessage = (event) => { this.enabled = event.data.enabled === true; };
+    this.port.onmessage = (event) => { this.mode = event.data.mode || "off"; };
   }
 
   process(inputs, outputs) {
@@ -21,9 +21,10 @@ class CoherentSoftGate extends AudioWorkletProcessor {
     }
     const rms = Math.sqrt(energy / Math.max(1, count));
     // A low floor and gradual envelope reduce hiss between words without silencing quiet syllables.
-    const level = Math.min(1, Math.max(0, (rms - 0.0025) / 0.009));
-    const target = this.enabled ? 0.3 + 0.7 * level : 1;
-    this.gain += (target - this.gain) * (target > this.gain ? 0.35 : 0.015);
+    const strong = this.mode === "strong";
+    const level = Math.min(1, Math.max(0, (rms - (strong ? 0.012 : 0.0025)) / (strong ? 0.016 : 0.009)));
+    const target = this.mode === "off" ? 1 : (strong ? 0.035 : 0.3) + (strong ? 0.965 : 0.7) * level;
+    this.gain += (target - this.gain) * (target > this.gain ? (strong ? 0.16 : 0.35) : (strong ? 0.025 : 0.015));
     for (let channelIndex = 0; channelIndex < output.length; channelIndex++) {
       const source = input[channelIndex] ?? input[0];
       const destination = output[channelIndex];

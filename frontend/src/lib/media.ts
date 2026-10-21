@@ -28,6 +28,7 @@ export interface MediaPreferences {
   screenShareQuality: ScreenShareQuality;
   screenShareContent: ScreenShareContent;
   noiseSuppression: boolean;
+  strongNoiseSuppression: boolean;
   echoCancellation: boolean;
   autoGainControl: boolean;
 }
@@ -74,6 +75,7 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareQuality: "1080p",
   screenShareContent: "text",
   noiseSuppression: false,
+  strongNoiseSuppression: false,
   echoCancellation: true,
   autoGainControl: false,
 };
@@ -98,7 +100,8 @@ export function loadMediaPreferences(): MediaPreferences {
       ...defaultMediaPreferences,
       ...saved,
       microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
-        ? Math.min(200, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
+        ? Math.min(100, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
+      strongNoiseSuppression: saved.strongNoiseSuppression === true,
       noiseSuppression: legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression,
       autoGainControl: legacyAudioDefaults ? false : saved.autoGainControl ?? defaultMediaPreferences.autoGainControl,
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
@@ -123,10 +126,10 @@ export function saveMediaPreferences(value: MediaPreferences): void {
 export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions {
   return {
     deviceId: value.microphoneId || undefined,
-    noiseSuppression: value.noiseSuppression,
+    noiseSuppression: value.noiseSuppression || value.strongNoiseSuppression,
     echoCancellation: value.echoCancellation,
     autoGainControl: value.autoGainControl,
-    voiceIsolation: false,
+    voiceIsolation: value.strongNoiseSuppression,
   };
 }
 
@@ -185,10 +188,10 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
     contentHint: value.screenShareContent,
     // Safari 17 can downscale display capture when explicit dimensions are supplied.
     resolution: safari ? undefined : value.screenShareQuality === "native"
-      ? { width: 3840, height: 2160, frameRate: 30 }
+      ? { width: 3840, height: 2160, frameRate: value.screenShareContent === "motion" ? 60 : 30 }
       : value.screenShareQuality === "720p"
-        ? ScreenSharePresets.h720fps15.resolution
-        : ScreenSharePresets.h1080fps30.resolution,
+        ? { width: 1280, height: 720, frameRate: value.screenShareContent === "motion" ? 60 : 30 }
+        : { width: 1920, height: 1080, frameRate: value.screenShareContent === "motion" ? 60 : 30 },
   };
 }
 
@@ -197,11 +200,11 @@ export function screenSharePublish(value: MediaPreferences): TrackPublishOptions
     videoCodec: supportedVideoCodec(value.videoCodec),
     screenShareEncoding: {
       ...(value.screenShareQuality === "native"
-        ? { maxBitrate: 10_000_000, maxFramerate: 30 }
+        ? { maxBitrate: value.screenShareContent === "motion" ? 12_000_000 : 9_000_000, maxFramerate: value.screenShareContent === "motion" ? 60 : 30 }
         : value.screenShareQuality === "720p"
-          ? ScreenSharePresets.h720fps15.encoding
-          : ScreenSharePresets.h1080fps30.encoding),
-      priority: "low",
+          ? { maxBitrate: 3_500_000, maxFramerate: value.screenShareContent === "motion" ? 60 : 30 }
+          : { maxBitrate: value.screenShareContent === "motion" ? 7_000_000 : 6_000_000, maxFramerate: value.screenShareContent === "motion" ? 60 : 30 }),
+      priority: "high",
     },
     screenShareSimulcastLayers: value.screenShareQuality === "720p"
       ? [ScreenSharePresets.h360fps15]

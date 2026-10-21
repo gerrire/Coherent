@@ -3061,6 +3061,10 @@ a {
   background: #69d69e;
   box-shadow: 0 0 8px rgba(105, 214, 158, .55);
 }
+.friend-offline i { width: 6px; height: 6px; border-radius: 50%; background: #786e86; }
+.conversation-presence { align-self: center; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #69d69e; box-shadow: 0 0 7px rgba(105, 214, 158, .5); }
+.notification-permission { border: 1px solid #8059a8 !important; background: #3b2b51 !important; }
+.notification-event { line-height: 1.4; }
 .friend-presence, .request-date {
   color: #6f657b;
   font-size: 9px;
@@ -3203,8 +3207,8 @@ a {
   left: 345px;
   display: flex;
   flex-direction: column;
-  width: min(338px, calc(100vw - 28px));
-  max-height: min(660px, calc(100dvh - 105px));
+  width: min(440px, calc(100vw - 28px));
+  max-height: min(780px, calc(100dvh - 105px));
   overflow: hidden;
   border: 1px solid rgba(183, 129, 238, .35);
   border-radius: 16px;
@@ -3213,12 +3217,12 @@ a {
   color: #f3eafa;
 }
 .call-surface .media-settings-panel {
-  position: absolute;
-  top: 57px;
-  right: 14px;
+  position: fixed;
+  top: clamp(64px, 8vh, 92px);
+  right: 18px;
   bottom: auto;
   left: auto;
-  max-height: calc(100% - 70px);
+  max-height: calc(100dvh - 105px);
 }
 .media-settings-heading,
 .participant-picker-heading {
@@ -3270,7 +3274,7 @@ a {
 .media-settings-note { color: #a99ab8; font-size: 10px; font-weight: 400; line-height: 1.5; }
 .media-settings-divider { height: 1px; background: rgba(195, 158, 234, .15); }
 .media-voice-profiles { display: flex; flex-direction: column; gap: 7px; color: #d7c9e4; font-size: 11px; font-weight: 600; }
-.media-voice-profiles > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.media-voice-profiles > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .media-voice-profiles button {
   min-height: 34px;
   border: 1px solid #574267;
@@ -3278,6 +3282,8 @@ a {
   background: #191427;
   color: #d7c9e4;
   font: inherit;
+  font-size: 10px;
+  padding: 5px;
   cursor: pointer;
 }
 .media-voice-profiles button.active { border-color: #af72eb; background: #503271; color: #fff; }
@@ -3354,7 +3360,7 @@ a {
 
 @media (max-width: 680px) {
   .media-settings-panel { right: 10px; bottom: 66px; left: 10px; width: auto; max-height: calc(100dvh - 80px); }
-  .call-surface .media-settings-panel { right: 8px; width: min(338px, calc(100% - 16px)); }
+  .call-surface .media-settings-panel { right: 8px; width: min(440px, calc(100% - 16px)); }
   .media-control-error { bottom: 62px; left: 10px; }
   .messages-intro-heading { flex-wrap: wrap; gap: 6px; }
   .chat-friend-button { font-size: 9px; }
