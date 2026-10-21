@@ -80,7 +80,7 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareContent: "text",
   screenShareCodec: "h264",
   screenShareFrameRate: 30,
-  screenShareBitrateMbps: 12,
+  screenShareBitrateMbps: 20,
   noiseSuppression: false,
   echoCancellation: true,
   autoGainControl: false,
@@ -92,6 +92,7 @@ export function loadMediaPreferences(): MediaPreferences {
       qualityDefaultsVersion?: number;
       audioDefaultsVersion?: number;
       screenShareDefaultsVersion?: number;
+      screenShareBitrateDefaultsVersion?: number;
       strongNoiseSuppression?: boolean;
     };
     const { strongNoiseSuppression, ...stored } = saved;
@@ -120,8 +121,9 @@ export function loadMediaPreferences(): MediaPreferences {
       screenShareContent: saved.screenShareContent === "motion" ? "motion" : "text",
       screenShareCodec: codecs.includes(saved.screenShareCodec as VideoCodec) ? saved.screenShareCodec! : "h264",
       screenShareFrameRate: saved.screenShareFrameRate === 15 || saved.screenShareFrameRate === 60 ? saved.screenShareFrameRate : 30,
-      screenShareBitrateMbps: typeof saved.screenShareBitrateMbps === "number" && Number.isFinite(saved.screenShareBitrateMbps)
-        ? Math.min(20, Math.max(1, Math.round(saved.screenShareBitrateMbps))) : 12,
+      screenShareBitrateMbps: saved.screenShareBitrateDefaultsVersion !== 1 && saved.screenShareBitrateMbps === 12
+        ? 20 : typeof saved.screenShareBitrateMbps === "number" && Number.isFinite(saved.screenShareBitrateMbps)
+          ? Math.min(50, Math.max(1, Math.round(saved.screenShareBitrateMbps))) : 20,
     };
   } catch {
     return defaultMediaPreferences;
@@ -130,7 +132,7 @@ export function loadMediaPreferences(): MediaPreferences {
 
 export function saveMediaPreferences(value: MediaPreferences): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2, audioDefaultsVersion: 1, screenShareDefaultsVersion: 1 }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2, audioDefaultsVersion: 1, screenShareDefaultsVersion: 1, screenShareBitrateDefaultsVersion: 1 }));
   } catch {
     // The current call still works when browser storage is unavailable.
   }

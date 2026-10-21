@@ -1453,6 +1453,20 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.call-tile-resolution {
+  position: absolute;
+  top: 45px;
+  right: 9px;
+  max-width: calc(100% - 18px);
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: rgba(12, 10, 20, .64);
+  color: rgba(239, 232, 249, .7);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
 .call-participant-status { position: absolute; top: 9px; left: 9px; display: flex; align-items: center; gap: 5px; }
 .call-participant-status > span { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid rgba(204, 181, 227, .28); border-radius: 7px; background: rgba(17, 14, 26, .86); color: #f0e5fa; }
 .call-participant-status-inline { position: static; flex: 0 0 auto; gap: 3px; }

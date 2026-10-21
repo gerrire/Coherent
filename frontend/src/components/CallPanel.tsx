@@ -540,6 +540,38 @@ function ParticipantStatus({ participant, media, inline = false }: { participant
   </span>;
 }
 
+function VideoWithResolution({ trackRef }: { trackRef: NonNullable<ComponentProps<typeof VideoTrack>["trackRef"]> }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const update = () => {
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      setResolution((previous) => previous?.width === width && previous.height === height
+        ? previous : width && height ? { width, height } : null);
+    };
+    video.addEventListener("resize", update);
+    video.addEventListener("loadedmetadata", update);
+    video.addEventListener("emptied", update);
+    update();
+    const timer = window.setInterval(update, 2000);
+    return () => {
+      video.removeEventListener("resize", update);
+      video.removeEventListener("loadedmetadata", update);
+      video.removeEventListener("emptied", update);
+      window.clearInterval(timer);
+    };
+  }, [trackRef.publication.track?.mediaStreamTrack.id]);
+
+  return <>
+    <VideoTrack trackRef={trackRef} ref={videoRef} />
+    {resolution && <span className="call-tile-resolution" title="Разрешение отображаемого видео">{resolution.width}×{resolution.height}</span>}
+  </>;
+}
+
 function ParticipantTile({ participant, camera, volume, onVolumeOpen, media }: {
   participant: Participant;
   camera: ComponentProps<typeof VideoTrack>["trackRef"] | undefined;
@@ -551,7 +583,7 @@ function ParticipantTile({ participant, camera, volume, onVolumeOpen, media }: {
   const label = participant.isLocal ? "Ты" : participant.name || "Участник";
   return (
     <div className={`call-tile ${isSpeaking ? "call-tile-speaking" : ""}`} onContextMenu={participant.isLocal ? undefined : (event) => { event.preventDefault(); onVolumeOpen(); }}>
-      {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
+      {camera ? <VideoWithResolution trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
       <ParticipantStatus participant={participant} media={media} />
       <span className="call-tile-name">{label}</span>
       {!participant.isLocal && (
@@ -686,7 +718,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
     return <>
       <div className={`call-stage call-stage-sharing ${denseClass}`}>
         <div className="call-tile call-tile-screen">
-          <VideoTrack trackRef={screen} />
+          <VideoWithResolution trackRef={screen} />
           <span className="call-tile-name">{screenLabel(screen.participant)}</span>
         </div>
         {sidebar}
@@ -699,7 +731,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
     return <>
       <div className={`call-stage call-stage-grid call-stage-with-screens ${denseClass} ${tileCount > 2 ? "call-stage-group" : ""} ${tileCount > 4 ? "call-stage-many" : ""}`}>
         {screens.map((item) => <div className="call-tile call-tile-screen" key={`screen-${item.participant.identity}`}>
-          <VideoTrack trackRef={item} />
+          <VideoWithResolution trackRef={item} />
           <span className="call-tile-name">{screenLabel(item.participant)}</span>
           <button className="call-screen-focus-button" onClick={() => { setSelectedScreenOwner(item.participant.identity); onModeChange("focus"); }} aria-label={`Крупно: ${screenLabel(item.participant)}`}>Открыть крупно</button>
         </div>)}

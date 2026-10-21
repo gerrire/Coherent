@@ -231,7 +231,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         </label>
         <label className="media-volume-setting">
           <span>Максимальный битрейт <strong>{media.screenShareBitrateMbps} Мбит/с</strong></span>
-          <input type="range" min="1" max="20" step="1" value={media.screenShareBitrateMbps} onChange={(event) => void change({ screenShareBitrateMbps: Number(event.target.value) })} />
+          <input type="range" min="1" max="50" step="1" value={media.screenShareBitrateMbps} onChange={(event) => void change({ screenShareBitrateMbps: Number(event.target.value) })} />
           <small>Предел передачи, а не гарантированная скорость. Во время показа меняется сразу; для высокого разрешения обычно нужно больше.</small>
         </label>
         <label>
