@@ -49,17 +49,21 @@ import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
 type ViewMode = "grid" | "focus";
 type TileDensity = "normal" | "compact";
 const VOLUME_STORAGE_KEY = "coherent-participant-volumes";
+const SCREEN_VOLUME_STORAGE_KEY = "coherent-screen-volumes";
 
-function loadParticipantVolumes(): Record<string, number> {
+function loadVolumes(key: string, maximum: number): Record<string, number> {
   try {
-    const stored = JSON.parse(localStorage.getItem(VOLUME_STORAGE_KEY) || "{}") as Record<string, number>;
+    const stored = JSON.parse(localStorage.getItem(key) || "{}") as Record<string, number>;
     return Object.fromEntries(Object.entries(stored).filter(([id, value]) =>
-      id.length > 0 && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 200
+      id.length > 0 && typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
     ));
   } catch {
     return {};
   }
 }
+
+const loadParticipantVolumes = () => loadVolumes(VOLUME_STORAGE_KEY, 200);
+const loadScreenVolumes = () => loadVolumes(SCREEN_VOLUME_STORAGE_KEY, 100);
 
 interface CallPanelProps {
   call: Call;
@@ -275,6 +279,7 @@ function CallRoom({
   const [connected, setConnected] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [participantVolumes, setParticipantVolumes] = useState(loadParticipantVolumes);
+  const [screenVolumes, setScreenVolumes] = useState(loadScreenVolumes);
   const roomOptions = useMemo(() => ({
     adaptiveStream: true,
     dynacast: true,
@@ -291,8 +296,16 @@ function CallRoom({
     try { localStorage.setItem(VOLUME_STORAGE_KEY, JSON.stringify(participantVolumes)); } catch { /* Storage may be disabled. */ }
   }, [participantVolumes]);
 
+  useEffect(() => {
+    try { localStorage.setItem(SCREEN_VOLUME_STORAGE_KEY, JSON.stringify(screenVolumes)); } catch { /* Storage may be disabled. */ }
+  }, [screenVolumes]);
+
   function changeParticipantVolume(userId: string, volume: number) {
     setParticipantVolumes((current) => ({ ...current, [userId]: volume }));
+  }
+
+  function changeScreenVolume(userId: string, volume: number) {
+    setScreenVolumes((current) => ({ ...current, [userId]: volume }));
   }
 
   useEffect(() => {
@@ -356,10 +369,10 @@ function CallRoom({
       onError={(reason) => setError(reason.message)}
     >
       <CallMediaBridge connected={connected} media={media} onRoomReady={onRoomReady} onError={setMediaError} />
-      <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} />
+      <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
       {header}
       <CallConnectionNotice />
-      <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} media={media} />
+      <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
       <div className="call-surface-controls">
         <StartAudio className="call-start-audio" label="Включить звук" />
         <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
@@ -516,13 +529,15 @@ function CallConnectionNotice() {
   return <p className="call-network-notice">Связь нестабильна: звук может прерываться. Если идёт демонстрация, попробуй режим 720p в настройках видео.</p>;
 }
 
-function CallAudioRenderer({ muted, volumes }: { muted: boolean; volumes: Record<string, number> }) {
+function CallAudioRenderer({ muted, volumes, screenVolumes }: { muted: boolean; volumes: Record<string, number>; screenVolumes: Record<string, number> }) {
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio], { onlySubscribed: true });
   return <>{tracks.filter((track) => !track.participant.isLocal).map((track) => (
     <AudioTrack
       key={`${track.participant.identity}-${track.source}`}
       trackRef={track}
-      volume={muted ? 0 : (volumes[track.participant.identity] ?? 100) / 100}
+      volume={muted ? 0 : (track.source === Track.Source.ScreenShareAudio
+        ? screenVolumes[track.participant.identity] ?? 100
+        : volumes[track.participant.identity] ?? 100) / 100}
     />
   ))}</>;
 }
@@ -618,17 +633,19 @@ function SidebarParticipant({ participant, camera, volume, onVolumeChange, media
   </div>;
 }
 
-function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange, media }: {
+function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange, screenVolumes, onScreenVolumeChange, media }: {
   call: Call;
   mode: ViewMode;
   onModeChange: (mode: ViewMode) => void;
   density: TileDensity;
   volumes: Record<string, number>;
   onVolumeChange: (userId: string, volume: number) => void;
+  screenVolumes: Record<string, number>;
+  onScreenVolumeChange: (userId: string, volume: number) => void;
   media: MediaPreferences;
 }) {
   const participants = useParticipants();
-  const [volumeOpenFor, setVolumeOpenFor] = useState<string | null>(null);
+  const [volumeOpenFor, setVolumeOpenFor] = useState<{ userId: string; source: "microphone" | "screen" } | null>(null);
   const [selectedScreenOwner, setSelectedScreenOwner] = useState<string | null>(null);
   const previousScreenCount = useRef(0);
   const tracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare]);
@@ -639,7 +656,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
   );
   const tileCount = screens.length + participants.length + invited.length;
   const denseClass = density === "compact" ? "call-stage-dense" : "";
-  const selectedVolumeParticipant = participants.find((participant) => participant.identity === volumeOpenFor);
+  const selectedVolumeParticipant = participants.find((participant) => participant.identity === volumeOpenFor?.userId);
 
   useEffect(() => {
     if (previousScreenCount.current === 0 && screens.length > 0) onModeChange("focus");
@@ -669,7 +686,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
       camera={cameraFor(participant)}
       volume={volumes[participant.identity] ?? 100}
       media={media}
-      onVolumeOpen={() => setVolumeOpenFor(participant.identity)}
+      onVolumeOpen={() => setVolumeOpenFor({ userId: participant.identity, source: "microphone" })}
     />;
   }
 
@@ -703,16 +720,32 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
     </div>
   );
 
-  const volumePanel = selectedVolumeParticipant && <aside className="call-volume-popover" aria-label={`Громкость: ${selectedVolumeParticipant.name || "участник"}`}>
+  const screenVolumeSelected = volumeOpenFor?.source === "screen";
+  const selectedVolume = selectedVolumeParticipant && (screenVolumeSelected
+    ? screenVolumes[selectedVolumeParticipant.identity] ?? 100
+    : volumes[selectedVolumeParticipant.identity] ?? 100);
+  const volumePanel = selectedVolumeParticipant && <aside className={`call-volume-popover ${screenVolumeSelected ? "call-volume-popover-screen" : ""}`} aria-label={`${screenVolumeSelected ? "Громкость демонстрации" : "Громкость"}: ${selectedVolumeParticipant.name || "участник"}`}>
     <div className="call-volume-popover-heading">
-      <strong>{selectedVolumeParticipant.name || "Участник"}</strong>
+      <strong>{screenVolumeSelected ? screenLabel(selectedVolumeParticipant) : selectedVolumeParticipant.name || "Участник"}</strong>
       <button onClick={() => setVolumeOpenFor(null)} aria-label="Закрыть громкость"><X size={16} /></button>
     </div>
     <label>
-      Громкость: {volumes[selectedVolumeParticipant.identity] ?? 100}%
-      <input type="range" min="0" max="200" value={volumes[selectedVolumeParticipant.identity] ?? 100} onChange={(event) => onVolumeChange(selectedVolumeParticipant.identity, Number(event.target.value))} />
+      {screenVolumeSelected ? "Громкость демонстрации" : "Громкость"}: {selectedVolume}%
+      <input type="range" min="0" max={screenVolumeSelected ? "100" : "200"} value={selectedVolume} onChange={(event) => {
+        const change = screenVolumeSelected ? onScreenVolumeChange : onVolumeChange;
+        change(selectedVolumeParticipant.identity, Number(event.target.value));
+      }} />
     </label>
   </aside>;
+
+  function screenVolumeButton(owner: Participant) {
+    if (owner.isLocal) return null;
+    const volume = screenVolumes[owner.identity] ?? 100;
+    const label = screenLabel(owner);
+    return <button type="button" className="call-screen-volume-button" onClick={() => setVolumeOpenFor({ userId: owner.identity, source: "screen" })} title={`Громкость демонстрации: ${label}`} aria-label={`Громкость демонстрации: ${label}`}>
+      {volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+    </button>;
+  }
 
   if (screen && mode === "focus") {
     return <>
@@ -720,6 +753,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
         <div className="call-tile call-tile-screen">
           <VideoWithResolution trackRef={screen} />
           <span className="call-tile-name">{screenLabel(screen.participant)}</span>
+          {screenVolumeButton(screen.participant)}
         </div>
         {sidebar}
       </div>
@@ -733,6 +767,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
         {screens.map((item) => <div className="call-tile call-tile-screen" key={`screen-${item.participant.identity}`}>
           <VideoWithResolution trackRef={item} />
           <span className="call-tile-name">{screenLabel(item.participant)}</span>
+          {screenVolumeButton(item.participant)}
           <button className="call-screen-focus-button" onClick={() => { setSelectedScreenOwner(item.participant.identity); onModeChange("focus"); }} aria-label={`Крупно: ${screenLabel(item.participant)}`}>Открыть крупно</button>
         </div>)}
         {participants.map(tile)}

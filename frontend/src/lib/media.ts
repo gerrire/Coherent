@@ -109,6 +109,7 @@ export function loadMediaPreferences(): MediaPreferences {
     return {
       ...defaultMediaPreferences,
       ...stored,
+      cameraEnabled: false,
       microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
         ? Math.min(100, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
       noiseSuppression: strongNoiseSuppression || (legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression),
@@ -132,7 +133,7 @@ export function loadMediaPreferences(): MediaPreferences {
 
 export function saveMediaPreferences(value: MediaPreferences): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, qualityDefaultsVersion: 2, audioDefaultsVersion: 1, screenShareDefaultsVersion: 1, screenShareBitrateDefaultsVersion: 1 }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, cameraEnabled: false, qualityDefaultsVersion: 2, audioDefaultsVersion: 1, screenShareDefaultsVersion: 1, screenShareBitrateDefaultsVersion: 1 }));
   } catch {
     // The current call still works when browser storage is unavailable.
   }

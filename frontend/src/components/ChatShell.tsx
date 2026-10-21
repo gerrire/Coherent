@@ -431,6 +431,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallPending(true);
     setCallError("");
     try {
+      await updateMedia({ cameraEnabled: false });
       setCurrentCall(await api.startCall(activeConversationId));
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
@@ -445,6 +446,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallPending(true);
     setCallError("");
     try {
+      await updateMedia({ cameraEnabled: false });
       const group = await api.createGroup(userIds);
       setConversations((current) => [group, ...current]);
       setActiveConversationId(group.id);
@@ -476,6 +478,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallPending(true);
     setCallError("");
     try {
+      await updateMedia({ cameraEnabled: false });
       const call = await api.acceptCall(target.id);
       setCurrentCall(call);
       setAvailableCalls((current) => current.map((item) => item.id === call.id ? call : item));
@@ -496,6 +499,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallPending(true);
     setCallError("");
     try {
+      await updateMedia({ cameraEnabled: false }).catch(() => undefined);
       const call = await api.endCall(currentCall.id);
       setCurrentCall(call.status === "active" ? call : null);
       setAvailableCalls((current) => call.status === "active"
