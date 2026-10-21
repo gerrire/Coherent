@@ -11,6 +11,6 @@ RUN apt-get update \
     && chown monitor:monitor /state
 
 WORKDIR /app
-COPY deploy/monitor-bot.py /app/monitor-bot.py
+COPY --chown=monitor:monitor --chmod=644 deploy/monitor-bot.py /app/monitor-bot.py
 USER monitor
 CMD ["python", "/app/monitor-bot.py"]
