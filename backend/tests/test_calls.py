@@ -72,6 +72,32 @@ def test_leaving_disconnects_participant_and_last_exit_closes_room(
     close.assert_awaited_once_with(client.app.state.settings, UUID(call_id))
 
 
+def test_cancelling_ringing_call_closes_room(
+    client: TestClient, csrf_token: str, monkeypatch
+) -> None:
+    monkeypatch.setattr(calls_api, "livekit_ready", lambda _: True)
+    close = AsyncMock()
+    monkeypatch.setattr(calls_api, "close_livekit_room", close)
+    _, alice_token = _register(client, csrf_token, "alice")
+    bob_id, _ = _register(client, csrf_token, "bob")
+    client.cookies.delete("coherent_session")
+    conversation = client.post(
+        "/api/v1/conversations",
+        headers=_headers(alice_token, csrf_token),
+        json={"user_id": bob_id},
+    )
+    started = client.post(
+        f"/api/v1/conversations/{conversation.json()['id']}/calls",
+        headers=_headers(alice_token, csrf_token),
+    )
+    call_id = started.json()["id"]
+    result = client.post(
+        f"/api/v1/calls/{call_id}/end", headers=_headers(alice_token, csrf_token)
+    )
+    assert result.json()["status"] == "cancelled"
+    close.assert_awaited_once_with(client.app.state.settings, UUID(call_id))
+
+
 def test_cleanup_expires_calls_without_a_user_request(
     client: TestClient, csrf_token: str, monkeypatch
 ) -> None:

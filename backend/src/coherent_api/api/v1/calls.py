@@ -101,10 +101,10 @@ async def finish_call(
     call_id: UUID, request: Request, user: CurrentUser, session: SessionDep
 ) -> CallResponse:
     try:
-        call, was_active = await end_call(session, user, call_id)
+        call, _ = await end_call(session, user, call_id)
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
-    if was_active or call.status == "ended":
+    if call.status not in ("ringing", "active"):
         await close_livekit_room(request.app.state.settings, call.id)
     elif call.status == "active":
         await remove_livekit_participant(request.app.state.settings, call.id, user.id)
