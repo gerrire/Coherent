@@ -95,7 +95,36 @@ services:
       livekit:
         condition: service_started
 
+  monitor-bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.monitor-bot
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in deploy/.env}
+      TELEGRAM_PAIR_CODE: ${TELEGRAM_PAIR_CODE:?Set TELEGRAM_PAIR_CODE in deploy/.env}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN in deploy/.env}
+      MONITOR_NET_INTERFACE: ens3
+    volumes:
+      - monitor_bot_state:/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time; assert time.time()-os.path.getmtime('/tmp/monitor-bot-heartbeat') < 90"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    depends_on:
+      web:
+        condition: service_started
+
 volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  monitor_bot_state:

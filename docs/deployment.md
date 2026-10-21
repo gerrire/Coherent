@@ -14,6 +14,8 @@ wss://coherent-web.ru:8443     ──► Caddy ──► LiveKit
 
 В production используются отдельные случайные ключи LiveKit и Redis. Локальный `compose.yaml` запускает LiveKit в режиме разработки с известными ключами; его нельзя выставлять в интернет. API пока запускается одним процессом Uvicorn, поскольку уведомления чата хранятся в памяти процесса.
 
+Telegram-бот мониторинга запускается отдельным контейнером без входящего порта. Он по запросу `/status` отправляет снимок CPU, памяти, диска, сетевого трафика за последние десять минут и состояния сайта, API с базой данных, LiveKit и Redis. Для него в закрытом `deploy/.env` нужны `TELEGRAM_BOT_TOKEN` и случайный `TELEGRAM_PAIR_CODE` длиной от 10 символов. Первый личный чат, отправивший `/start КОД`, становится единственным владельцем. Привязка и позиция чтения сообщений сохраняются в Docker volume `monitor_bot_state`. Бот не получает доступ к Docker socket или секретам API. При смене владельца нужно остановить бота, удалить `owner.json` из этого volume и установить новый код привязки.
+
 ## Первый запуск
 
 1. Направить A-записи `coherent-web.ru` и `www.coherent-web.ru` на публичный IP VPS. Установить Docker Engine и Compose plugin, настроить SSH и брандмауэр. Открыть 80, 443 и 8443 TCP, 7881 TCP, 7882–7883 UDP. Порты PostgreSQL, Redis, API и LiveKit 7880 публично не открывать.
@@ -39,7 +41,7 @@ wss://coherent-web.ru:8443     ──► Caddy ──► LiveKit
 
    ```sh
    docker compose --env-file deploy/.env -f deploy/compose.prod.yaml up -d database redis
-   docker compose --env-file deploy/.env -f deploy/compose.prod.yaml build api web
+   docker compose --env-file deploy/.env -f deploy/compose.prod.yaml build api web monitor-bot
    docker compose --env-file deploy/.env -f deploy/compose.prod.yaml run --rm api alembic upgrade head
    docker compose --env-file deploy/.env -f deploy/compose.prod.yaml up -d
    ```

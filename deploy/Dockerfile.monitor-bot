@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir 'psutil==7.2.2' 'Pillow==12.3.0' \
+    && useradd --uid 10001 --create-home --shell /usr/sbin/nologin monitor \
+    && mkdir /state \
+    && chown monitor:monitor /state
+
+WORKDIR /app
+COPY deploy/monitor-bot.py /app/monitor-bot.py
+USER monitor
+CMD ["python", "/app/monitor-bot.py"]

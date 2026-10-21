@@ -21,3 +21,5 @@ jobs:
         run: docker build -f deploy/Dockerfile.api -t coherent-api:ci .
       - name: Build website image
         run: docker build -f deploy/Dockerfile.web -t coherent-web:ci .
+      - name: Build monitor bot image
+        run: docker build -f deploy/Dockerfile.monitor-bot -t coherent-monitor-bot:ci .

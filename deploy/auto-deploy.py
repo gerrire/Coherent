@@ -117,7 +117,7 @@ def main() -> None:
             cwd=ROOT, env=GIT_ENV, check=True, timeout=120,
         )
         git("merge", "--ff-only", target)
-        run(*COMPOSE, "build", "api", "web")
+        run(*COMPOSE, "build", "api", "web", "monitor-bot")
         run(*COMPOSE, "run", "--rm", "api", "alembic", "upgrade", "head")
         run(*COMPOSE, "up", "-d", "--no-build")
         healthy()
