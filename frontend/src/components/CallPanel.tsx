@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import {
   AudioTrack,
   LiveKitRoom,
@@ -555,8 +555,13 @@ function ParticipantStatus({ participant, media, inline = false }: { participant
   </span>;
 }
 
-function VideoWithResolution({ trackRef }: { trackRef: NonNullable<ComponentProps<typeof VideoTrack>["trackRef"]> }) {
+function VideoWithResolution({ trackRef, onAspectRatioChange }: {
+  trackRef: NonNullable<ComponentProps<typeof VideoTrack>["trackRef"]>;
+  onAspectRatioChange?: (ratio: number) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const onAspectRatioChangeRef = useRef(onAspectRatioChange);
+  onAspectRatioChangeRef.current = onAspectRatioChange;
   const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
@@ -567,6 +572,7 @@ function VideoWithResolution({ trackRef }: { trackRef: NonNullable<ComponentProp
       const height = video.videoHeight;
       setResolution((previous) => previous?.width === width && previous.height === height
         ? previous : width && height ? { width, height } : null);
+      if (width && height) onAspectRatioChangeRef.current?.(width / height);
     };
     video.addEventListener("resize", update);
     video.addEventListener("loadedmetadata", update);
@@ -647,10 +653,18 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
   const participants = useParticipants();
   const [volumeOpenFor, setVolumeOpenFor] = useState<{ userId: string; source: "microphone" | "screen" } | null>(null);
   const [selectedScreenOwner, setSelectedScreenOwner] = useState<string | null>(null);
+  const [screenAspectRatios, setScreenAspectRatios] = useState<Record<string, number>>({});
   const previousScreenCount = useRef(0);
   const tracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare]);
   const screens = tracks.filter((track) => track.source === Track.Source.ScreenShare);
   const screen = screens.find((track) => track.participant.identity === selectedScreenOwner) ?? screens[0];
+  const focusedScreenTrackId = screen?.publication.track?.mediaStreamTrack.id ?? screen?.participant.identity;
+  const focusedScreenAspect = focusedScreenTrackId ? screenAspectRatios[focusedScreenTrackId] ?? 16 / 9 : 16 / 9;
+  const focusedScreenStyle = {
+    "--call-screen-aspect": focusedScreenAspect,
+    "--call-screen-width": `${focusedScreenAspect * 100}cqh`,
+    "--call-screen-sidebar-width": `${focusedScreenAspect * 144}px`,
+  } as CSSProperties;
   const invited = call.participants.filter((member) =>
     member.state === "invited" && !participants.some((participant) => participant.identity === member.user_id)
   );
@@ -750,8 +764,8 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
   if (screen && mode === "focus") {
     return <>
       <div className={`call-stage call-stage-sharing ${denseClass}`}>
-        <div className="call-tile call-tile-screen">
-          <VideoWithResolution trackRef={screen} />
+        <div className="call-tile call-tile-screen" style={focusedScreenStyle}>
+          <VideoWithResolution trackRef={screen} onAspectRatioChange={(ratio) => setScreenAspectRatios((current) => current[focusedScreenTrackId!] === ratio ? current : { ...current, [focusedScreenTrackId!]: ratio })} />
           <span className="call-tile-name">{screenLabel(screen.participant)}</span>
           {screenVolumeButton(screen.participant)}
         </div>

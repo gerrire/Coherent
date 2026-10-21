@@ -77,6 +77,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [controlError, setControlError] = useState("");
   const [media, setMedia] = useState(loadMediaPreferences);
   const [audioProcessingState, setAudioProcessingState] = useState<AudioProcessingState | null>(null);
+  const shellRef = useRef<HTMLElement>(null);
   const mediaRef = useRef(media);
   const roomRef = useRef<Room | null>(null);
   const mediaQueue = useRef<Promise<void>>(Promise.resolve());
@@ -110,6 +111,29 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const visibleConversations = conversations.filter((item) =>
     conversationTitle(item).toLowerCase().includes(conversationQuery.trim().toLowerCase()),
   );
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const updateHeight = () => {
+      const shell = shellRef.current;
+      if (!shell) return;
+      if (window.matchMedia("(max-width: 680px), (max-height: 520px) and (pointer: coarse)").matches) {
+        shell.style.setProperty("--coherent-visible-height", `${Math.round(viewport.height + viewport.offsetTop)}px`);
+      } else {
+        shell.style.removeProperty("--coherent-visible-height");
+      }
+    };
+    updateHeight();
+    viewport.addEventListener("resize", updateHeight);
+    viewport.addEventListener("scroll", updateHeight);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      viewport.removeEventListener("resize", updateHeight);
+      viewport.removeEventListener("scroll", updateHeight);
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
 
   const refreshConversations = useCallback(async () => {
     const result = await api.conversations();
@@ -573,7 +597,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }, [popover]);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" ref={shellRef}>
       <aside className="server-rail">
         <button className="rail-home active" aria-label="Главная Coherent" title="Главная" onClick={openHome}>
           <span className="brand-mark"><span /><span /><span /></span>
