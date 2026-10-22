@@ -30,6 +30,9 @@ class CallEngine final : public QObject {
     Q_PROPERTY(QVariantList microphones READ microphones NOTIFY devicesChanged)
     Q_PROPERTY(QVariantList speakers READ speakers NOTIFY devicesChanged)
     Q_PROPERTY(QVariantList cameras READ cameras NOTIFY devicesChanged)
+    Q_PROPERTY(QString selectedMicrophoneId READ selectedMicrophoneId NOTIFY devicesChanged)
+    Q_PROPERTY(QString selectedSpeakerId READ selectedSpeakerId NOTIFY devicesChanged)
+    Q_PROPERTY(QString selectedCameraId READ selectedCameraId NOTIFY devicesChanged)
     Q_PROPERTY(int screenBitrateMbps READ screenBitrateMbps NOTIFY stateChanged)
 public:
     explicit CallEngine(QObject* parent = nullptr);
@@ -46,6 +49,9 @@ public:
     QVariantList microphones() const { return microphones_; }
     QVariantList speakers() const { return speakers_; }
     QVariantList cameras() const { return cameras_; }
+    QString selectedMicrophoneId() const { return selectedMicrophoneId_; }
+    QString selectedSpeakerId() const { return selectedSpeakerId_; }
+    QString selectedCameraId() const { return selectedCameraId_; }
     int screenBitrateMbps() const { return screenBitrateMbps_; }
     QImage frame(const QString& key) const;
     Q_INVOKABLE QVariantList screens() const;
@@ -93,6 +99,8 @@ private:
     QVariantList microphones_;
     QVariantList speakers_;
     QVariantList cameras_;
+    QString selectedMicrophoneId_;
+    QString selectedSpeakerId_;
     QString selectedCameraId_;
     int screenBitrateMbps_ = 20;
     std::atomic_bool cameraFrameQueued_{false};

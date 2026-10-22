@@ -100,6 +100,7 @@ ApplicationWindow {
         id: picker
         property string caption: ""
         property var devices: []
+        property string selectedId: ""
         signal picked(string deviceId)
         spacing: 5
         Text { text: picker.caption; color: Theme.muted; font.pixelSize: 12 }
@@ -108,6 +109,7 @@ ApplicationWindow {
             model: picker.devices
             textRole: "name"
             valueRole: "id"
+            currentIndex: picker.selectedId.length ? indexOfValue(picker.selectedId) : 0
             enabled: count > 0
             onActivated: picker.picked(currentValue)
         }
@@ -439,18 +441,21 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         caption: "Микрофон"
                         devices: controller.callEngine.microphones
+                        selectedId: controller.callEngine.selectedMicrophoneId
                         onPicked: function(deviceId) { controller.callEngine.selectMicrophone(deviceId) }
                     }
                     DevicePicker {
                         Layout.fillWidth: true
                         caption: "Динамики / наушники"
                         devices: controller.callEngine.speakers
+                        selectedId: controller.callEngine.selectedSpeakerId
                         onPicked: function(deviceId) { controller.callEngine.selectSpeaker(deviceId) }
                     }
                     DevicePicker {
                         Layout.fillWidth: true
                         caption: "Камера"
                         devices: controller.callEngine.cameras
+                        selectedId: controller.callEngine.selectedCameraId
                         onPicked: function(deviceId) { controller.callEngine.selectCamera(deviceId) }
                     }
                     Text { text: "БИТРЕЙТ ЭКРАНА · " + controller.callEngine.screenBitrateMbps + " Мбит/с";

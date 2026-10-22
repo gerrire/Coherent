@@ -278,14 +278,21 @@ private:
 };
 
 CallEngine::CallEngine(QObject* parent) : QObject(parent) {
-    screenBitrateMbps_ = QSettings().value("media/screenBitrateMbps", 20).toInt();
+    QSettings settings;
+    screenBitrateMbps_ = settings.value("media/screenBitrateMbps", 20).toInt();
     screenBitrateMbps_ = std::clamp(screenBitrateMbps_, 5, 50);
+    selectedMicrophoneId_ = settings.value("media/microphoneId").toString();
+    selectedSpeakerId_ = settings.value("media/speakerId").toString();
+    selectedCameraId_ = settings.value("media/cameraId").toString();
     worker_ = new RtcWorker(this);
     worker_->moveToThread(&workerThread_);
     connect(&workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
     workerThread_.start();
-    QMetaObject::invokeMethod(worker_, [worker = worker_, bitrate = screenBitrateMbps_] {
+    QMetaObject::invokeMethod(worker_, [worker = worker_, bitrate = screenBitrateMbps_,
+                                        microphone = selectedMicrophoneId_, speaker = selectedSpeakerId_] {
         worker->setScreenBitrateMbps(bitrate);
+        worker->selectMicrophone(microphone);
+        worker->selectSpeaker(speaker);
     }, Qt::QueuedConnection);
     cameraSession_.setVideoSink(&cameraSink_);
     screenSession_.setVideoSink(&screenSink_);
@@ -489,16 +496,24 @@ void CallEngine::refreshDevices() {
                               Qt::QueuedConnection);
 }
 void CallEngine::selectMicrophone(const QString& id) {
+    selectedMicrophoneId_ = id;
+    QSettings().setValue("media/microphoneId", id);
+    emit devicesChanged();
     QMetaObject::invokeMethod(worker_, [worker = worker_, id] { worker->selectMicrophone(id); },
                               Qt::QueuedConnection);
 }
 void CallEngine::selectSpeaker(const QString& id) {
+    selectedSpeakerId_ = id;
+    QSettings().setValue("media/speakerId", id);
+    emit devicesChanged();
     QMetaObject::invokeMethod(worker_, [worker = worker_, id] { worker->selectSpeaker(id); },
                               Qt::QueuedConnection);
 }
 void CallEngine::selectCamera(const QString& id) {
     if (selectedCameraId_ == id) return;
     selectedCameraId_ = id;
+    QSettings().setValue("media/cameraId", id);
+    emit devicesChanged();
     if (cameraOn_) { toggleCamera(); toggleCamera(); }
 }
 void CallEngine::setScreenBitrateMbps(int value) {
