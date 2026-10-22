@@ -45,7 +45,9 @@ jobs:
           }
 
           cmake -S desktop -B desktop/build -G "Visual Studio 17 2022" -A x64 "-DCOHERENT_VERSION=$version"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
           cmake --build desktop/build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { throw "Desktop build failed." }
 
       - name: Bundle Qt and LiveKit
         shell: pwsh
