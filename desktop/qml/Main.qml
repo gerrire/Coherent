@@ -25,6 +25,7 @@ ApplicationWindow {
                                  call.participants.some(function(item) {
                                      return item.user_id === controller.user.id && item.state === "invited"
                                  })
+    onSectionChanged: if (section === "settings") controller.callEngine.refreshDevices()
     onExpandedCallChanged: visibility = expandedCall ? Window.FullScreen : Window.Windowed
     onCallVisibleChanged: if (!callVisible) expandedCall = false
     Shortcut { sequence: "Escape"; onActivated: if (expandedCall) expandedCall = false }
@@ -40,6 +41,9 @@ ApplicationWindow {
         return item.other_user ? item.other_user.username : "Личная беседа"
     }
     function initials(name) { return name && name.length ? name[0].toUpperCase() : "?" }
+    function isFriend(id) {
+        return controller.friends.some(function(item) { return item.id === id })
+    }
     function timestamp(value) {
         if (!value) return ""
         const date = new Date(value)
@@ -89,6 +93,23 @@ ApplicationWindow {
             color: Theme.raised
             border.width: parent.activeFocus ? 1 : 0
             border.color: Theme.accent
+        }
+    }
+
+    component DevicePicker: ColumnLayout {
+        id: picker
+        property string caption: ""
+        property var devices: []
+        signal picked(string deviceId)
+        spacing: 5
+        Text { text: picker.caption; color: Theme.muted; font.pixelSize: 12 }
+        ComboBox {
+            Layout.fillWidth: true
+            model: picker.devices
+            textRole: "name"
+            valueRole: "id"
+            enabled: count > 0
+            onActivated: picker.picked(currentValue)
         }
     }
 
@@ -186,11 +207,25 @@ ApplicationWindow {
                     width: 50; height: 48; label: "✉"
                     selected: section === "messages"
                     onClicked: section = "messages"
+                    Rectangle {
+                        visible: controller.conversations.some(function(item) { return item.unread })
+                        width: 8; height: 8; radius: 4
+                        anchors.right: parent.right; anchors.rightMargin: 4
+                        anchors.top: parent.top; anchors.topMargin: 4
+                        color: Theme.red
+                    }
                 }
                 ActionButton {
                     width: 50; height: 48; label: "♟"
                     selected: section === "friends"
                     onClicked: section = "friends"
+                    Rectangle {
+                        visible: controller.incomingRequests.length > 0
+                        width: 8; height: 8; radius: 4
+                        anchors.right: parent.right; anchors.rightMargin: 4
+                        anchors.top: parent.top; anchors.topMargin: 4
+                        color: Theme.red
+                    }
                 }
                 ActionButton {
                     width: 50; height: 48; label: "⚙"
@@ -296,7 +331,7 @@ ApplicationWindow {
                         Rectangle {
                             visible: modelData.unread
                             width: 7; height: 7; radius: 4
-                            color: Theme.accentBright
+                            color: "white"
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
@@ -387,13 +422,47 @@ ApplicationWindow {
                         }
                     }
                 }
-                ColumnLayout {
+                ScrollView {
                     visible: section === "settings"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 16
+                    clip: true
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    ColumnLayout {
+                    width: parent.width - 12
+                    spacing: 10
                     Text { text: "Профиль"; color: Theme.muted; font.pixelSize: 12 }
                     Text { text: controller.user.username || ""; color: Theme.text; font.pixelSize: 18; font.bold: true }
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                    Text { text: "УСТРОЙСТВА ЗВОНКА"; color: Theme.muted; font.pixelSize: 11; font.letterSpacing: 1 }
+                    DevicePicker {
+                        Layout.fillWidth: true
+                        caption: "Микрофон"
+                        devices: controller.callEngine.microphones
+                        onPicked: function(deviceId) { controller.callEngine.selectMicrophone(deviceId) }
+                    }
+                    DevicePicker {
+                        Layout.fillWidth: true
+                        caption: "Динамики / наушники"
+                        devices: controller.callEngine.speakers
+                        onPicked: function(deviceId) { controller.callEngine.selectSpeaker(deviceId) }
+                    }
+                    DevicePicker {
+                        Layout.fillWidth: true
+                        caption: "Камера"
+                        devices: controller.callEngine.cameras
+                        onPicked: function(deviceId) { controller.callEngine.selectCamera(deviceId) }
+                    }
+                    Text { text: "БИТРЕЙТ ЭКРАНА · " + controller.callEngine.screenBitrateMbps + " Мбит/с";
+                           color: Theme.muted; font.pixelSize: 11; font.letterSpacing: 1 }
+                    Slider {
+                        Layout.fillWidth: true
+                        from: 5; to: 50; stepSize: 1
+                        value: controller.callEngine.screenBitrateMbps
+                        onMoved: controller.callEngine.setScreenBitrateMbps(Math.round(value))
+                    }
+                    Text { text: "Применится при следующем включении экрана";
+                           color: Theme.muted; font.pixelSize: 11 }
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
                     Text { text: "ОБНОВЛЕНИЯ"; color: Theme.muted; font.pixelSize: 11; font.letterSpacing: 1 }
                     Text {
@@ -405,8 +474,8 @@ ApplicationWindow {
                     }
                     ActionButton { Layout.fillWidth: true; label: "Проверить"; onClicked: controller.checkForUpdates() }
                     ActionButton { Layout.fillWidth: true; label: "Установить обновление"; accent: true; onClicked: controller.installUpdate() }
-                    Item { Layout.fillHeight: true }
                     ActionButton { Layout.fillWidth: true; label: "Выйти из аккаунта"; onClicked: controller.logout() }
+                    }
                 }
             }
         }
@@ -447,6 +516,16 @@ ApplicationWindow {
                             font.pixelSize: 12
                         }
                         ActionButton {
+                            visible: selectedConversation && selectedConversation.kind !== "group" &&
+                                     selectedConversation.other_user && section === "messages"
+                            label: selectedConversation && selectedConversation.other_user &&
+                                   isFriend(selectedConversation.other_user.id)
+                                   ? "В друзьях" : "Добавить в друзья"
+                            enabled: selectedConversation && selectedConversation.other_user &&
+                                     !isFriend(selectedConversation.other_user.id)
+                            onClicked: controller.addFriend(selectedConversation.other_user.id)
+                        }
+                        ActionButton {
                             visible: selectedConversation && section === "messages" && !callVisible
                             label: "Позвонить"
                             accent: true
@@ -461,7 +540,7 @@ ApplicationWindow {
                 }
 
                 Rectangle {
-                    visible: incomingCall && section === "messages"
+                    visible: incomingCall
                     Layout.fillWidth: true
                     Layout.preferredHeight: 64
                     color: "#362248"

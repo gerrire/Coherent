@@ -27,6 +27,10 @@ class CallEngine final : public QObject {
     Q_PROPERTY(int videoRevision READ videoRevision NOTIFY frameChanged)
     Q_PROPERTY(QString remoteName READ remoteName NOTIFY stateChanged)
     Q_PROPERTY(QVariantList remoteStreams READ remoteStreams NOTIFY frameChanged)
+    Q_PROPERTY(QVariantList microphones READ microphones NOTIFY devicesChanged)
+    Q_PROPERTY(QVariantList speakers READ speakers NOTIFY devicesChanged)
+    Q_PROPERTY(QVariantList cameras READ cameras NOTIFY devicesChanged)
+    Q_PROPERTY(int screenBitrateMbps READ screenBitrateMbps NOTIFY stateChanged)
 public:
     explicit CallEngine(QObject* parent = nullptr);
     ~CallEngine() override;
@@ -39,6 +43,10 @@ public:
     int videoRevision() const { return videoRevision_; }
     QString remoteName() const { return remoteName_; }
     QVariantList remoteStreams() const { return remoteStreams_; }
+    QVariantList microphones() const { return microphones_; }
+    QVariantList speakers() const { return speakers_; }
+    QVariantList cameras() const { return cameras_; }
+    int screenBitrateMbps() const { return screenBitrateMbps_; }
     QImage frame(const QString& key) const;
     Q_INVOKABLE QVariantList screens() const;
     Q_INVOKABLE void join(const QString& id, const QString& serverUrl, const QString& token);
@@ -47,15 +55,22 @@ public:
     Q_INVOKABLE void toggleCamera();
     Q_INVOKABLE void toggleScreen(int screenIndex);
     Q_INVOKABLE void toggleSystemAudio();
+    Q_INVOKABLE void refreshDevices();
+    Q_INVOKABLE void selectMicrophone(const QString& id);
+    Q_INVOKABLE void selectSpeaker(const QString& id);
+    Q_INVOKABLE void selectCamera(const QString& id);
+    Q_INVOKABLE void setScreenBitrateMbps(int value);
 
     void receiveRemoteFrame(const QString& key, const QString& name,
                             const QString& source, const QImage& image);
     void removeRemoteStream(const QString& key);
     void receiveConnected(bool connected, const QString& error = {});
+    void receiveAudioDevices(const QVariantList& microphones, const QVariantList& speakers);
 
 signals:
     void stateChanged();
     void frameChanged();
+    void devicesChanged();
     void errorOccurred(const QString& message);
 
 private:
@@ -75,6 +90,11 @@ private:
     mutable QMutex frameMutex_;
     QHash<QString, QImage> remoteFrames_;
     QVariantList remoteStreams_;
+    QVariantList microphones_;
+    QVariantList speakers_;
+    QVariantList cameras_;
+    QString selectedCameraId_;
+    int screenBitrateMbps_ = 20;
     std::atomic_bool cameraFrameQueued_{false};
     std::atomic_bool screenFrameQueued_{false};
     QCamera* camera_ = nullptr;

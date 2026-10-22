@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QMediaDevices>
 #include <QScreen>
+#include <QSettings>
 #include <QVideoFrame>
 #include <QByteArray>
 
@@ -30,6 +31,34 @@ class RtcWorker final : public QObject, public livekit::RoomDelegate {
 public:
     explicit RtcWorker(CallEngine* owner) : owner_(owner) {}
 
+    void refreshDevices() {
+        try {
+            if (!audio_) audio_ = std::make_unique<livekit::PlatformAudio>();
+            QVariantList microphones, speakers;
+            for (const auto& device : audio_->recordingDevices())
+                microphones.append(QVariantMap{{"id", QString::fromStdString(device.id)},
+                                               {"name", QString::fromStdString(device.name)}});
+            for (const auto& device : audio_->playoutDevices())
+                speakers.append(QVariantMap{{"id", QString::fromStdString(device.id)},
+                                            {"name", QString::fromStdString(device.name)}});
+            QMetaObject::invokeMethod(owner_, [owner = owner_, microphones, speakers] {
+                owner->receiveAudioDevices(microphones, speakers);
+            }, Qt::QueuedConnection);
+        } catch (const std::exception& e) { report(e.what()); }
+    }
+
+    void selectMicrophone(const QString& id) {
+        recordingDeviceId_ = id.toStdString();
+        try { if (audio_ && !recordingDeviceId_.empty()) audio_->setRecordingDevice(recordingDeviceId_); }
+        catch (const std::exception& e) { report(e.what()); }
+    }
+    void selectSpeaker(const QString& id) {
+        playoutDeviceId_ = id.toStdString();
+        try { if (audio_ && !playoutDeviceId_.empty()) audio_->setPlayoutDevice(playoutDeviceId_); }
+        catch (const std::exception& e) { report(e.what()); }
+    }
+    void setScreenBitrateMbps(int value) { screenBitrateMbps_ = value; }
+
     void join(const QString& serverUrl, const QString& token) {
         try {
             if (room_) leave();
@@ -40,6 +69,10 @@ public:
             if (!room_->connect(serverUrl.toStdString(), token.toStdString(), options))
                 throw std::runtime_error("LiveKit не принял подключение.");
             audio_ = std::make_unique<livekit::PlatformAudio>();
+            try {
+                if (!recordingDeviceId_.empty()) audio_->setRecordingDevice(recordingDeviceId_);
+                if (!playoutDeviceId_.empty()) audio_->setPlayoutDevice(playoutDeviceId_);
+            } catch (const std::exception& e) { report(e.what()); }
             microphoneSource_ = audio_->createAudioSource({});
             microphoneTrack_ = livekit::LocalAudioTrack::createLocalAudioTrack("microphone", microphoneSource_);
             if (auto participant = room_->localParticipant().lock()) {
@@ -157,7 +190,8 @@ public:
                     publish.source = screen ? livekit::TrackSource::SOURCE_SCREENSHARE
                                             : livekit::TrackSource::SOURCE_CAMERA;
                     publish.video_encoding = livekit::VideoEncodingOptions{
-                        screen ? 20'000'000ull : 8'000'000ull, 30.0};
+                        screen ? static_cast<std::uint64_t>(screenBitrateMbps_) * 1'000'000ull
+                               : 8'000'000ull, 30.0};
                     publish.degradation_preference =
                         livekit::DegradationPreference::MaintainResolution;
                     participant->publishTrack(track, publish);
@@ -238,19 +272,28 @@ private:
     int screenWidth_ = 0;
     int screenHeight_ = 0;
     bool microphoneOn_ = true;
+    int screenBitrateMbps_ = 20;
+    std::string recordingDeviceId_;
+    std::string playoutDeviceId_;
 };
 
 CallEngine::CallEngine(QObject* parent) : QObject(parent) {
+    screenBitrateMbps_ = QSettings().value("media/screenBitrateMbps", 20).toInt();
+    screenBitrateMbps_ = std::clamp(screenBitrateMbps_, 5, 50);
     worker_ = new RtcWorker(this);
     worker_->moveToThread(&workerThread_);
     connect(&workerThread_, &QThread::finished, worker_, &QObject::deleteLater);
     workerThread_.start();
+    QMetaObject::invokeMethod(worker_, [worker = worker_, bitrate = screenBitrateMbps_] {
+        worker->setScreenBitrateMbps(bitrate);
+    }, Qt::QueuedConnection);
     cameraSession_.setVideoSink(&cameraSink_);
     screenSession_.setVideoSink(&screenSink_);
     connect(&cameraSink_, &QVideoSink::videoFrameChanged, this,
             [this](const QVideoFrame& frame) { sendFrame(false, frame); });
     connect(&screenSink_, &QVideoSink::videoFrameChanged, this,
             [this](const QVideoFrame& frame) { sendFrame(true, frame); });
+    refreshDevices();
 }
 CallEngine::~CallEngine() {
     stopVideo();
@@ -272,7 +315,16 @@ QVariantList CallEngine::screens() const {
 }
 void CallEngine::join(const QString& id, const QString& serverUrl, const QString& token) {
     if (id.isEmpty() || serverUrl.isEmpty() || token.isEmpty() || roomId_ == id) return;
+    stopVideo();
+    {
+        QMutexLocker lock(&frameMutex_);
+        remoteFrames_.clear();
+    }
+    remoteStreams_.clear();
+    remoteName_.clear();
+    connected_ = false;
     roomId_ = id;
+    emit frameChanged();
     emit stateChanged();
     QMetaObject::invokeMethod(worker_, [worker = worker_, serverUrl, token] {
         worker->join(serverUrl, token);
@@ -303,6 +355,11 @@ void CallEngine::receiveConnected(bool connected, const QString& error) {
         emit errorOccurred(error);
     }
     emit stateChanged();
+}
+void CallEngine::receiveAudioDevices(const QVariantList& microphones, const QVariantList& speakers) {
+    microphones_ = microphones;
+    speakers_ = speakers;
+    emit devicesChanged();
 }
 void CallEngine::receiveRemoteFrame(const QString& key, const QString& name,
                                      const QString& source, const QImage& image) {
@@ -364,7 +421,15 @@ void CallEngine::toggleCamera() {
     } else {
         const auto devices = QMediaDevices::videoInputs();
         if (devices.isEmpty()) { emit errorOccurred(QStringLiteral("Камера не найдена.")); return; }
-        camera_ = new QCamera(devices.first(), this);
+        auto chosen = devices.first();
+        for (const auto& device : devices) {
+            if (QString::fromLatin1(device.id().toBase64(QByteArray::Base64UrlEncoding |
+                    QByteArray::OmitTrailingEquals)) == selectedCameraId_) {
+                chosen = device;
+                break;
+            }
+        }
+        camera_ = new QCamera(chosen, this);
         cameraSession_.setCamera(camera_);
         cameraOn_ = true;
         camera_->start();
@@ -411,6 +476,40 @@ void CallEngine::toggleSystemAudio() {
             worker->setSystemAudio(enabled);
         }, Qt::QueuedConnection);
     }
+}
+void CallEngine::refreshDevices() {
+    QVariantList found;
+    for (const auto& device : QMediaDevices::videoInputs())
+        found.append(QVariantMap{
+            {"id", QString::fromLatin1(device.id().toBase64(QByteArray::Base64UrlEncoding |
+                 QByteArray::OmitTrailingEquals))}, {"name", device.description()}});
+    cameras_ = found;
+    emit devicesChanged();
+    QMetaObject::invokeMethod(worker_, [worker = worker_] { worker->refreshDevices(); },
+                              Qt::QueuedConnection);
+}
+void CallEngine::selectMicrophone(const QString& id) {
+    QMetaObject::invokeMethod(worker_, [worker = worker_, id] { worker->selectMicrophone(id); },
+                              Qt::QueuedConnection);
+}
+void CallEngine::selectSpeaker(const QString& id) {
+    QMetaObject::invokeMethod(worker_, [worker = worker_, id] { worker->selectSpeaker(id); },
+                              Qt::QueuedConnection);
+}
+void CallEngine::selectCamera(const QString& id) {
+    if (selectedCameraId_ == id) return;
+    selectedCameraId_ = id;
+    if (cameraOn_) { toggleCamera(); toggleCamera(); }
+}
+void CallEngine::setScreenBitrateMbps(int value) {
+    value = std::clamp(value, 5, 50);
+    if (screenBitrateMbps_ == value) return;
+    screenBitrateMbps_ = value;
+    QSettings().setValue("media/screenBitrateMbps", value);
+    QMetaObject::invokeMethod(worker_, [worker = worker_, value] {
+        worker->setScreenBitrateMbps(value);
+    }, Qt::QueuedConnection);
+    emit stateChanged();
 }
 void CallEngine::sendFrame(bool screen, const QVideoFrame& frame) {
     if (!connected_ || (screen ? !screenOn_ : !cameraOn_)) return;

@@ -131,7 +131,6 @@ void AppController::refreshCalls() {
     api_.request("GET", "/api/v1/calls/current", {}, [this](const QJsonObject& response, const QString& error) {
         if (!error.isEmpty()) return;
         const QJsonArray calls = response.value("calls").toArray();
-        const QString existing = currentCall_.value("id").toString();
         const QString me = user_.value("id").toString();
         QJsonObject chosen;
         for (const auto& item : calls) {
@@ -145,7 +144,6 @@ void AppController::refreshCalls() {
             }
             if (joined) { chosen = call; break; }
             if (invited && chosen.isEmpty()) chosen = call;
-            if (call.value("id").toString() == existing && chosen.isEmpty()) chosen = call;
         }
         setCurrentCall(chosen);
     });
