@@ -1799,6 +1799,8 @@ a {
   flex: 1;
   min-height: 39px;
   max-height: 140px;
+  box-sizing: border-box;
+  padding: 10px 0;
   resize: none;
   border: 0;
   outline: 0;

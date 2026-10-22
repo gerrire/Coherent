@@ -124,9 +124,8 @@
 :root[data-theme] .rail-item.selected::before { background: var(--theme-accent-hover); }
 :root[data-theme] .brand-mark span { background: white; }
 :root[data-theme] .rail-home .brand-mark,
-:root[data-theme] .workspace-symbol .brand-mark,
 :root[data-theme] .art-main-icon .brand-mark { background: transparent; }
-:root[data-theme] .workspace-symbol .brand-mark span { background: var(--theme-accent); }
+:root[data-theme] .workspace-symbol .brand-mark span { background: white; }
 :root[data-theme] :is(.avatar-user, .friend-row:nth-child(n) .friend-avatar, .call-invite-avatar,
   .call-tile-avatar, .art-avatar, .avatar-pink, .avatar-blue, .avatar-gold, .mini-avatars i) {
   background: linear-gradient(145deg, var(--theme-avatar-top), var(--theme-avatar-bottom));
@@ -246,9 +245,11 @@
 :root[data-theme] :is(.composer-field textarea, .sidebar-search input, .friend-search-input input,
   .input-wrap input, .profile-password-field input, .participant-picker-search input,
   .group-rename-form input) { color: var(--theme-text); }
-:root[data-theme] :is(.composer-field textarea::placeholder, .sidebar-search input::placeholder,
-  .friend-search-input input::placeholder, .input-wrap input::placeholder,
-  .profile-password-field input::placeholder) { color: var(--theme-faint); }
+:root[data-theme] input::placeholder,
+:root[data-theme] textarea::placeholder {
+  color: var(--theme-faint);
+  opacity: 1;
+}
 :root[data-theme] :is(.input-wrap:focus-within, .friend-search-input:focus-within,
   .composer-field:focus-within, .profile-password-field:focus-within) {
   border-color: var(--theme-accent-hover); background: var(--theme-raised);

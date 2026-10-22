@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import { api, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
@@ -66,6 +66,7 @@ export default function MessagesPanel({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [friendError, setFriendError] = useState("");
@@ -88,6 +89,15 @@ export default function MessagesPanel({
   relationshipTarget.current = conversation.other_user?.id;
   const title = conversationTitle(conversation);
   const peer = conversation.other_user;
+
+  useLayoutEffect(() => {
+    const textarea = draftRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const height = Math.min(140, Math.max(39, textarea.scrollHeight));
+    textarea.style.height = `${height}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 140 ? "auto" : "hidden";
+  }, [draft, conversation.id]);
 
   function addFiles(next: File[]) {
     setFiles((current) => [...current, ...next].slice(0, 4));
@@ -405,13 +415,14 @@ export default function MessagesPanel({
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
           <button type="button" className="composer-attach" onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файлы" title="Прикрепить файлы"><FilePlus2 size={19} /></button>
           <textarea
+            ref={draftRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={conversation.kind === "group" ? `Написать в ${title}...` : `Написать ${title}...`}
             aria-label="Текст сообщения"
             maxLength={4000}
-            rows={2}
+            rows={1}
           />
           <button
             type="submit"
