@@ -62,17 +62,17 @@ public:
     void join(const QString& serverUrl, const QString& token) {
         try {
             if (room_) leave();
+            if (!audio_) audio_ = std::make_unique<livekit::PlatformAudio>();
+            try {
+                if (!recordingDeviceId_.empty()) audio_->setRecordingDevice(recordingDeviceId_);
+                if (!playoutDeviceId_.empty()) audio_->setPlayoutDevice(playoutDeviceId_);
+            } catch (const std::exception& e) { report(e.what()); }
             room_ = std::make_unique<livekit::Room>();
             room_->setDelegate(this);
             livekit::RoomOptions options;
             options.auto_subscribe = true;
             if (!room_->connect(serverUrl.toStdString(), token.toStdString(), options))
                 throw std::runtime_error("LiveKit не принял подключение.");
-            audio_ = std::make_unique<livekit::PlatformAudio>();
-            try {
-                if (!recordingDeviceId_.empty()) audio_->setRecordingDevice(recordingDeviceId_);
-                if (!playoutDeviceId_.empty()) audio_->setPlayoutDevice(playoutDeviceId_);
-            } catch (const std::exception& e) { report(e.what()); }
             microphoneSource_ = audio_->createAudioSource({});
             microphoneTrack_ = livekit::LocalAudioTrack::createLocalAudioTrack("microphone", microphoneSource_);
             if (auto participant = room_->localParticipant().lock()) {
