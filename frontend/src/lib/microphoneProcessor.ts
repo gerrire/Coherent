@@ -25,6 +25,14 @@ function loadRnnoiseProcessor(context: AudioContext): Promise<ArrayBuffer> {
   return Promise.all([rnnoiseBinary, worklet]).then(([binary]) => binary);
 }
 
+export async function prepareRnnoise(): Promise<void> {
+  rnnoiseBinary ??= loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl }).catch((error: unknown) => {
+    rnnoiseBinary = undefined;
+    throw error;
+  });
+  await rnnoiseBinary;
+}
+
 function loadSoftGate(context: AudioContext): Promise<void> {
   let loading = loadedWorklets.get(context);
   if (!loading) {
@@ -140,7 +148,7 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   setRnnoisePreset(preset: RnnoisePreset): void {
     this.preset = preset;
     if (!this.context || !this.wetGain || !this.dryGain) return;
-    const dry = preset === "natural" ? 0.28 : preset === "balanced" ? 0.1 : 0;
+    const dry = preset === "natural" ? 0.6 : preset === "balanced" ? 0.35 : 0.12;
     this.wetGain.gain.setTargetAtTime(1 - dry, this.context.currentTime, 0.03);
     this.dryGain.gain.setTargetAtTime(dry, this.context.currentTime, 0.03);
   }

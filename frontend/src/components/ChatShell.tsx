@@ -40,7 +40,7 @@ import MediaSettingsPanel from "./MediaSettingsPanel";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
-import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
+import { applyMicrophoneProcessing, prepareRnnoise } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 
 interface ChatShellProps {
@@ -90,6 +90,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
   const [currentCall, setCurrentCall] = useState<Call | null>(null);
+  const [callCollapsed, setCallCollapsed] = useState(false);
   const [availableCalls, setAvailableCalls] = useState<Call[]>([]);
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
@@ -131,7 +132,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const resumableCall = availableCalls.find((call) => call.conversation_id === activeConversationId
     && call.status === "active"
     && call.participants.some((participant) => participant.user_id === user.id && participant.state === "left"));
-  const callCompact = Boolean(currentCall && (section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
+  const callCompact = Boolean(currentCall && (callCollapsed || section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
   const callPanelReady = Boolean(currentCall?.status === "active"
     && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
     && !callCompact);
@@ -152,10 +153,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
 
   const activatePush = useCallback(async () => {
     try {
-      if (!await enablePush()) setPushError("Этот браузер не поддерживает уведомления при закрытой вкладке.");
-      else setPushError("");
+      await enablePush();
+      setPushError("");
     } catch {
-      setPushError("Не удалось подключить фоновые уведомления. Попробуй открыть уведомления ещё раз.");
+      setPushError("Уведомления в открытой вкладке работают. Доставка при закрытой вкладке сейчас недоступна.");
     }
   }, []);
 
@@ -477,9 +478,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       }
       const room = roomRef.current;
       if (room?.state === ConnectionState.Connected) {
+        if (patch.noiseProcessor === "rnnoise" && next.microphoneEnabled) await prepareRnnoise();
         const participant = room.localParticipant;
         const microphoneCaptureChanged = patch.noiseSuppression !== undefined
-          || patch.noiseProcessor !== undefined
+          || (patch.noiseProcessor !== undefined && current.noiseSuppression)
           || patch.echoCancellation !== undefined
           || patch.autoGainControl !== undefined;
         const cameraCaptureChanged = patch.videoCodec !== undefined
@@ -529,10 +531,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
           if (track) {
             try {
-              await track.restartTrack(microphoneCapture(next));
+              await track.mediaStreamTrack.applyConstraints(microphoneCapture(next));
             } catch (reason) {
-              await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
-              throw reason;
+              try {
+                await track.restartTrack(microphoneCapture(next));
+              } catch {
+                await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+                throw reason;
+              }
             }
           }
         }
@@ -542,11 +548,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             await applyMicrophoneProcessing(room, next.microphoneVolume, next.noiseSuppression ? "noisy" : "soft", next.noiseProcessor, next.rnnoisePreset);
           } catch (reason) {
             const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
-            if (track) await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
             try {
               await applyMicrophoneProcessing(room, current.microphoneVolume, current.noiseSuppression ? "noisy" : "soft", current.noiseProcessor, current.rnnoisePreset);
             } catch {
-              await participant.setMicrophoneEnabled(false).catch(() => undefined);
+              if (track) {
+                await track.stopProcessor().catch(() => undefined);
+                await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+              }
             }
             throw reason;
           }
@@ -959,7 +967,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               onInvite={inviteToCall}
               onAccept={() => void acceptCall()}
               onEnd={() => void endCall()}
+              onCollapse={() => setCallCollapsed(true)}
               onFocus={() => {
+                setCallCollapsed(false);
                 setActiveConversationId(currentCall.conversation_id);
                 setSection("messages");
                 setShowWelcome(false);

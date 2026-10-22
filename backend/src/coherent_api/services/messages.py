@@ -56,6 +56,7 @@ def visible_message(
             update={
                 "body": message.body or EXPIRED_MESSAGE,
                 "attachment_count": 0,
+                "attachments_expired": True,
                 "attachments": [],
             }
         )

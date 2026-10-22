@@ -41,6 +41,7 @@ export interface Message {
   sender_id: string;
   body: string;
   attachment_count: number;
+  attachments_expired: boolean;
   attachments: Array<{ id: string; filename: string; media_type: string; byte_size: number }>;
   created_at: string;
 }

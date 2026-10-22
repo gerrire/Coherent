@@ -50,6 +50,7 @@ class MessageResponse(BaseModel):
     sender_id: UUID
     body: str
     attachment_count: int = 0
+    attachments_expired: bool = False
     attachments: list[AttachmentResponse] = Field(default_factory=list)
     created_at: datetime
 

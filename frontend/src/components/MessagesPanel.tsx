@@ -75,6 +75,8 @@ export default function MessagesPanel({
   const [renaming, setRenaming] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const [now, setNow] = useState(Date.now);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<string | null>(null);
@@ -175,6 +177,7 @@ export default function MessagesPanel({
       setHasMore(false);
       setDraft("");
       setFiles([]);
+      setPreview(null);
       setLoading(true);
       setError("");
       setRenaming(false);
@@ -197,6 +200,20 @@ export default function MessagesPanel({
     });
     return () => { active = false; };
   }, [conversation.id, version, retry]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!preview) return;
+    const close = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setPreview(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [preview]);
 
   useEffect(() => {
     if (incomingFiles?.files.length) addFiles(incomingFiles.files);
@@ -349,6 +366,7 @@ export default function MessagesPanel({
         {messages.map((message) => {
           const own = message.sender_id === currentUserId;
           const author = own ? "Ты" : conversation.members.find((member) => member.id === message.sender_id)?.username ?? "Участник";
+          const attachmentsExpired = message.attachments_expired || (message.attachment_count > 0 && now >= Date.parse(message.created_at) + 3 * 24 * 60 * 60 * 1000);
           return (
             <div className={`message-row ${own ? "message-own" : ""}`} key={message.id}>
               <span className="avatar avatar-user message-avatar">
@@ -359,11 +377,12 @@ export default function MessagesPanel({
                   <strong>{author}</strong>
                   <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
                 </div>
-                {message.body && <p>{message.body}</p>}
-                {message.attachments?.map((attachment) => {
+                {message.body && (!attachmentsExpired || message.body !== "Вложение удалено") && <p>{message.body}</p>}
+                {attachmentsExpired && <span className="message-attachment-expired">Вложение удалено</span>}
+                {!attachmentsExpired && message.attachments?.map((attachment) => {
                   const url = `/api/v1/conversations/${conversation.id}/attachments/${attachment.id}`;
                   return <div className="message-attachment" key={attachment.id}>
-                    {attachment.media_type.startsWith("image/") && <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={attachment.filename} loading="lazy" /></a>}
+                    {attachment.media_type.startsWith("image/") && <button type="button" className="message-image-preview" onClick={() => setPreview({ url, name: attachment.filename })} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" /></button>}
                     {attachment.media_type.startsWith("video/") && <video src={url} controls preload="metadata" />}
                     {attachment.media_type.startsWith("audio/") && <audio src={url} controls preload="none" />}
                     <a href={url} target="_blank" rel="noreferrer">{attachment.filename} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ</a>
@@ -405,6 +424,14 @@ export default function MessagesPanel({
         </div>
         <span className="composer-hint">Enter — отправить · Shift+Enter — новая строка · Ctrl+V — вставить файл или скриншот</span>
       </form>
+      {preview && <div className="image-preview-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setPreview(null);
+      }}>
+        <div className="image-preview-dialog" role="dialog" aria-modal="true" aria-label={preview.name}>
+          <div className="image-preview-header"><span>{preview.name}</span><a href={preview.url} download={preview.name}>Скачать</a><button type="button" onClick={() => setPreview(null)} aria-label="Закрыть фото"><X size={20} /></button></div>
+          <img src={preview.url} alt={preview.name} />
+        </div>
+      </div>}
     </div>
   );
 }

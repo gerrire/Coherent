@@ -1,4 +1,5 @@
 import mimetypes
+import os
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -63,7 +64,8 @@ async def save_message_files(
     if len(clean_body) > 4000 or not files or len(files) > MAX_FILES:
         raise AttachmentError("Можно отправить до четырёх файлов и 4000 символов текста")
     directory = Path(storage)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
     stored: list[Path] = []
     attachments: list[MessageAttachment] = []
     total = 0
@@ -72,7 +74,8 @@ async def save_message_files(
             attachment_id = uuid4()
             path = directory / str(attachment_id)
             size = 0
-            with path.open("xb") as target:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as target:
                 stored.append(path)
                 while chunk := await upload.read(1024 * 1024):
                     size += len(chunk)

@@ -11,10 +11,18 @@ export async function enablePush(): Promise<boolean> {
   if (Notification.permission !== "granted") return false;
   const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
   const { public_key: publicKey } = await api.pushKey();
+  const key = applicationKey(publicKey);
   let subscription = await registration.pushManager.getSubscription();
+  const existingKey = subscription?.options.applicationServerKey;
+  if (subscription && (!existingKey
+    || existingKey.byteLength !== key.byteLength
+    || new Uint8Array(existingKey).some((byte, index) => byte !== key[index]))) {
+    await subscription.unsubscribe();
+    subscription = null;
+  }
   if (!subscription) {
     subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true, applicationServerKey: applicationKey(publicKey),
+      userVisibleOnly: true, applicationServerKey: key,
     });
   }
   await api.subscribePush(subscription.toJSON());

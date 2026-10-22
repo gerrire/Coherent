@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import {
   AudioTrack,
   LiveKitRoom,
@@ -19,7 +19,6 @@ import {
   LayoutGrid,
   LockKeyhole,
   Maximize2,
-  MessageCircle,
   Mic,
   MicOff,
   Minimize2,
@@ -27,6 +26,8 @@ import {
   Phone,
   PhoneOff,
   Settings2,
+  ChevronsDown,
+  ChevronsUp,
   UserPlus,
   Volume2,
   VolumeX,
@@ -40,6 +41,7 @@ import {
   microphoneCapture,
   screenShareCapture,
   screenSharePublish,
+  updateScreenShareBitrate,
   type AudioProcessingState,
   type MediaPreferences,
 } from "../lib/media";
@@ -108,6 +110,7 @@ interface CallPanelProps {
   onInvite: (userIds: string[]) => Promise<void>;
   onAccept: () => void;
   onEnd: () => void;
+  onCollapse: () => void;
   onFocus: () => void;
 }
 
@@ -128,6 +131,7 @@ export default function CallPanel({
   onInvite,
   onAccept,
   onEnd,
+  onCollapse,
   onFocus,
 }: CallPanelProps) {
   const self = call.participants.find((participant) => participant.user_id === currentUserId);
@@ -222,6 +226,11 @@ export default function CallPanel({
         onRoomReady={onRoomReady}
         onMediaChange={onMediaChange}
         onFocus={onFocus}
+        onCollapse={() => {
+          if (document.fullscreenElement === panelRef.current) void document.exitFullscreen();
+          setIsViewportFullscreen(false);
+          onCollapse();
+        }}
         onToggleFullscreen={() => void toggleFullscreen()}
         onToggleView={() => setViewOpen((open) => !open)}
         onToggleSettings={onToggleSettings}
@@ -272,6 +281,7 @@ function CallRoom({
   onRoomReady,
   onMediaChange,
   onFocus,
+  onCollapse,
   onToggleFullscreen,
   onToggleView,
   onToggleSettings,
@@ -291,6 +301,7 @@ function CallRoom({
   onRoomReady: (room: Room | null) => void;
   onMediaChange: (patch: Partial<MediaPreferences>) => Promise<void>;
   onFocus: () => void;
+  onCollapse: () => void;
   onToggleFullscreen: () => void;
   onToggleView: () => void;
   onToggleSettings: () => void;
@@ -309,7 +320,7 @@ function CallRoom({
   const [screenVolumes, setScreenVolumes] = useState(loadScreenVolumes);
   const [encryptedRoom, setEncryptedRoom] = useState<{ callId: string; room: Room; fingerprint: { emoji: string; code: string } } | null>(null);
   const roomOptions = useMemo(() => ({
-    adaptiveStream: true,
+    adaptiveStream: { pixelDensity: 2 },
     dynacast: true,
     webAudioMix: true,
     audioCaptureDefaults: { voiceIsolation: false },
@@ -401,11 +412,12 @@ function CallRoom({
       </div>
       {connected && encryptedRoom?.callId === call.id && <span className="call-encryption" title={`Сквозное шифрование медиа. Ключ выдаёт Когерент, LiveKit его не получает. Сверь эмодзи и код с собеседниками: ${encryptedRoom.fingerprint.code}`}><LockKeyhole size={13} /> Шифрование <span>{encryptedRoom.fingerprint.emoji}</span></span>}
       {compact ? (
-        <button className="call-focus-button" onClick={onFocus} aria-label="Вернуться к беседе со звонком" title="Вернуться к беседе">
-          <MessageCircle size={17} />
+        <button className="call-focus-button" onClick={onFocus} aria-label="Развернуть звонок" title="Развернуть звонок">
+          <ChevronsDown size={17} />
         </button>
       ) : (
         <div className="call-header-tools">
+          <button className="call-focus-button" onClick={onCollapse} aria-label="Свернуть звонок в полосу" title="Свернуть звонок"><ChevronsUp size={17} /></button>
           <button className="call-focus-button" onClick={onInvite} disabled={!canInvite} aria-label="Добавить участников" title="Добавить участников"><UserPlus size={17} /></button>
           <button className="call-focus-button" onClick={onToggleView} aria-label="Параметры отображения" title="Параметры отображения"><LayoutGrid size={17} /></button>
           <button className="call-focus-button" onClick={onToggleSettings} aria-label="Настройки звука и видео" title="Настройки звука и видео"><Settings2 size={17} /></button>
@@ -541,9 +553,13 @@ function CallControls({
   }, [room, onError]);
 
   useEffect(() => {
-    room.on(RoomEvent.LocalTrackPublished, protectScreenAudio);
-    return () => { room.off(RoomEvent.LocalTrackPublished, protectScreenAudio); };
-  }, [room, protectScreenAudio]);
+    const onPublished = () => {
+      protectScreenAudio();
+      void updateScreenShareBitrate(room, media.screenShareBitrateMbps).catch(() => undefined);
+    };
+    room.on(RoomEvent.LocalTrackPublished, onPublished);
+    return () => { room.off(RoomEvent.LocalTrackPublished, onPublished); };
+  }, [room, protectScreenAudio, media.screenShareBitrateMbps]);
 
   const onScreenShareChange = useCallback((enabled: boolean) => {
     if (enabled) {
@@ -728,8 +744,9 @@ function SidebarParticipant({ participant, camera, volume, onVolumeChange, media
   onVolumeChange: (userId: string, volume: number) => void;
   media: MediaPreferences;
 }) {
+  const isSpeaking = useFastSpeaking(participant);
   const label = participant.isLocal ? "Ты" : participant.name || "Участник";
-  return <div className="call-sidebar-person">
+  return <div className={`call-sidebar-person ${isSpeaking ? "call-sidebar-person-speaking" : ""}`}>
     <div className="call-sidebar-preview">
       {camera ? <VideoTrack trackRef={camera} /> : <span className="call-tile-avatar">{label.slice(0, 1).toUpperCase()}</span>}
     </div>
@@ -741,6 +758,21 @@ function SidebarParticipant({ participant, camera, volume, onVolumeChange, media
       <span>{volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />} {volume}%</span>
       <input aria-label={`Громкость: ${label}`} type="range" min="0" max="200" value={volume} onChange={(event) => onVolumeChange(participant.identity, Number(event.target.value))} />
     </label>}
+  </div>;
+}
+
+function FocusedScreen({ trackRef, style, label, volumeButton, onAspectRatioChange }: {
+  trackRef: NonNullable<ComponentProps<typeof VideoTrack>["trackRef"]>;
+  style: CSSProperties;
+  label: string;
+  volumeButton: ReactNode;
+  onAspectRatioChange: (ratio: number) => void;
+}) {
+  const isSpeaking = useFastSpeaking(trackRef.participant);
+  return <div className={`call-tile call-tile-screen ${isSpeaking ? "call-tile-speaking" : ""}`} style={style}>
+    <VideoWithResolution trackRef={trackRef} onAspectRatioChange={onAspectRatioChange} />
+    <span className="call-tile-name">{label}</span>
+    {volumeButton}
   </div>;
 }
 
@@ -869,11 +901,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
   if (screen && mode === "focus") {
     return <>
       <div className={`call-stage call-stage-sharing ${denseClass}`}>
-        <div className="call-tile call-tile-screen" style={focusedScreenStyle}>
-          <VideoWithResolution trackRef={screen} onAspectRatioChange={(ratio) => setScreenAspectRatios((current) => current[focusedScreenTrackId!] === ratio ? current : { ...current, [focusedScreenTrackId!]: ratio })} />
-          <span className="call-tile-name">{screenLabel(screen.participant)}</span>
-          {screenVolumeButton(screen.participant)}
-        </div>
+        <FocusedScreen trackRef={screen} style={focusedScreenStyle} label={screenLabel(screen.participant)} volumeButton={screenVolumeButton(screen.participant)} onAspectRatioChange={(ratio) => setScreenAspectRatios((current) => current[focusedScreenTrackId!] === ratio ? current : { ...current, [focusedScreenTrackId!]: ratio })} />
         {sidebar}
       </div>
       {volumePanel}

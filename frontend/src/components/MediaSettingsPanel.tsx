@@ -248,7 +248,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <span>Фактический битрейт: {screenDiagnostics.bitrate === null ? "считаем..." : `${screenDiagnostics.bitrate.toFixed(1)} Мбит/с`}</span>
           {screenDiagnostics.limitation && <span>Ограничение: {screenDiagnostics.limitation === "bandwidth" ? "скорость сети" : screenDiagnostics.limitation === "cpu" ? "нагрузка на процессор" : screenDiagnostics.limitation}</span>}
         </div>}
-        <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. При исходном разрешении браузер сам выбирает частоту захвата; настройка ограничивает частоту отправки. Для передачи звука без эха выбирай отдельную вкладку.</p>
+        <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. «Исходное разрешение» не уменьшает захват намеренно, но браузер и видеокодек могут обрезать несколько пикселей и менять цветовые оттенки. Сравни «Захват» и «Отправка» выше; для мелкого текста попробуй VP9 и более высокий битрейт. Для передачи звука без эха выбирай отдельную вкладку.</p>
         <div className="media-settings-divider" />
         <div className="media-settings-section-heading"><strong>Обработка голоса</strong></div>
         <label>

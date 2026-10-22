@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 RETENTION = timedelta(days=3)
 SWEEP_SECONDS = 60
 BATCH_SIZE = 100
-EXPIRED_MESSAGE = "Файлы удалены через 3 дня"
+EXPIRED_MESSAGE = "Вложение удалено"
 
 
 def expiry_cutoff() -> datetime:
@@ -54,6 +54,7 @@ async def expire_batch(
             if not message.body.strip():
                 message.body = EXPIRED_MESSAGE
             message.attachment_count = 0
+            message.attachments_expired = True
         await session.execute(
             delete(MessageAttachment).where(MessageAttachment.message_id.in_(message_ids))
         )

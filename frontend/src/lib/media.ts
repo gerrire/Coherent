@@ -252,6 +252,7 @@ export async function updateScreenShareBitrate(room: Room, bitrateMbps: number):
     encodings: params.encodings.map((encoding, index) => ({
       ...encoding,
       maxBitrate: index === params.encodings.length - 1 ? maxBitrate : Math.min(encoding.maxBitrate ?? maxBitrate, maxBitrate),
+      ...(index === params.encodings.length - 1 ? { scaleResolutionDownBy: 1 } : {}),
     })),
   });
 }
