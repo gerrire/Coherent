@@ -79,7 +79,7 @@ target_include_directories(CoherentDesktop PRIVATE
 target_link_libraries(CoherentDesktop PRIVATE
     Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::WebSockets Qt6::Multimedia
     LiveKit::livekit
-    "${VELOPACK_DIR}/lib-static/velopack_libc_win_x64_msvc.lib"
+    "${VELOPACK_DIR}/lib/velopack_libc_win_x64_msvc.dll.lib"
     ole32 user32 advapi32 bcrypt crypt32 winhttp version ws2_32 mmdevapi
 )
 target_compile_definitions(CoherentDesktop PRIVATE

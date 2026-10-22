@@ -57,6 +57,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Qt deployment failed." }
           Copy-Item -LiteralPath "desktop/build/_deps/livekit-sdk/livekit-sdk-windows-x64-1.5.0/bin/livekit.dll" -Destination $publish
           Copy-Item -LiteralPath "desktop/build/_deps/livekit-sdk/livekit-sdk-windows-x64-1.5.0/bin/livekit_ffi.dll" -Destination $publish
+          Copy-Item -LiteralPath "desktop/build/_deps/velopack/lib/velopack_libc_win_x64_msvc.dll" -Destination $publish
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

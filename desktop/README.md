@@ -16,7 +16,7 @@ cmake --build desktop/build --config Release
 windeployqt --release --qmldir desktop/qml desktop/build/publish/Release/Coherent.exe
 ```
 
-LiveKit C++ SDK 1.5.0 и Velopack 1.2.161 скачиваются при конфигурации; архивы проверяются по SHA-256. Для запуска собранной папки рядом с `Coherent.exe` нужны `livekit.dll` и `livekit_ffi.dll` из `desktop/build/_deps/livekit-sdk/livekit-sdk-windows-x64-1.5.0/bin`. Workflow копирует их автоматически.
+LiveKit C++ SDK 1.5.0 и Velopack 1.2.161 скачиваются при конфигурации; архивы проверяются по SHA-256. Для запуска собранной папки рядом с `Coherent.exe` нужны `livekit.dll` и `livekit_ffi.dll` из `desktop/build/_deps/livekit-sdk/livekit-sdk-windows-x64-1.5.0/bin`, а также `velopack_libc_win_x64_msvc.dll` из `desktop/build/_deps/velopack/lib`. Workflow копирует их автоматически.
 
 ## Обновления
 
