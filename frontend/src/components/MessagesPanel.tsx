@@ -26,6 +26,29 @@ function formatTime(value: string): string {
     .format(new Date(value));
 }
 
+function filesFromClipboard(clipboard: DataTransfer): File[] {
+  const items = Array.from(clipboard.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+  const files = items.length ? items : Array.from(clipboard.files);
+  return files.map((file) => {
+    if (!file.type.startsWith("image/")) {
+      return file.name ? file : new File([file], "Файл", { type: file.type, lastModified: file.lastModified });
+    }
+    if (file.name && file.name !== "image.png") return file;
+    const extension = file.type === "image/jpeg" ? "jpg"
+      : file.type === "image/webp" ? "webp"
+        : file.type === "image/gif" ? "gif"
+          : file.type === "image/avif" ? "avif" : "png";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return new File([file], `Скриншот-${timestamp}.${extension}`, {
+      type: file.type || `image/${extension}`,
+      lastModified: file.lastModified,
+    });
+  });
+}
+
 export default function MessagesPanel({
   conversation,
   currentUserId,
@@ -52,6 +75,7 @@ export default function MessagesPanel({
   const [renaming, setRenaming] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<string | null>(null);
   const hasLoadedPage = useRef(false);
@@ -67,6 +91,22 @@ export default function MessagesPanel({
     setFiles((current) => [...current, ...next].slice(0, 4));
     if (next.length + files.length > 4) setError("В одно сообщение можно добавить до 4 файлов");
   }
+
+  useEffect(() => {
+    function handlePaste(event: ClipboardEvent) {
+      if (event.defaultPrevented || !event.clipboardData) return;
+      const target = event.target;
+      const insideChat = target instanceof Node && Boolean(panelRef.current?.contains(target));
+      const onPage = target === document || target === document.body || target === document.documentElement;
+      if (!insideChat && (!onPage || document.querySelector('[aria-modal="true"]'))) return;
+      const pastedFiles = filesFromClipboard(event.clipboardData);
+      if (!pastedFiles.length) return;
+      event.preventDefault();
+      addFiles(pastedFiles);
+    }
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  });
 
   useEffect(() => {
     let active = true;
@@ -241,7 +281,7 @@ export default function MessagesPanel({
   }
 
   return (
-    <div className="messages-panel">
+    <div className="messages-panel" ref={panelRef}>
       <div className="messages-intro">
         <span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={25} /> : title[0]?.toUpperCase()}</span>
         <div className="messages-intro-copy">
@@ -360,7 +400,7 @@ export default function MessagesPanel({
             <Send size={18} />
           </button>
         </div>
-        <span className="composer-hint">Enter — отправить · Shift+Enter — новая строка</span>
+        <span className="composer-hint">Enter — отправить · Shift+Enter — новая строка · Ctrl+V — вставить файл или скриншот</span>
       </form>
     </div>
   );
