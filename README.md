@@ -31,7 +31,10 @@ Coherent — приложение для общения с личными и г�
 | Backend | Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic |
 | База данных | PostgreSQL 17, Alembic |
 | Frontend | React, TypeScript, Vite |
+| Windows-клиент | C++20, Qt Quick, LiveKit C++ SDK, Windows Core Audio, Velopack |
 | Авторизация | Argon2 для паролей, JWT в HttpOnly cookie, CSRF-токен |
+
+Windows-клиент самостоятельно показывает экраны чатов и звонков через Qt Quick, подключается к тому же API и устанавливает обновления из GitHub Releases. Сборка и выпуск описаны в [руководстве клиента](desktop/README.md).
 
 ## Структура проекта
 
@@ -50,6 +53,9 @@ frontend/
   src/
     components/             Авторизация, друзья, беседы и звонки
     lib/                    Клиент API
+desktop/
+  src/                      API, звонки, захват устройств и обновления
+  qml/                      Нативный интерфейс Qt Quick
 compose.yaml                PostgreSQL для локальной разработки
 docs/                       Спецификация MVP и архитектура
 ```

@@ -1,0 +1,3 @@
+#pragma once
+
+#define COHERENT_APP_VERSION L"@COHERENT_VERSION@"

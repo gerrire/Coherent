@@ -23,6 +23,10 @@ frontend/.vite/
 *.tsbuildinfo
 npm-debug.log*
 
+# Windows desktop client
+desktop/build/
+desktop/Releases/
+
 # Editors and operating systems
 .idea/
 .vscode/

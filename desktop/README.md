@@ -1,0 +1,29 @@
+# Coherent для Windows
+
+Нативный клиент написан на C++20 и Qt Quick. Он самостоятельно показывает вход, друзей, беседы, сообщения и звонки, обращаясь к существующему FastAPI. Встроенного браузера и WebView нет. Звонки используют LiveKit C++ SDK, камера и экран захватываются через Qt Multimedia. Системный звук экрана захватывается через Windows Process Loopback с исключением процесса Coherent и его дочерних процессов.
+
+Вход сохраняется в профиле Windows с помощью DPAPI. Код и ключи сервера в клиент не встраиваются. Сервер по умолчанию — `https://coherent-web.ru`; для локальной разработки можно задать `COHERENT_API_BASE_URL`.
+
+## Сборка без установки Visual Studio на свой компьютер
+
+Workflow [desktop-release.yml](../.github/workflows/desktop-release.yml) собирает приложение на GitHub Actions с Windows Server 2022, Visual Studio 2022 и Qt 6.12.0. Его можно запустить вручную через **Actions → Build Coherent for Windows → Run workflow**. Готовая папка клиента появляется в артефакте `coherent-windows-build`.
+
+Если собирать локально, нужны MSVC 2022 x64, CMake 3.25+ и Qt 6.12 с модулями Multimedia и WebSockets:
+
+```powershell
+cmake -S desktop -B desktop/build -G "Visual Studio 17 2022" -A x64
+cmake --build desktop/build --config Release
+windeployqt --release --qmldir desktop/qml desktop/build/publish/Release/Coherent.exe
+```
+
+LiveKit C++ SDK 1.5.0 и Velopack 1.2.161 скачиваются при конфигурации; архивы проверяются по SHA-256. Для запуска собранной папки рядом с `Coherent.exe` нужны `livekit.dll` и `livekit_ffi.dll` из `desktop/build/_deps/livekit-sdk/livekit-sdk-windows-x64-1.5.0/bin`. Workflow копирует их автоматически.
+
+## Обновления
+
+Установленный клиент проверяет GitHub Releases при запуске. В настройках есть ручная проверка и установка обновления без перехода в браузер. Тег `desktop-vX.Y.Z` запускает сборку, упаковку Velopack и публикацию установщика. Версия в теге должна совпадать с форматом `X.Y.Z`.
+
+Захват звука с исключением процесса поддерживается в Windows 10 build 20348 и новее. Если система не поддерживает этот API, экран продолжит показываться, а клиент сообщит об ошибке захвата звука.
+
+## Текущие ограничения
+
+Групповой звонок показывает отдельные видеоплитки и умеет приглашать друзей. Индивидуальная громкость участников и выбор конкретной камеры, микрофона и динамиков в интерфейсе пока не добавлены. Эти функции не влияют на вход, переписку и базовые звонки.
