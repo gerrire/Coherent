@@ -3,15 +3,13 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
-from coherent_api.core.security import create_access_token
+from coherent_api.core.security import create_access_token, hash_password
 from coherent_api.models.user import User
 from coherent_api.schemas.auth import (
     AuthResponse,
+    ChangePasswordRequest,
     CsrfResponse,
     LoginRequest,
-    RecoverAccountRequest,
-    RecoveryCodesRequest,
-    RecoveryCodesResponse,
     RegisterRequest,
     UserResponse,
 )
@@ -20,11 +18,6 @@ from coherent_api.services.auth import (
     InvalidCredentialsError,
     authenticate_user,
     register_user,
-)
-from coherent_api.services.recovery import (
-    issue_recovery_codes,
-    recover_account,
-    regenerate_recovery_codes,
 )
 
 router = APIRouter(prefix="/auth", tags=["Авторизация"])
@@ -82,8 +75,7 @@ async def register(
         ) from error
 
     set_session_cookies(response, user, request)
-    codes = await issue_recovery_codes(session, user)
-    return AuthResponse(user=UserResponse.model_validate(user), recovery_codes=codes)
+    return AuthResponse(user=UserResponse.model_validate(user))
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -125,19 +117,16 @@ async def get_me(user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(user)
 
 
-@router.post("/recovery-codes", response_model=RecoveryCodesResponse)
-async def new_recovery_codes(
-    body: RecoveryCodesRequest, user: CurrentUser, session: SessionDep
-) -> RecoveryCodesResponse:
-    codes = await regenerate_recovery_codes(session, user, body.password)
-    if codes is None:
-        raise HTTPException(status_code=401, detail="Неверный пароль")
-    return RecoveryCodesResponse(codes=codes)
-
-
-@router.post("/recover", status_code=status.HTTP_204_NO_CONTENT)
-async def recover(body: RecoverAccountRequest, request: Request, session: SessionDep) -> None:
-    user_id = await recover_account(session, body.username, body.code, body.new_password)
-    if user_id is None:
-        raise HTTPException(status_code=400, detail="Имя пользователя или код не подходят")
-    await request.app.state.message_events.disconnect(user_id)
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    response: Response,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    user.password_hash = hash_password(body.new_password)
+    user.session_version += 1
+    await session.commit()
+    set_session_cookies(response, user, request)
+    await request.app.state.message_events.disconnect(user.id, code=4001)

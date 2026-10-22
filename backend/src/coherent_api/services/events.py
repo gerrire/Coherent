@@ -28,10 +28,10 @@ class MessageEvents:
     async def publish_all(self, payload: dict) -> None:
         await self.publish(tuple(self.connections), payload)
 
-    async def disconnect(self, user_id: UUID) -> None:
+    async def disconnect(self, user_id: UUID, code: int = 1008) -> None:
         for websocket in tuple(self.connections.get(user_id, ())):
             try:
-                await websocket.close(code=1008)
+                await websocket.close(code=code)
             except (OSError, RuntimeError):
                 pass
             self.remove(user_id, websocket)

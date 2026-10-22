@@ -5,7 +5,6 @@ import {
   CircleHelp,
   Compass,
   Headphones,
-  LockKeyhole,
   LogOut,
   MessageCircle,
   Mic,
@@ -40,6 +39,7 @@ import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
+import ProfileSettingsDialog from "./ProfileSettingsDialog";
 import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 
@@ -81,11 +81,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   });
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
-  const [showRecovery, setShowRecovery] = useState(false);
-  const [recoveryPassword, setRecoveryPassword] = useState("");
-  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
-  const [recoveryError, setRecoveryError] = useState("");
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<{ nonce: number; files: File[] } | null>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -1082,30 +1078,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <div><strong>{user.username}</strong><span>В сети</span></div>
             <MoreHorizontal size={18} />
           </div>
+          <button onClick={() => { setShowProfile(false); setProfileSettingsOpen(true); }}><Settings size={16} /> Настройки профиля</button>
           <button onClick={() => { void disablePush().catch(() => undefined).finally(onLogout); }}><LogOut size={16} /> Выйти из аккаунта</button>
-          <button onClick={() => { setShowProfile(false); setShowRecovery(true); setRecoveryError(""); }}><LockKeyhole size={16} /> Коды восстановления</button>
         </div>
       )}
 
-      {showRecovery && <div className="recovery-dialog-backdrop" onClick={() => setShowRecovery(false)}>
-        <form className="recovery-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => {
-          event.preventDefault();
-          setRecoveryBusy(true);
-          setRecoveryError("");
-          void api.recoveryCodes(recoveryPassword).then((result) => {
-            setRecoveryCodes(result.codes);
-            setRecoveryPassword("");
-          }).catch((reason: unknown) => setRecoveryError(reason instanceof Error ? reason.message : "Не удалось создать коды"))
-            .finally(() => setRecoveryBusy(false));
-        }}>
-          <h2>Коды восстановления</h2>
-          <p>Если забудешь пароль, один из этих кодов позволит сменить его без почты. Новые коды отменяют старые.</p>
-          {!recoveryCodes.length ? <><input type="password" placeholder="Текущий пароль" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} required autoComplete="current-password" /><button type="submit" disabled={recoveryBusy}>Создать коды</button></>
-            : <><div className="recovery-code-list">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button type="button" onClick={() => void navigator.clipboard.writeText(recoveryCodes.join("\n"))}>Скопировать коды</button></>}
-          {recoveryError && <p role="alert">{recoveryError}</p>}
-          <button type="button" onClick={() => { setShowRecovery(false); setRecoveryCodes([]); setRecoveryPassword(""); }}>Закрыть</button>
-        </form>
-      </div>}
+      {profileSettingsOpen && <ProfileSettingsDialog user={user} onClose={() => setProfileSettingsOpen(false)} />}
 
       {draggingFiles && <div className="file-drop-overlay" aria-hidden="true">Перетащи файл сюда, чтобы прикрепить к беседе</div>}
 

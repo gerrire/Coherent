@@ -95,7 +95,6 @@ export interface CallJoin {
 
 interface AuthResponse {
   user: User;
-  recovery_codes?: string[] | null;
 }
 
 interface ApiErrorBody {
@@ -160,10 +159,8 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
-  recover: (payload: { username: string; code: string; new_password: string }) =>
-    request<void>("/api/v1/auth/recover", { method: "POST", body: JSON.stringify(payload) }),
-  recoveryCodes: (password: string) =>
-    request<{ codes: string[] }>("/api/v1/auth/recovery-codes", { method: "POST", body: JSON.stringify({ password }) }),
+  changePassword: (newPassword: string) =>
+    request<void>("/api/v1/auth/password", { method: "POST", body: JSON.stringify({ new_password: newPassword }) }),
   pushKey: () => request<{ public_key: string }>("/api/v1/push/key"),
   subscribePush: (subscription: PushSubscriptionJSON) =>
     request<void>("/api/v1/push/subscriptions", { method: "POST", body: JSON.stringify(subscription) }),
