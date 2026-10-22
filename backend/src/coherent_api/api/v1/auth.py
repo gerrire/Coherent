@@ -9,6 +9,9 @@ from coherent_api.schemas.auth import (
     AuthResponse,
     CsrfResponse,
     LoginRequest,
+    RecoverAccountRequest,
+    RecoveryCodesRequest,
+    RecoveryCodesResponse,
     RegisterRequest,
     UserResponse,
 )
@@ -17,6 +20,11 @@ from coherent_api.services.auth import (
     InvalidCredentialsError,
     authenticate_user,
     register_user,
+)
+from coherent_api.services.recovery import (
+    issue_recovery_codes,
+    recover_account,
+    regenerate_recovery_codes,
 )
 
 router = APIRouter(prefix="/auth", tags=["Авторизация"])
@@ -27,7 +35,7 @@ CSRF_MAX_AGE = 60 * 60 * 24 * 7
 
 def set_session_cookies(response: Response, user: User, request: Request) -> None:
     settings = request.app.state.settings
-    token = create_access_token(user.id, settings)
+    token = create_access_token(user.id, settings, user.session_version)
     response.set_cookie(
         key=SESSION_COOKIE,
         value=token,
@@ -74,7 +82,8 @@ async def register(
         ) from error
 
     set_session_cookies(response, user, request)
-    return AuthResponse(user=UserResponse.model_validate(user))
+    codes = await issue_recovery_codes(session, user)
+    return AuthResponse(user=UserResponse.model_validate(user), recovery_codes=codes)
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -114,3 +123,21 @@ async def logout(request: Request, response: Response) -> Response:
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+@router.post("/recovery-codes", response_model=RecoveryCodesResponse)
+async def new_recovery_codes(
+    body: RecoveryCodesRequest, user: CurrentUser, session: SessionDep
+) -> RecoveryCodesResponse:
+    codes = await regenerate_recovery_codes(session, user, body.password)
+    if codes is None:
+        raise HTTPException(status_code=401, detail="Неверный пароль")
+    return RecoveryCodesResponse(codes=codes)
+
+
+@router.post("/recover", status_code=status.HTTP_204_NO_CONTENT)
+async def recover(body: RecoverAccountRequest, request: Request, session: SessionDep) -> None:
+    user_id = await recover_account(session, body.username, body.code, body.new_password)
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="Имя пользователя или код не подходят")
+    await request.app.state.message_events.disconnect(user_id)

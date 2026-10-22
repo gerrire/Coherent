@@ -33,6 +33,15 @@ class MarkConversationReadRequest(BaseModel):
     message_id: UUID
 
 
+class AttachmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    filename: str
+    media_type: str
+    byte_size: int
+
+
 class MessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -40,6 +49,8 @@ class MessageResponse(BaseModel):
     conversation_id: UUID
     sender_id: UUID
     body: str
+    attachment_count: int = 0
+    attachments: list[AttachmentResponse] = Field(default_factory=list)
     created_at: datetime
 
 

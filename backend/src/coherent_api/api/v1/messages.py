@@ -1,6 +1,20 @@
+from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from fastapi.responses import FileResponse
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.core.security import decode_access_token
@@ -15,6 +29,12 @@ from coherent_api.schemas.messages import (
     OpenConversationRequest,
     RenameConversationRequest,
     SendMessageRequest,
+)
+from coherent_api.services.attachments import (
+    INLINE_TYPES,
+    AttachmentError,
+    get_attachment,
+    save_message_files,
 )
 from coherent_api.services.messages import (
     ConversationNotFoundError,
@@ -32,6 +52,7 @@ from coherent_api.services.messages import (
     rename_group,
     send_message,
 )
+from coherent_api.services.push import send_to_users
 
 router = APIRouter(prefix="/conversations", tags=["Сообщения"])
 
@@ -67,6 +88,81 @@ async def create_group_conversation(
         tuple(member.id for member in result.members), {"type": "conversation"}
     )
     return result
+
+
+@router.post(
+    "/{conversation_id}/messages/attachments",
+    response_model=MessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_message_attachments(
+    conversation_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+    files: Annotated[list[UploadFile], File()],
+    body: str = Form(""),
+) -> MessageResponse:
+    try:
+        result, member_ids = await save_message_files(
+            session,
+            user,
+            conversation_id,
+            body,
+            files,
+            request.app.state.settings.attachment_dir,
+        )
+    except ConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    except AttachmentError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    await request.app.state.message_events.publish(
+        member_ids,
+        {
+            "type": "message",
+            "conversation_id": str(conversation_id),
+            "message": result.model_dump(mode="json"),
+        },
+    )
+    background_tasks.add_task(
+        send_to_users,
+        request.app.state.session_factory,
+        request.app.state.settings,
+        tuple(uid for uid in member_ids if uid != user.id),
+        {
+            "title": user.username,
+            "body": result.body or "Новое вложение",
+            "url": f"/?conversation={conversation_id}",
+            "tag": f"message-{result.id}",
+        },
+    )
+    return result
+
+
+@router.get("/{conversation_id}/attachments/{attachment_id}")
+async def download_attachment(
+    conversation_id: UUID,
+    attachment_id: UUID,
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+) -> FileResponse:
+    try:
+        attachment = await get_attachment(session, user, conversation_id, attachment_id)
+    except ConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    path = Path(request.app.state.settings.attachment_dir) / str(attachment_id)
+    if attachment is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    inline = attachment.media_type in INLINE_TYPES
+    return FileResponse(
+        path,
+        media_type=attachment.media_type,
+        filename=attachment.filename,
+        content_disposition_type="inline" if inline else "attachment",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.patch("/{conversation_id}", response_model=ConversationResponse)
@@ -128,6 +224,7 @@ async def post_message(
     conversation_id: UUID,
     body: SendMessageRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser,
     session: SessionDep,
 ) -> MessageResponse:
@@ -145,6 +242,19 @@ async def post_message(
             "message": result.model_dump(mode="json"),
         },
     )
+    member_ids = await conversation_member_ids(session, conversation)
+    background_tasks.add_task(
+        send_to_users,
+        request.app.state.session_factory,
+        request.app.state.settings,
+        tuple(uid for uid in member_ids if uid != user.id),
+        {
+            "title": user.username,
+            "body": result.body[:150],
+            "url": f"/?conversation={conversation_id}",
+            "tag": f"message-{result.id}",
+        },
+    )
     return result
 
 
@@ -157,25 +267,28 @@ async def message_events(websocket: WebSocket) -> None:
         return
 
     token = websocket.cookies.get("coherent_session")
-    user_id = decode_access_token(token, settings) if token else None
-    if user_id is None:
+    identity = decode_access_token(token, settings) if token else None
+    if identity is None:
         await websocket.close(code=1008)
         return
 
     session_factory = websocket.app.state.session_factory
     async with session_factory() as session:
-        user = await session.get(User, user_id)
-    if user is None:
+        user = await session.get(User, identity[0])
+    if user is None or user.session_version != identity[1]:
         await websocket.close(code=1008)
         return
+    user_id = user.id
 
     await websocket.accept()
     events = websocket.app.state.message_events
-    events.add(user_id, websocket)
+    if events.add(user_id, websocket):
+        await events.publish_all({"type": "presence"})
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        events.remove(user_id, websocket)
+        if events.remove(user_id, websocket):
+            await events.publish_all({"type": "presence"})

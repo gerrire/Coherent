@@ -10,8 +10,10 @@ from coherent_api.models.conversation_member import ConversationMember
 from coherent_api.models.conversation_read import ConversationRead
 from coherent_api.models.friend_request import FriendRequest
 from coherent_api.models.message import Message
+from coherent_api.models.message_attachment import MessageAttachment
 from coherent_api.models.user import User
 from coherent_api.schemas.messages import (
+    AttachmentResponse,
     ConversationResponse,
     ConversationsResponse,
     ConversationUser,
@@ -292,7 +294,8 @@ async def mark_conversation_read(
             )
         )
     elif (message.created_at.replace(tzinfo=UTC), message.id) > (
-        marker.message_created_at.replace(tzinfo=UTC), marker.message_id
+        marker.message_created_at.replace(tzinfo=UTC),
+        marker.message_id,
     ):
         marker.message_id = message.id
         marker.message_created_at = message.created_at
@@ -305,7 +308,8 @@ async def mark_conversation_read(
         if marker is None:
             raise
         if (message.created_at.replace(tzinfo=UTC), message.id) > (
-            marker.message_created_at.replace(tzinfo=UTC), marker.message_id
+            marker.message_created_at.replace(tzinfo=UTC),
+            marker.message_id,
         ):
             marker.message_id = message.id
             marker.message_created_at = message.created_at
@@ -353,8 +357,30 @@ async def list_messages(
             query.order_by(Message.created_at.desc(), Message.id.desc()).limit(51)
         )
     )
+    page = list(reversed(messages[:50]))
+    attachments = (
+        list(
+            await session.scalars(
+                select(MessageAttachment).where(
+                    MessageAttachment.message_id.in_([item.id for item in page])
+                )
+            )
+        )
+        if page
+        else []
+    )
+    by_message: dict[UUID, list[AttachmentResponse]] = {}
+    for attachment in attachments:
+        by_message.setdefault(attachment.message_id, []).append(
+            AttachmentResponse.model_validate(attachment)
+        )
     return MessagesResponse(
-        messages=[MessageResponse.model_validate(message) for message in reversed(messages[:50])],
+        messages=[
+            MessageResponse.model_validate(message).model_copy(
+                update={"attachments": by_message.get(message.id, [])}
+            )
+            for message in page
+        ],
         has_more=len(messages) > 50,
     )
 

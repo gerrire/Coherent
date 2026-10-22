@@ -40,6 +40,8 @@ export interface Message {
   conversation_id: string;
   sender_id: string;
   body: string;
+  attachment_count: number;
+  attachments: Array<{ id: string; filename: string; media_type: string; byte_size: number }>;
   created_at: string;
 }
 
@@ -93,6 +95,7 @@ export interface CallJoin {
 
 interface AuthResponse {
   user: User;
+  recovery_codes?: string[] | null;
 }
 
 interface ApiErrorBody {
@@ -124,7 +127,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
     headers.set("X-CSRF-Token", csrfToken);
   }
@@ -157,6 +160,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
+  recover: (payload: { username: string; code: string; new_password: string }) =>
+    request<void>("/api/v1/auth/recover", { method: "POST", body: JSON.stringify(payload) }),
+  recoveryCodes: (password: string) =>
+    request<{ codes: string[] }>("/api/v1/auth/recovery-codes", { method: "POST", body: JSON.stringify({ password }) }),
+  pushKey: () => request<{ public_key: string }>("/api/v1/push/key"),
+  subscribePush: (subscription: PushSubscriptionJSON) =>
+    request<void>("/api/v1/push/subscriptions", { method: "POST", body: JSON.stringify(subscription) }),
+  unsubscribePush: (endpoint: string) =>
+    request<void>("/api/v1/push/subscriptions/remove", { method: "POST", body: JSON.stringify({ endpoint }) }),
   searchUsers: (query: string) =>
     request<UserSearchResult[]>(`/api/v1/users/search?query=${encodeURIComponent(query)}`),
   relationship: (userId: string) =>
@@ -207,6 +219,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ body }),
     }),
+  sendAttachments: (conversationId: string, body: string, files: File[]) => {
+    const data = new FormData();
+    data.append("body", body);
+    files.forEach((file) => data.append("files", file));
+    return request<Message>(`/api/v1/conversations/${conversationId}/messages/attachments`, {
+      method: "POST", body: data,
+    });
+  },
   currentCalls: () => request<{ calls: Call[] }>("/api/v1/calls/current"),
   startCall: (conversationId: string) =>
     request<Call>(`/api/v1/conversations/${conversationId}/calls`, {

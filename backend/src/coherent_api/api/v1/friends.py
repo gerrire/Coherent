@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.schemas.friends import (
@@ -25,6 +25,7 @@ from coherent_api.services.friends import (
     search_users,
 )
 from coherent_api.services.messages import list_conversations
+from coherent_api.services.push import send_to_users
 
 router = APIRouter(tags=["Пользователи и друзья"])
 
@@ -37,9 +38,7 @@ async def online_users(
     conversations = await list_conversations(session, user)
     visible_ids = {friend.id for friend in friends.friends}
     visible_ids.update(
-        member.id
-        for conversation in conversations.conversations
-        for member in conversation.members
+        member.id for conversation in conversations.conversations for member in conversation.members
     )
     visible_ids.discard(user.id)
     connected = request.app.state.message_events.connections
@@ -89,6 +88,7 @@ async def list_friend_requests(
 async def send_friend_request(
     body: CreateFriendRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser,
     session: SessionDep,
 ) -> FriendRequestResponse:
@@ -105,6 +105,19 @@ async def send_friend_request(
         (friend_request.sender_id, friend_request.recipient_id),
         {"type": "friend_request"},
     )
+    if friend_request.status == "pending":
+        background_tasks.add_task(
+            send_to_users,
+            request.app.state.session_factory,
+            request.app.state.settings,
+            (friend_request.recipient_id,),
+            {
+                "title": "Заявка в друзья",
+                "body": f"{user.username} хочет добавить тебя в друзья",
+                "url": "/?friends=requests",
+                "tag": f"friend-{friend_request.id}",
+            },
+        )
 
     return FriendRequestResponse(
         request_id=friend_request.id,

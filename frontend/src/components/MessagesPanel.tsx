@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound } from "lucide-react";
+import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import { api, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
@@ -11,6 +11,7 @@ interface MessagesPanelProps {
   callError: string;
   onRename: (conversationId: string, name: string) => Promise<void>;
   peerOnline?: boolean;
+  incomingFiles?: { nonce: number; files: File[] } | null;
 }
 
 function mergeMessages(first: Message[], second: Message[]): Message[] {
@@ -34,6 +35,7 @@ export default function MessagesPanel({
   callError,
   onRename,
   peerOnline,
+  incomingFiles,
 }: MessagesPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -41,6 +43,7 @@ export default function MessagesPanel({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [friendError, setFriendError] = useState("");
   const [relationship, setRelationship] = useState<UserSearchResult | null>(null);
@@ -55,9 +58,15 @@ export default function MessagesPanel({
   const nearBottom = useRef(true);
   const relationshipTarget = useRef(conversation.other_user?.id);
   const lastReadRef = useRef("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   relationshipTarget.current = conversation.other_user?.id;
   const title = conversationTitle(conversation);
   const peer = conversation.other_user;
+
+  function addFiles(next: File[]) {
+    setFiles((current) => [...current, ...next].slice(0, 4));
+    if (next.length + files.length > 4) setError("В одно сообщение можно добавить до 4 файлов");
+  }
 
   useEffect(() => {
     let active = true;
@@ -122,6 +131,7 @@ export default function MessagesPanel({
       setMessages([]);
       setHasMore(false);
       setDraft("");
+      setFiles([]);
       setLoading(true);
       setError("");
       setRenaming(false);
@@ -144,6 +154,12 @@ export default function MessagesPanel({
     });
     return () => { active = false; };
   }, [conversation.id, version, retry]);
+
+  useEffect(() => {
+    if (incomingFiles?.files.length) addFiles(incomingFiles.files);
+    // A new drop is identified by its nonce; local selections are handled separately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingFiles?.nonce]);
 
   const latestId = messages.at(-1)?.id;
   useEffect(() => {
@@ -193,15 +209,22 @@ export default function MessagesPanel({
   async function sendMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     const body = draft.trim();
-    if (!body || sending) return;
+    if ((!body && files.length === 0) || sending) return;
+    if (files.some((file) => file.size > 25 * 1024 * 1024) || files.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) {
+      setError("До 25 МБ на файл и 50 МБ на сообщение");
+      return;
+    }
     setSending(true);
     setError("");
     try {
-      const message = await api.sendMessage(conversation.id, body);
+      const message = files.length
+        ? await api.sendAttachments(conversation.id, body, files)
+        : await api.sendMessage(conversation.id, body);
       if (conversationRef.current !== conversation.id) return;
       nearBottom.current = true;
       setMessages((current) => mergeMessages(current, [message]));
       setDraft("");
+      setFiles([]);
       onSent();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Не удалось отправить сообщение.");
@@ -293,7 +316,16 @@ export default function MessagesPanel({
                   <strong>{author}</strong>
                   <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
                 </div>
-                <p>{message.body}</p>
+                {message.body && <p>{message.body}</p>}
+                {message.attachments?.map((attachment) => {
+                  const url = `/api/v1/conversations/${conversation.id}/attachments/${attachment.id}`;
+                  return <div className="message-attachment" key={attachment.id}>
+                    {attachment.media_type.startsWith("image/") && <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={attachment.filename} loading="lazy" /></a>}
+                    {attachment.media_type.startsWith("video/") && <video src={url} controls preload="metadata" />}
+                    {attachment.media_type.startsWith("audio/") && <audio src={url} controls preload="none" />}
+                    <a href={url} target="_blank" rel="noreferrer">{attachment.filename} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ</a>
+                  </div>;
+                })}
               </div>
             </div>
           );
@@ -306,7 +338,10 @@ export default function MessagesPanel({
             {error} {messages.length === 0 && <button type="button" onClick={() => setRetry((n) => n + 1)}>Повторить</button>}
           </div>
         )}
+        {files.length > 0 && <div className="composer-files">{files.map((file, index) => <span key={`${file.name}-${index}`}>{file.name}<button type="button" onClick={() => setFiles((current) => current.filter((_, position) => position !== index))} aria-label={`Убрать ${file.name}`}><X size={13} /></button></span>)}</div>}
         <div className="composer-field">
+          <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+          <button type="button" className="composer-attach" onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файлы" title="Прикрепить файлы"><FilePlus2 size={19} /></button>
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -320,7 +355,7 @@ export default function MessagesPanel({
             type="submit"
             aria-label="Отправить сообщение"
             title="Отправить сообщение"
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && files.length === 0) || sending}
           >
             <Send size={18} />
           </button>

@@ -14,9 +14,12 @@ interface AuthPanelProps {
 }
 
 export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "recover">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [issuedCodes, setIssuedCodes] = useState<string[] | null>(null);
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,10 +30,22 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
     setBusy(true);
 
     try {
+      if (mode === "recover") {
+        await api.recover({ username, code: recoveryCode, new_password: password });
+        setMode("login");
+        setPassword("");
+        setRecoveryCode("");
+        return;
+      }
       const result = mode === "register"
         ? await api.register({ username, password })
         : await api.login({ username, password });
-      onAuthenticated(result.user);
+      if (result.recovery_codes?.length) {
+        setIssuedCodes(result.recovery_codes);
+        setPendingUser(result.user);
+      } else {
+        onAuthenticated(result.user);
+      }
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -105,14 +120,22 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
             <div className="card-heading">
               <div className="card-icon"><LockKeyhole size={20} /></div>
               <div className="card-overline">ТВОЁ ПРОСТРАНСТВО</div>
-              <h2>{mode === "register" ? "Создай аккаунт" : "С возвращением"}</h2>
+              <h2>{issuedCodes ? "Сохрани коды восстановления" : mode === "register" ? "Создай аккаунт" : mode === "recover" ? "Вернуть доступ" : "С возвращением"}</h2>
               <p>
-                {mode === "register"
+                {issuedCodes ? "Они показываются один раз и помогут сменить пароль без почты"
+                  : mode === "register"
                   ? "Начни общаться по-новому"
-                  : "Войди, чтобы продолжить"}
+                  : mode === "recover" ? "Введи один из сохранённых кодов" : "Войди, чтобы продолжить"}
               </p>
             </div>
 
+            {issuedCodes && pendingUser ? (
+              <div className="recovery-code-panel">
+                <div className="recovery-code-list">{issuedCodes.map((code) => <code key={code}>{code}</code>)}</div>
+                <button className="primary-button auth-submit" onClick={() => void navigator.clipboard.writeText(issuedCodes.join("\n"))}>Скопировать коды</button>
+                <button className="primary-button auth-submit" onClick={() => onAuthenticated(pendingUser)}>Я сохранил коды · продолжить</button>
+              </div>
+            ) : (
             <form className="auth-form" onSubmit={submit}>
               <label className="field-label">
                 Имя пользователя
@@ -135,13 +158,13 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                 <span className="input-wrap">
                   <LockKeyhole size={17} />
                   <input
-                    autoComplete={mode === "register" ? "new-password" : "current-password"}
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder={mode === "register" ? "Не менее 8 символов" : "Твой пароль"}
+                    placeholder={mode === "login" ? "Твой пароль" : "Новый пароль · не менее 8 символов"}
                     required
-                    minLength={mode === "register" ? 8 : 1}
+                    minLength={mode === "login" ? 1 : 8}
                     maxLength={128}
                   />
                   <button
@@ -155,12 +178,17 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                 </span>
               </label>
 
+              {mode === "recover" && <label className="field-label">Код восстановления
+                <span className="input-wrap"><LockKeyhole size={17} /><input value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value)} required placeholder="XXXXXX-XXXXXX-XXXXXX-XXXXXX" autoComplete="off" /></span>
+              </label>}
+
               {error && <div className="form-error" role="alert">{error}</div>}
 
               <button className="primary-button auth-submit" type="submit" disabled={busy}>
                 <span>
                   {busy
                     ? "Секунду..."
+                    : mode === "recover" ? "Сменить пароль"
                     : mode === "register"
                       ? "Создать аккаунт"
                       : "Войти в Coherent"}
@@ -168,13 +196,16 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                 <ArrowRight size={17} />
               </button>
             </form>
+            )}
 
-            <div className="auth-switch">
+            {!issuedCodes && <div className="auth-switch">
               {mode === "register" ? "Уже есть аккаунт?" : "Впервые в Coherent?"}
               <button type="button" onClick={toggleMode}>
                 {mode === "register" ? "Войти" : "Создать аккаунт"}
               </button>
-            </div>
+              {mode !== "recover" && <button type="button" onClick={() => { setMode("recover"); setError(""); setPassword(""); }}>Забыли пароль?</button>}
+              {mode === "recover" && <button type="button" onClick={() => { setMode("login"); setError(""); }}>Вернуться ко входу</button>}
+            </div>}
 
             <div className="card-legal">
               Условия использования и политика конфиденциальности<br />

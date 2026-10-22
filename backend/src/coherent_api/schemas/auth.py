@@ -59,6 +59,21 @@ class UserResponse(BaseModel):
 
 class AuthResponse(BaseModel):
     user: UserResponse
+    recovery_codes: list[str] | None = None
+
+
+class RecoveryCodesRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class RecoveryCodesResponse(BaseModel):
+    codes: list[str]
+
+
+class RecoverAccountRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    code: str = Field(min_length=16, max_length=40)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class CsrfResponse(BaseModel):

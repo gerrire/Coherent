@@ -12,9 +12,7 @@ class Settings(BaseSettings):
     app_name: str = "Coherent API"
     app_env: str = "development"
     api_prefix: str = "/api/v1"
-    secret_key: SecretStr = SecretStr(
-        "development-only-secret-key-change-before-deployment-123456"
-    )
+    secret_key: SecretStr = SecretStr("development-only-secret-key-change-before-deployment-123456")
     database_url: str = "postgresql+asyncpg://coherent:coherent@localhost:5432/coherent"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     cookie_secure: bool = False
@@ -22,6 +20,9 @@ class Settings(BaseSettings):
     livekit_url: str | None = None
     livekit_api_key: str | None = None
     livekit_api_secret: SecretStr | None = None
+    attachment_dir: str = "/tmp/coherent-attachments"
+    vapid_key_path: str = "/tmp/coherent-vapid/private.pem"
+    vapid_subject: str = "https://coherent-web.ru"
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":

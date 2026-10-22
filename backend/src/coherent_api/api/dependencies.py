@@ -1,5 +1,4 @@
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -24,17 +23,19 @@ async def get_current_user(
         token = credentials.credentials
 
     settings = request.app.state.settings
-    user_id: UUID | None = decode_access_token(token, settings) if token else None
-    if user_id is None:
+    identity = decode_access_token(token, settings) if token else None
+    if identity is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Требуется войти в аккаунт",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = await session.scalar(select(User).where(User.id == user_id))
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Аккаунт не найден")
+    user = await session.scalar(select(User).where(User.id == identity[0]))
+    if user is None or user.session_version != identity[1]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Сессия недействительна"
+        )
     return user
 
 

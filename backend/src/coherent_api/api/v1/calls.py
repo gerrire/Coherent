@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.schemas.calls import (
@@ -28,6 +28,7 @@ from coherent_api.services.calls import (
     start_call,
 )
 from coherent_api.services.messages import ConversationNotFoundError
+from coherent_api.services.push import send_to_users
 
 router = APIRouter(tags=["Звонки"])
 
@@ -52,6 +53,7 @@ async def get_current_calls(user: CurrentUser, session: SessionDep) -> CurrentCa
 async def create_call(
     conversation_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser,
     session: SessionDep,
     body: CreateCallRequest | None = None,
@@ -73,6 +75,21 @@ async def create_call(
             status_code=400, detail=str(error) or "Некорректный список участников"
         ) from error
     await publish_call(request, call)
+    invited = tuple(
+        p.user_id for p in call.participants if p.state == "invited" and p.user_id != user.id
+    )
+    background_tasks.add_task(
+        send_to_users,
+        request.app.state.session_factory,
+        request.app.state.settings,
+        invited,
+        {
+            "title": "Входящий звонок",
+            "body": f"{user.username} звонит тебе",
+            "url": f"/?conversation={conversation_id}",
+            "tag": f"call-{call.id}",
+        },
+    )
     return call
 
 
@@ -85,9 +102,7 @@ async def answer_call(
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
     except CallForbiddenError as error:
-        raise HTTPException(
-            status_code=403, detail="К этому звонку нельзя подключиться"
-        ) from error
+        raise HTTPException(status_code=403, detail="К этому звонку нельзя подключиться") from error
     except CallBusyError as error:
         raise HTTPException(status_code=409, detail="Сначала выйди из другого звонка") from error
     except CallStateError as error:
@@ -117,6 +132,7 @@ async def invite_call_participants(
     call_id: UUID,
     body: InviteCallRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser,
     session: SessionDep,
 ) -> CallResponse:
@@ -139,6 +155,21 @@ async def invite_call_participants(
             status_code=400, detail=str(error) or "Некорректный список участников"
         ) from error
     await publish_call(request, call)
+    invited = tuple(
+        p.user_id for p in call.participants if p.state == "invited" and p.user_id in body.user_ids
+    )
+    background_tasks.add_task(
+        send_to_users,
+        request.app.state.session_factory,
+        request.app.state.settings,
+        invited,
+        {
+            "title": "Приглашение в звонок",
+            "body": f"{user.username} приглашает тебя",
+            "url": f"/?conversation={call.conversation_id}",
+            "tag": f"call-{call.id}",
+        },
+    )
     return call
 
 

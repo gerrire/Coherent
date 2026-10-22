@@ -5,6 +5,7 @@ import {
   CircleHelp,
   Compass,
   Headphones,
+  LockKeyhole,
   LogOut,
   MessageCircle,
   Mic,
@@ -40,6 +41,7 @@ import MediaSettingsPanel from "./MediaSettingsPanel";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
+import { disablePush, enablePush } from "../lib/push";
 
 interface ChatShellProps {
   user: User;
@@ -60,6 +62,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [friendRequestVersion, setFriendRequestVersion] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState("");
+  const [pushError, setPushError] = useState("");
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
   const [recentNotifications, setRecentNotifications] = useState<Array<{ id: string; title: string; conversationId: string }>>([]);
   const [hasNewNotifications, setHasNewNotifications] = useState(() => {
@@ -78,6 +81,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   });
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [recoveryError, setRecoveryError] = useState("");
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<{ nonce: number; files: File[] } | null>(null);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [conversationQuery, setConversationQuery] = useState("");
@@ -97,6 +107,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const roomRef = useRef<Room | null>(null);
   const mediaQueue = useRef<Promise<void>>(Promise.resolve());
   const ringtoneRef = useRef<HTMLAudioElement>(null);
+  const socketReadyRef = useRef(false);
+  const dropNonceRef = useRef(0);
   const notifiedCalls = useRef(new Set<string>());
   const notifiedRequests = useMemo(() => {
     try {
@@ -132,6 +144,62 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   );
 
   useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("friends") === "requests") {
+      setSection("friends");
+      setFriendsInitialTab("requests");
+    } else if (query.has("conversation")) {
+      setSection("messages");
+      setShowWelcome(false);
+    }
+  }, []);
+
+  const activatePush = useCallback(async () => {
+    try {
+      if (!await enablePush()) setPushError("Этот браузер не поддерживает уведомления при закрытой вкладке.");
+      else setPushError("");
+    } catch {
+      setPushError("Не удалось подключить фоновые уведомления. Попробуй открыть уведомления ещё раз.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") void activatePush();
+  }, [activatePush, user.id]);
+
+  useEffect(() => {
+    function dragOver(event: DragEvent) {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+      setDraggingFiles(true);
+    }
+    function drop(event: DragEvent) {
+      if (!event.dataTransfer?.files.length) return;
+      event.preventDefault();
+      setDraggingFiles(false);
+      if (!conversationsRef.current.length) {
+        setConversationError("Открой беседу, чтобы отправить файл");
+        return;
+      }
+      setSection("messages");
+      setShowWelcome(false);
+      setActiveConversationId((current) => current ?? conversationsRef.current[0].id);
+      setPendingFiles({ nonce: ++dropNonceRef.current, files: Array.from(event.dataTransfer.files) });
+    }
+    function dragLeave(event: DragEvent) {
+      if (!event.relatedTarget) setDraggingFiles(false);
+    }
+    window.addEventListener("dragover", dragOver);
+    window.addEventListener("drop", drop);
+    window.addEventListener("dragleave", dragLeave);
+    return () => {
+      window.removeEventListener("dragover", dragOver);
+      window.removeEventListener("drop", drop);
+      window.removeEventListener("dragleave", dragLeave);
+    };
+  }, []);
+
+  useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
     const updateHeight = () => {
@@ -157,7 +225,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const refreshConversations = useCallback(async () => {
     const result = await api.conversations();
     setConversations(result.conversations);
-    setActiveConversationId((current) => current ?? result.conversations[0]?.id ?? null);
+    const linkedId = new URLSearchParams(window.location.search).get("conversation");
+    setActiveConversationId((current) => current ?? result.conversations.find((item) => item.id === linkedId)?.id ?? result.conversations[0]?.id ?? null);
     setConversationError("");
   }, []);
 
@@ -254,13 +323,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     }
   }, [notifiedRequests, showNotification, user.id]);
 
-  useEffect(() => {
-    let active = true;
-    const update = () => { if (active) void refreshRequests().catch(() => undefined); };
-    update();
-    const timer = window.setInterval(update, 15000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [refreshRequests]);
+  useEffect(() => { void refreshRequests().catch(() => undefined); }, [refreshRequests]);
 
   const incomingCallId = currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") ? currentCall.id : null;
   useEffect(() => {
@@ -292,17 +355,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     });
   }, [refreshConversations]);
 
-  useEffect(() => {
-    void refreshPresence().catch(() => undefined);
-    const timer = window.setInterval(() => void refreshPresence().catch(() => undefined), 15000);
-    return () => window.clearInterval(timer);
-  }, [refreshPresence]);
-
-  useEffect(() => {
-    void refreshCalls().catch(() => undefined);
-    const timer = window.setInterval(() => void refreshCalls().catch(() => undefined), 5000);
-    return () => window.clearInterval(timer);
-  }, [refreshCalls]);
+  useEffect(() => { void refreshPresence().catch(() => undefined); }, [refreshPresence]);
+  useEffect(() => { void refreshCalls().catch(() => undefined); }, [refreshCalls]);
 
   useEffect(() => {
     if (!currentCall || !currentCall.participants.some((participant) =>
@@ -326,10 +380,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/conversations/events`);
       socket.onopen = () => {
+        socketReadyRef.current = true;
         reconnectDelay = 1000;
         void refreshConversations().catch(() => undefined);
         void refreshPresence().catch(() => undefined);
         void refreshRequests().catch(() => undefined);
+        void refreshCalls().catch(() => undefined);
         setFriendRequestVersion((current) => current + 1);
         setMessageVersion((current) => current + 1);
       };
@@ -344,6 +400,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           if (payload.type === "friend_request") {
             void refreshRequests().catch(() => undefined);
             setFriendRequestVersion((current) => current + 1);
+            return;
+          }
+          if (payload.type === "presence") {
+            void refreshPresence().catch(() => undefined);
             return;
           }
           if (payload.type !== "message" && payload.type !== "conversation") return;
@@ -361,6 +421,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         }
       };
       socket.onclose = (event) => {
+        socketReadyRef.current = false;
         if (stopped || event.code === 1008) return;
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
@@ -369,13 +430,31 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     }
 
     connect();
+    let reconciliationTick = 0;
     const pollTimer = window.setInterval(() => {
+      if (document.hidden) return;
+      reconciliationTick += 1;
+      if (socketReadyRef.current && reconciliationTick % 4 !== 0) return;
       void refreshConversations().catch(() => undefined);
+      void refreshPresence().catch(() => undefined);
+      void refreshRequests().catch(() => undefined);
+      void refreshCalls().catch(() => undefined);
       setMessageVersion((current) => current + 1);
     }, 15000);
+    const onVisible = () => {
+      if (document.hidden) return;
+      void refreshConversations().catch(() => undefined);
+      void refreshCalls().catch(() => undefined);
+      void refreshRequests().catch(() => undefined);
+      void refreshPresence().catch(() => undefined);
+      setMessageVersion((current) => current + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
+      socketReadyRef.current = false;
       window.clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", onVisible);
       window.clearTimeout(reconnectTimer);
       socket?.close();
     };
@@ -659,7 +738,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         // The indicator is cleared for this session.
       }
       if (typeof Notification !== "undefined" && Notification.permission === "default") {
-        void Notification.requestPermission().then(setNotificationPermission).catch(() => setNotificationPermission("denied"));
+        void Notification.requestPermission().then((permission) => {
+          setNotificationPermission(permission);
+          if (permission === "granted") void activatePush();
+        }).catch(() => setNotificationPermission("denied"));
       }
       setNotificationLoading(true);
       setNotificationError("");
@@ -777,7 +859,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 </span>
                 <span className="conversation-item-copy">
                   <strong>{conversationTitle(conversation)}</strong>
-                  <small>{conversation.last_message?.body ?? "Беседа начата"}</small>
+                  <small>{conversation.last_message?.body || (conversation.last_message?.attachment_count ? "Вложение" : "Беседа начата")}</small>
                 </span>
                 {conversation.unread && <i className="conversation-unread" title="Непрочитанные сообщения" aria-label="Непрочитанные сообщения" />}
               </button>
@@ -900,6 +982,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             callError={currentCall ? "" : callError}
             peerOnline={selectedConversation.other_user ? onlineIds.has(selectedConversation.other_user.id) : undefined}
             onRename={renameGroup}
+            incomingFiles={pendingFiles}
           />
         ) : (
         <div className={`welcome-content ${section === "friends" ? "friends-content" : ""}`}>
@@ -952,9 +1035,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className="shell-popover shell-popover-notifications" aria-label="Уведомления">
           <div className="notification-heading"><strong>Уведомления</strong><button onClick={clearNotifications} disabled={recentNotifications.length === 0 && notificationRequests.every((item) => dismissedNotificationIds.has(`friend-${item.request_id}`)) && (!incomingCallId || dismissedNotificationIds.has(`call-${incomingCallId}`))}>Очистить всё</button></div>
           {notificationPermission === "default" && <button className="notification-permission" onClick={() => {
-            void Notification.requestPermission().then(setNotificationPermission).catch(() => setNotificationPermission("denied"));
+            void Notification.requestPermission().then((permission) => {
+              setNotificationPermission(permission);
+              if (permission === "granted") void activatePush();
+            }).catch(() => setNotificationPermission("denied"));
           }}><Bell size={16} /> Включить уведомления браузера</button>}
           {notificationPermission === "denied" && <p>Уведомления браузера отключены. Разреши их в настройках сайта.</p>}
+          {pushError && <p role="alert">{pushError}</p>}
           {currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") && !dismissedNotificationIds.has(`call-${currentCall.id}`) && (
             <button onClick={() => {
               setPopover(null);
@@ -995,9 +1082,32 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <div><strong>{user.username}</strong><span>В сети</span></div>
             <MoreHorizontal size={18} />
           </div>
-          <button onClick={onLogout}><LogOut size={16} /> Выйти из аккаунта</button>
+          <button onClick={() => { void disablePush().finally(onLogout); }}><LogOut size={16} /> Выйти из аккаунта</button>
+          <button onClick={() => { setShowProfile(false); setShowRecovery(true); setRecoveryError(""); }}><LockKeyhole size={16} /> Коды восстановления</button>
         </div>
       )}
+
+      {showRecovery && <div className="recovery-dialog-backdrop" onClick={() => setShowRecovery(false)}>
+        <form className="recovery-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => {
+          event.preventDefault();
+          setRecoveryBusy(true);
+          setRecoveryError("");
+          void api.recoveryCodes(recoveryPassword).then((result) => {
+            setRecoveryCodes(result.codes);
+            setRecoveryPassword("");
+          }).catch((reason: unknown) => setRecoveryError(reason instanceof Error ? reason.message : "Не удалось создать коды"))
+            .finally(() => setRecoveryBusy(false));
+        }}>
+          <h2>Коды восстановления</h2>
+          <p>Если забудешь пароль, один из этих кодов позволит сменить его без почты. Новые коды отменяют старые.</p>
+          {!recoveryCodes.length ? <><input type="password" placeholder="Текущий пароль" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} required autoComplete="current-password" /><button type="submit" disabled={recoveryBusy}>Создать коды</button></>
+            : <><div className="recovery-code-list">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button type="button" onClick={() => void navigator.clipboard.writeText(recoveryCodes.join("\n"))}>Скопировать коды</button></>}
+          {recoveryError && <p role="alert">{recoveryError}</p>}
+          <button type="button" onClick={() => { setShowRecovery(false); setRecoveryCodes([]); setRecoveryPassword(""); }}>Закрыть</button>
+        </form>
+      </div>}
+
+      {draggingFiles && <div className="file-drop-overlay" aria-hidden="true">Перетащи файл сюда, чтобы прикрепить к беседе</div>}
 
       <audio ref={ringtoneRef} loop preload="auto" aria-hidden="true">
         <source src="/audio/Coherent_Aura.ogg" type="audio/ogg" />

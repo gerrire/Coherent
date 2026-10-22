@@ -1743,6 +1743,25 @@ a {
   overflow-wrap: anywhere;
 }
 
+.message-attachment { display: grid; gap: 6px; margin-top: 7px; min-width: 0; }
+.message-attachment img, .message-attachment video { display: block; max-width: min(420px, 100%); max-height: 320px; border-radius: 9px; object-fit: contain; background: #15111f; }
+.message-attachment audio { width: min(360px, 100%); }
+.message-attachment a { color: #d6b2ff; font-size: 11px; overflow-wrap: anywhere; }
+.composer-files { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 8px; }
+.composer-files span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 8px; border: 1px solid #6d4d8c; border-radius: 8px; background: #302243; color: #f2e5ff; font-size: 11px; overflow-wrap: anywhere; }
+.composer-files button { display: grid; place-items: center; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.composer-field .composer-attach { flex: 0 0 34px; background: #49335f; }
+.file-drop-overlay { position: fixed; inset: 12px; z-index: 1000; display: grid; place-items: center; border: 2px dashed #c793ff; border-radius: 18px; background: rgba(28, 18, 43, .9); color: #f6eaff; font-size: clamp(16px, 3vw, 26px); text-align: center; pointer-events: none; }
+.recovery-code-panel, .recovery-dialog { display: grid; gap: 12px; }
+.recovery-code-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.recovery-code-list code { padding: 8px; border: 1px solid #64477f; border-radius: 8px; background: #211831; color: #f4e9ff; font-size: 11px; text-align: center; overflow-wrap: anywhere; }
+.recovery-dialog-backdrop { position: fixed; inset: 0; z-index: 1001; display: grid; place-items: center; padding: 20px; background: rgba(10, 8, 17, .75); }
+.recovery-dialog { width: min(460px, 100%); padding: 24px; border: 1px solid #664881; border-radius: 16px; background: #251b35; color: #f3e9ff; }
+.recovery-dialog h2, .recovery-dialog p { margin: 0; }
+.recovery-dialog input { min-width: 0; padding: 10px; border: 1px solid #70508e; border-radius: 8px; background: #171121; color: #fff; }
+.recovery-dialog button { padding: 9px 12px; border: 0; border-radius: 8px; background: #7541a8; color: #fff; cursor: pointer; }
+@media (max-width: 500px) { .recovery-code-list { grid-template-columns: 1fr; } }
+
 .load-messages {
   align-self: center;
   padding: 7px 13px;

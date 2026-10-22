@@ -15,4 +15,9 @@ if ! docker compose --env-file "$project_dir/deploy/.env" -f "$project_dir/deplo
     exit 1
 fi
 
+if [ -d "$project_dir/data/attachments" ]; then
+    tar -C "$project_dir/data" -czf "$backup_dir/coherent-files-$timestamp.tar.gz" attachments vapid
+fi
+
 find "$backup_dir" -maxdepth 1 -type f -name 'coherent-*.dump' -mtime +7 -delete
+find "$backup_dir" -maxdepth 1 -type f -name 'coherent-files-*.tar.gz' -mtime +7 -delete

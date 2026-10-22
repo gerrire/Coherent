@@ -41,11 +41,17 @@ services:
       LIVEKIT_URL: wss://${PUBLIC_DOMAIN}:8443
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in deploy/.env}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in deploy/.env}
+      ATTACHMENT_DIR: /data/attachments
+      VAPID_KEY_PATH: /data/vapid/private.pem
+      VAPID_SUBJECT: https://${PUBLIC_DOMAIN}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
       database:
         condition: service_healthy
+    volumes:
+      - ../data/attachments:/data/attachments
+      - ../data/vapid:/data/vapid
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"]
       interval: 10s
@@ -69,11 +75,20 @@ services:
               - ens3
         redis:
           address: 127.0.0.1:6379
+        turn:
+          enabled: true
+          domain: ${PUBLIC_IP}
+          udp_port: 3478
+          tls_port: 5349
+          cert_file: /etc/letsencrypt/live/coherent-ip/fullchain.pem
+          key_file: /etc/letsencrypt/live/coherent-ip/privkey.pem
         keys:
           "${LIVEKIT_API_KEY}": "${LIVEKIT_API_SECRET}"
     depends_on:
       redis:
         condition: service_healthy
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
 
   web:
     build:

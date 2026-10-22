@@ -13,6 +13,9 @@ from coherent_api.models import conversation_member as conversation_member_model
 from coherent_api.models import conversation_read as conversation_read_model  # noqa: F401
 from coherent_api.models import friend_request as friend_request_model  # noqa: F401
 from coherent_api.models import message as message_model  # noqa: F401
+from coherent_api.models import message_attachment as message_attachment_model  # noqa: F401
+from coherent_api.models import push_subscription as push_subscription_model  # noqa: F401
+from coherent_api.models import recovery_code as recovery_code_model  # noqa: F401
 from coherent_api.models import user as user_model  # noqa: F401
 
 config = context.config
