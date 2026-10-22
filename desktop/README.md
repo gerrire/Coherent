@@ -6,7 +6,7 @@
 
 ## Сборка без установки Visual Studio на свой компьютер
 
-Workflow [desktop-release.yml](../.github/workflows/desktop-release.yml) собирает приложение на GitHub Actions с Windows Server 2022, Visual Studio 2022 и Qt 6.10.3. Его можно запустить вручную через **Actions → Build Coherent for Windows → Run workflow**. Готовая папка клиента появляется в артефакте `coherent-windows-build`.
+Workflow [desktop-release.yml](../.github/workflows/desktop-release.yml) собирает приложение на GitHub Actions с Windows Server 2022, Visual Studio 2022 и Qt 6.10.3. Его можно запустить вручную через **Actions → Build Coherent for Windows → Run workflow**. Готовая папка клиента появляется в артефакте `coherent-windows-build`, а установщик — в `coherent-windows-installer`.
 
 Если собирать локально, нужны MSVC 2022 x64, CMake 3.25+ и Qt 6.10 с модулями Multimedia и WebSockets:
 

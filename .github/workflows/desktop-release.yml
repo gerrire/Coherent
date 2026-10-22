@@ -59,11 +59,41 @@ jobs:
           Copy-Item -LiteralPath "desktop/build/_deps/livekit-sdk/livekit-sdk-windows-x64-1.5.0/bin/livekit_ffi.dll" -Destination $publish
           Copy-Item -LiteralPath "desktop/build/_deps/velopack/lib/velopack_libc_win_x64_msvc.dll" -Destination $publish
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Velopack CLI
+        shell: pwsh
+        run: |
+          $toolPath = Join-Path $env:RUNNER_TEMP "vpk"
+          dotnet tool install --tool-path $toolPath vpk --version 1.2.161
+          if ($LASTEXITCODE -ne 0) { throw "Could not install the Velopack CLI." }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $toolPath
+
+      - name: Create installer
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $env:GITHUB_REF_NAME -replace '^desktop-v', ''
+          } else {
+            "0.1.0"
+          }
+          vpk pack --packId Coherent.Desktop --packVersion "$version" --packDir desktop/build/publish/Release --mainExe Coherent.exe --packTitle Coherent --packAuthors Coherent --outputDir desktop/Releases
+          if ($LASTEXITCODE -ne 0) { throw "Installer packaging failed." }
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: coherent-windows-build
           path: desktop/build/publish/Release/
+          if-no-files-found: error
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coherent-windows-installer
+          path: desktop/Releases/
           if-no-files-found: error
 
   release:
@@ -76,8 +106,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: coherent-windows-build
-          path: desktop/build/publish/Release
+          name: coherent-windows-installer
+          path: desktop/Releases
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -93,7 +123,7 @@ jobs:
           }
           Add-Content -LiteralPath $env:GITHUB_PATH -Value $toolPath
 
-      - name: Package and publish release
+      - name: Publish release
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -102,5 +132,4 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Release tag must look like desktop-v1.2.3"
           }
-          vpk pack --packId Coherent.Desktop --packVersion "$version" --packDir desktop/build/publish/Release --mainExe Coherent.exe --packTitle Coherent --packAuthors Coherent --outputDir desktop/Releases
           vpk upload github --outputDir desktop/Releases --repoUrl "https://github.com/${{ github.repository }}" --token "$env:GITHUB_TOKEN" --publish --releaseName "Coherent $version" --tag "$env:GITHUB_REF_NAME"
