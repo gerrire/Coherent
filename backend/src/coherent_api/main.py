@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from coherent_api.api.v1.router import api_router
 from coherent_api.core.config import Settings, get_settings
+from coherent_api.services.attachment_cleanup import attachment_cleanup_loop
 from coherent_api.services.call_cleanup import call_cleanup_loop
 from coherent_api.services.calls import livekit_ready
 from coherent_api.services.events import MessageEvents
@@ -27,6 +28,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        attachments_cleanup = asyncio.create_task(
+            attachment_cleanup_loop(session_factory, app_settings.attachment_dir)
+        )
         cleanup = None
         if livekit_ready(app_settings):
             cleanup = asyncio.create_task(
@@ -35,6 +39,9 @@ def create_app(
         try:
             yield
         finally:
+            attachments_cleanup.cancel()
+            with suppress(asyncio.CancelledError):
+                await attachments_cleanup
             if cleanup is not None:
                 cleanup.cancel()
                 with suppress(asyncio.CancelledError):

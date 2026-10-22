@@ -15,9 +15,11 @@ if ! docker compose --env-file "$project_dir/deploy/.env" -f "$project_dir/deplo
     exit 1
 fi
 
-if [ -d "$project_dir/data/attachments" ]; then
-    tar -C "$project_dir/data" -czf "$backup_dir/coherent-files-$timestamp.tar.gz" attachments vapid
+if [ -d "$project_dir/data/vapid" ]; then
+    tar -C "$project_dir/data" -czf "$backup_dir/coherent-vapid-$timestamp.tar.gz" vapid
 fi
 
+# Previous archives included chat files and could outlive their three-day retention.
+find "$backup_dir" -maxdepth 1 -type f -name 'coherent-files-*.tar.gz' -delete
 find "$backup_dir" -maxdepth 1 -type f -name 'coherent-*.dump' -mtime +7 -delete
-find "$backup_dir" -maxdepth 1 -type f -name 'coherent-files-*.tar.gz' -mtime +7 -delete
+find "$backup_dir" -maxdepth 1 -type f -name 'coherent-vapid-*.tar.gz' -mtime +7 -delete

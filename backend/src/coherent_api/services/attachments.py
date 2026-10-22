@@ -9,6 +9,7 @@ from coherent_api.models.message import Message
 from coherent_api.models.message_attachment import MessageAttachment
 from coherent_api.models.user import User
 from coherent_api.schemas.messages import AttachmentResponse, MessageResponse
+from coherent_api.services.attachment_cleanup import is_expired
 from coherent_api.services.messages import get_conversation
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
@@ -133,5 +134,9 @@ async def get_attachment(
         return None
     message = await session.get(Message, attachment.message_id)
     return (
-        attachment if message is not None and message.conversation_id == conversation_id else None
+        attachment
+        if message is not None
+        and message.conversation_id == conversation_id
+        and not is_expired(message.created_at)
+        else None
     )

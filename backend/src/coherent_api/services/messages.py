@@ -20,6 +20,7 @@ from coherent_api.schemas.messages import (
     MessageResponse,
     MessagesResponse,
 )
+from coherent_api.services.attachment_cleanup import EXPIRED_MESSAGE, is_expired
 
 
 class ConversationNotFoundError(Exception):
@@ -44,6 +45,21 @@ class ReadMessageNotFoundError(Exception):
 
 class GroupMembershipError(Exception):
     pass
+
+
+def visible_message(
+    message: Message, attachments: list[AttachmentResponse] | None = None
+) -> MessageResponse:
+    result = MessageResponse.model_validate(message)
+    if message.attachment_count and is_expired(message.created_at):
+        return result.model_copy(
+            update={
+                "body": message.body or EXPIRED_MESSAGE,
+                "attachment_count": 0,
+                "attachments": [],
+            }
+        )
+    return result.model_copy(update={"attachments": attachments or []})
 
 
 def other_user_id(conversation: Conversation, user_id: UUID) -> UUID:
@@ -97,7 +113,7 @@ async def conversation_response(
         other_user=other if conversation.kind == "direct" else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
-        last_message=MessageResponse.model_validate(last_message) if last_message else None,
+        last_message=visible_message(last_message) if last_message else None,
         unread=bool(
             last_message
             and last_message.sender_id != current_user_id
@@ -376,9 +392,7 @@ async def list_messages(
         )
     return MessagesResponse(
         messages=[
-            MessageResponse.model_validate(message).model_copy(
-                update={"attachments": by_message.get(message.id, [])}
-            )
+            visible_message(message, by_message.get(message.id, []))
             for message in page
         ],
         has_more=len(messages) > 50,

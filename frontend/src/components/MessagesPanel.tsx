@@ -312,8 +312,8 @@ export default function MessagesPanel({
             )}
           </div>
           <p>{conversation.kind === "group"
-            ? `Общий чат · ${conversation.members.map((member) => member.username).join(", ")}`
-            : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent.`}</p>
+            ? `Общий чат · ${conversation.members.map((member) => member.username).join(", ")} · Файлы хранятся только 3 дня.`
+            : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent. Файлы хранятся только 3 дня.`}</p>
         </div>
       </div>
       {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>
