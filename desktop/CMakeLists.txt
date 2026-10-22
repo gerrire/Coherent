@@ -12,8 +12,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2 Network WebSockets Multimedia)
-qt_standard_project_setup(REQUIRES 6.12)
+find_package(Qt6 6.10 REQUIRED COMPONENTS Quick QuickControls2 Network WebSockets Multimedia)
+qt_standard_project_setup(REQUIRES 6.10)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(LiveKitSDK)

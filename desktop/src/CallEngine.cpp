@@ -464,7 +464,6 @@ void CallEngine::toggleScreen(int index) {
         }
         screenCapture_ = new QScreenCapture(this);
         screenCapture_->setScreen(available.at(index));
-        screenCapture_->setMaximumFrameRate(30.0);
         screenSession_.setScreenCapture(screenCapture_);
         screenOn_ = true;
         screenCapture_->start();
