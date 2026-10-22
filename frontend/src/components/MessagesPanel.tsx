@@ -97,8 +97,11 @@ export default function MessagesPanel({
       if (event.defaultPrevented || !event.clipboardData) return;
       const target = event.target;
       const insideChat = target instanceof Node && Boolean(panelRef.current?.contains(target));
-      const onPage = target === document || target === document.body || target === document.documentElement;
-      if (!insideChat && (!onPage || document.querySelector('[aria-modal="true"]'))) return;
+      const editingElsewhere = !insideChat && target instanceof Element
+        && Boolean(target.closest('input, textarea, [contenteditable="true"], [role="textbox"]'));
+      const inOtherDialog = !insideChat && target instanceof Element
+        && Boolean(target.closest('[role="dialog"], [aria-modal="true"]'));
+      if (editingElsewhere || inOtherDialog || document.querySelector('[aria-modal="true"]')) return;
       const pastedFiles = filesFromClipboard(event.clipboardData);
       if (!pastedFiles.length) return;
       event.preventDefault();
