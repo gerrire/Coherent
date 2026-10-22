@@ -8,7 +8,7 @@ on:
       - ".github/workflows/desktop-release.yml"
   push:
     branches:
-      - main
+      - "**"
     tags:
       - "desktop-v*"
     paths:
