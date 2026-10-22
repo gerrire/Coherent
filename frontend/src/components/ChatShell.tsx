@@ -1082,7 +1082,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <div><strong>{user.username}</strong><span>В сети</span></div>
             <MoreHorizontal size={18} />
           </div>
-          <button onClick={() => { void disablePush().finally(onLogout); }}><LogOut size={16} /> Выйти из аккаунта</button>
+          <button onClick={() => { void disablePush().catch(() => undefined).finally(onLogout); }}><LogOut size={16} /> Выйти из аккаунта</button>
           <button onClick={() => { setShowProfile(false); setShowRecovery(true); setRecoveryError(""); }}><LockKeyhole size={16} /> Коды восстановления</button>
         </div>
       )}
