@@ -9,6 +9,7 @@ interface MediaSettingsPanelProps {
   audioProcessingState: AudioProcessingState | null;
   onChange: (patch: Partial<MediaPreferences>) => Promise<void>;
   onClose: () => void;
+  embedded?: boolean;
 }
 
 const codecNames: Record<VideoCodec, string> = {
@@ -18,7 +19,7 @@ const codecNames: Record<VideoCodec, string> = {
   av1: "AV1",
 };
 
-export default function MediaSettingsPanel({ media, audioProcessingState, onChange, onClose }: MediaSettingsPanelProps) {
+export default function MediaSettingsPanel({ media, audioProcessingState, onChange, onClose, embedded = false }: MediaSettingsPanelProps) {
   const room = useMaybeRoomContext();
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [busy, setBusy] = useState(false);
@@ -149,11 +150,11 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
   }
 
   return (
-    <aside className="media-settings-panel" aria-label="Настройки звонка">
-      <div className="media-settings-heading">
+    <aside className={`media-settings-panel ${embedded ? "media-settings-embedded" : ""}`} aria-label="Настройки звонка">
+      {!embedded && <div className="media-settings-heading">
         <div><Settings2 size={18} /><strong>Звук и видео</strong></div>
         <button onClick={onClose} aria-label="Закрыть настройки"><X size={18} /></button>
-      </div>
+      </div>}
       <div className="media-settings-scroll">
         {error && <p className="media-settings-error" role="alert">{error}</p>}
         <label>

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CalendarDays, Check, Eye, EyeOff, KeyRound, ShieldCheck, UserRound, X } from "lucide-react";
 import { api, type User } from "../lib/api";
-import { applyTheme, loadTheme, themes } from "../lib/theme";
 
 interface ProfileSettingsDialogProps {
   user: User;
@@ -14,7 +13,6 @@ export default function ProfileSettingsDialog({ user, onClose }: ProfileSettings
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
-  const [theme, setTheme] = useState(loadTheme);
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -92,16 +90,6 @@ export default function ProfileSettingsDialog({ user, onClose }: ProfileSettings
             <div className="profile-settings-details">
               <div><span>Имя пользователя</span><strong>{user.username}</strong></div>
               <div><span>В Когеренте с</span><strong><CalendarDays size={15} /> {joined}</strong></div>
-            </div>
-          </section>
-
-          <section className="profile-settings-card" aria-label="Оформление">
-            <div className="profile-settings-section-heading"><Eye size={18} /><h3>Оформление</h3></div>
-            <p>Тема применяется сразу и сохраняется в этом браузере.</p>
-            <div className="profile-theme-grid">
-              {themes.map((option) => <button key={option.id} type="button" className={theme === option.id ? "active" : ""} onClick={() => { setTheme(option.id); applyTheme(option.id); }} aria-pressed={theme === option.id}>
-                <i style={{ background: option.color }} aria-hidden="true" />{option.label}
-              </button>)}
             </div>
           </section>
 

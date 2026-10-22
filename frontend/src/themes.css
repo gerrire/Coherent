@@ -1,0 +1,346 @@
+:root[data-theme="purple"] {
+  color-scheme: dark;
+  --theme-rail: #0d0918; --theme-sidebar: #171125; --theme-panel: #1b142a;
+  --theme-surface: #241b35; --theme-raised: #302442; --theme-hover: #3c2d50;
+  --theme-text: #f5efff; --theme-muted: #b3a6c4; --theme-faint: #887b99;
+  --theme-border: rgba(192, 153, 236, .2); --theme-accent: #9f59e9;
+  --theme-accent-hover: #b775f4; --theme-accent-text: #dfbaff;
+  --theme-media-bg: #11101b; --theme-media-tile: #1b1928;
+}
+:root[data-theme="black"] {
+  color-scheme: dark;
+  --theme-rail: #050607; --theme-sidebar: #101114; --theme-panel: #15171a;
+  --theme-surface: #202328; --theme-raised: #2b2f35; --theme-hover: #373c44;
+  --theme-text: #f2f4f6; --theme-muted: #b6bdc5; --theme-faint: #89929c;
+  --theme-border: rgba(188, 198, 209, .18); --theme-accent: #647282;
+  --theme-accent-hover: #7b8998; --theme-accent-text: #d7e0ea;
+  --theme-media-bg: #090b0e; --theme-media-tile: #171b20;
+}
+:root[data-theme="gray"] {
+  color-scheme: dark;
+  --theme-rail: #22262b; --theme-sidebar: #2d333b; --theme-panel: #353c45;
+  --theme-surface: #414a54; --theme-raised: #4c5662; --theme-hover: #596471;
+  --theme-text: #f6f8fa; --theme-muted: #d1d9e1; --theme-faint: #aebac6;
+  --theme-border: rgba(214, 226, 238, .23); --theme-accent: #657f9b;
+  --theme-accent-hover: #7a94b0; --theme-accent-text: #dceaff;
+  --theme-media-bg: #1b2026; --theme-media-tile: #2a323b;
+}
+:root[data-theme="white"] {
+  color-scheme: light;
+  --theme-rail: #e2e8f0; --theme-sidebar: #edf1f6; --theme-panel: #f7f9fc;
+  --theme-surface: #fff; --theme-raised: #e8eef5; --theme-hover: #dbe5f0;
+  --theme-text: #172438; --theme-muted: #53657b; --theme-faint: #6c7d90;
+  --theme-border: rgba(49, 73, 103, .18); --theme-accent: #3565a7;
+  --theme-accent-hover: #28538d; --theme-accent-text: #315e9f;
+  --theme-media-bg: #17202e; --theme-media-tile: #222d3e;
+}
+:root[data-theme="navy"] {
+  color-scheme: dark;
+  --theme-rail: #081326; --theme-sidebar: #10213c; --theme-panel: #11233e;
+  --theme-surface: #1b3150; --theme-raised: #264265; --theme-hover: #315477;
+  --theme-text: #f0f7ff; --theme-muted: #b3c9e3; --theme-faint: #8ea9ca;
+  --theme-border: rgba(133, 181, 237, .21); --theme-accent: #397fcd;
+  --theme-accent-hover: #539be9; --theme-accent-text: #add5ff;
+  --theme-media-bg: #091222; --theme-media-tile: #172842;
+}
+:root[data-theme="green"] {
+  color-scheme: dark;
+  --theme-rail: #071a13; --theme-sidebar: #0d271c; --theme-panel: #11291f;
+  --theme-surface: #1b3a2b; --theme-raised: #28503a; --theme-hover: #356449;
+  --theme-text: #effbf3; --theme-muted: #b6d5c3; --theme-faint: #8fb6a1;
+  --theme-border: rgba(126, 211, 160, .21); --theme-accent: #2b9667;
+  --theme-accent-hover: #40af7b; --theme-accent-text: #a5eac2;
+  --theme-media-bg: #0b1a14; --theme-media-tile: #193425;
+}
+
+:root[data-theme] {
+  --bg-deep: var(--theme-rail); --bg-panel: var(--theme-panel);
+  --bg-sidebar: var(--theme-sidebar); --bg-raised: var(--theme-raised);
+  --purple: var(--theme-accent); --purple-bright: var(--theme-accent-hover);
+  --purple-soft: var(--theme-accent-text); --text: var(--theme-text);
+  --text-muted: var(--theme-muted); --text-dim: var(--theme-faint);
+  --line: var(--theme-border);
+  --theme-veil: color-mix(in srgb, var(--theme-accent) 17%, transparent);
+  --theme-veil-strong: color-mix(in srgb, var(--theme-accent) 28%, var(--theme-surface));
+  --theme-avatar-top: color-mix(in srgb, var(--theme-accent-hover) 75%, white);
+  --theme-avatar-bottom: color-mix(in srgb, var(--theme-accent) 76%, black);
+  background: var(--theme-panel);
+  color: var(--theme-text);
+}
+:root[data-theme] body,
+:root[data-theme] .app-shell { background: var(--theme-panel); color: var(--theme-text); }
+:root[data-theme] :is(.app-shell, .auth-page, .client-settings-dialog, .profile-settings-dialog) svg {
+  color: currentColor;
+}
+:root[data-theme] :is(.auth-page, .loading-screen, .connection-screen) {
+  background: radial-gradient(ellipse 60% 70% at 15% 43%, var(--theme-veil), transparent 70%), var(--theme-panel);
+  color: var(--theme-text);
+}
+:root[data-theme] :is(.server-rail, .account-bar) { background: var(--theme-rail); }
+:root[data-theme] :is(.channel-sidebar, .profile-settings-sidebar, .client-settings-sidebar) {
+  background: var(--theme-sidebar); border-color: var(--theme-border);
+}
+:root[data-theme] :is(.content-area, .welcome-content) { background: var(--theme-panel); }
+:root[data-theme] :is(.content-header, .messages-intro, .message-composer, .app-statusbar, .profile-settings-person) {
+  border-color: var(--theme-border); background-color: var(--theme-panel);
+}
+:root[data-theme] :is(.sidebar-bottom-note, .progress-card, .friend-row, .auth-card, .profile-menu, .shell-popover,
+  .profile-settings-dialog, .profile-settings-card, .client-settings-dialog, .participant-picker, .media-settings-panel,
+  .call-view-menu, .call-volume-popover, .image-preview-dialog) {
+  background: var(--theme-surface); border-color: var(--theme-border); color: var(--theme-text);
+}
+:root[data-theme] :is(.profile-settings-dialog, .client-settings-dialog) { background: var(--theme-panel); }
+:root[data-theme] :is(.message-entry, .art-chat-card, .profile-settings-details > div, .media-screen-diagnostics,
+  .call-share-picker button, .call-sidebar-person, .client-theme-card) {
+  background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-text);
+}
+:root[data-theme] .message-own .message-entry { background: var(--theme-veil-strong); }
+:root[data-theme] :is(.conversation-item:hover, .conversation-item.active, .sidebar-nav-item:hover,
+  .sidebar-nav-item.active, .sidebar-nav-friends.active, .friend-row:hover, .participant-picker-user:hover,
+  .shell-popover > button:hover, .profile-menu > button:hover, .friends-tabs button:hover,
+  .friends-tabs button.active, .mobile-nav button.active, .mobile-conversations button.active) {
+  background: var(--theme-hover); color: var(--theme-text); border-color: var(--theme-border);
+}
+:root[data-theme] :is(.rail-item, .rail-settings, .sidebar-search, .sidebar-search kbd, .friend-search-input,
+  .input-wrap, .profile-password-field, .participant-picker-search, .media-settings-scroll select,
+  .media-voice-profiles button, .group-rename-form input, .composer-field, .load-messages,
+  .composer-files span, .profile-settings-close, .profile-settings-nav, .client-settings-header > button) {
+  background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-text);
+}
+:root[data-theme] :is(.rail-item:hover, .rail-settings:hover, .composer-field .composer-attach:hover,
+  .media-voice-profiles button:hover:not(:disabled), .profile-settings-close:hover,
+  .client-settings-header > button:hover, .call-focus-button:hover) {
+  background: var(--theme-hover); color: var(--theme-text);
+}
+:root[data-theme] :is(.rail-home, .rail-item.selected, .brand-mark, .primary-button, .auth-submit,
+  .composer-field button[type="submit"], .friend-search-button, .profile-password-actions button,
+  .tab-count-alert, .media-voice-profiles button.active) {
+  background: var(--theme-accent); color: white; border-color: var(--theme-accent); box-shadow: none;
+}
+:root[data-theme] :is(.rail-home:hover, .primary-button:hover, .auth-submit:hover,
+  .composer-field button[type="submit"]:hover:not(:disabled), .profile-password-actions button:hover) {
+  background: var(--theme-accent-hover); box-shadow: none;
+}
+:root[data-theme] .rail-item.selected::before { background: var(--theme-accent-hover); }
+:root[data-theme] .brand-mark span { background: white; }
+:root[data-theme] .rail-home .brand-mark,
+:root[data-theme] .workspace-symbol .brand-mark,
+:root[data-theme] .art-main-icon .brand-mark { background: transparent; }
+:root[data-theme] .workspace-symbol .brand-mark span { background: var(--theme-accent); }
+:root[data-theme] :is(.avatar-user, .friend-row:nth-child(n) .friend-avatar, .call-invite-avatar,
+  .call-tile-avatar, .art-avatar, .avatar-pink, .avatar-blue, .avatar-gold, .mini-avatars i) {
+  background: linear-gradient(145deg, var(--theme-avatar-top), var(--theme-avatar-bottom));
+  border-color: var(--theme-border); color: white;
+}
+:root[data-theme] :is(.workspace-symbol, .empty-bubble, .friends-empty-icon, .friends-heading-glow,
+  .sidebar-note-icon, .progress-icon, .card-icon, .scene-core, .art-main-icon) {
+  background: var(--theme-veil); border-color: var(--theme-border); color: var(--theme-accent-text);
+  box-shadow: none;
+}
+:root[data-theme] .art-main-icon { background: var(--theme-accent); color: white; }
+:root[data-theme] :is(.orbit-person, .loading-mark) {
+  background: var(--theme-surface); border-color: var(--theme-border); color: var(--theme-text);
+}
+:root[data-theme] :is(.orbit-person i, .loading-mark i, .status-dot,
+  .friend-online i, .conversation-presence) { background: #61c994; }
+:root[data-theme="white"] :is(.orbit-person i, .loading-mark i, .status-dot,
+  .friend-online i, .conversation-presence) { background: #197749; }
+:root[data-theme] .loading-mark { background: var(--theme-accent); }
+:root[data-theme] .loading-mark i { background: white; }
+:root[data-theme] .conversation-presence { border-color: var(--theme-sidebar); }
+:root[data-theme] .account-online i { background: #61c994; box-shadow: none; }
+:root[data-theme="white"] .account-online i { background: #197749; }
+:root[data-theme] :is(.art-orbit, .orbit, .art-signal, .profile-settings-card, .friends-tabs,
+  .friend-row, .progress-card, .auth-card, .shell-popover, .client-settings-header,
+  .media-settings-heading, .participant-picker-heading, .participant-picker-footer,
+  .notification-heading) { border-color: var(--theme-border); }
+:root[data-theme] :is(.art-glow, .auth-glow-one, .auth-glow-two) {
+  background: radial-gradient(circle, var(--theme-veil), transparent 70%);
+}
+:root[data-theme] :is(.art-micro-dot, .art-chat-card i:first-child, .live-dot, .welcome-pulse) {
+  background: var(--theme-accent-hover); box-shadow: none;
+}
+:root[data-theme] :is(.art-chat-card i, .art-chat-card i:nth-child(2), .art-chat-card i:nth-child(3)) {
+  background: var(--theme-faint);
+}
+:root[data-theme] :is(.art-chat-card i:first-child) { background: var(--theme-accent-hover); }
+:root[data-theme] :is(.art-signal, .auth-grid) { border-color: var(--theme-border); }
+:root[data-theme] :is(.scene-spark, .chat-spark, .scene-logo, .art-avatar-purple) { color: var(--theme-accent-text); }
+:root[data-theme] .art-avatar-purple { color: white; }
+
+:root[data-theme] :is(.brand, .workspace-name, .account-name strong, .header-location, .header-user,
+  .conversation-item-copy strong, .messages-intro h1, .message-entry p, .message-meta strong,
+  .friend-username, .friends-heading h1, .friends-empty-state strong, .welcome-copy h1,
+  .progress-card strong, .profile-menu-user strong, .profile-settings-header h2,
+  .profile-settings-section-heading h3, .profile-settings-details strong,
+  .media-settings-section-heading, .media-screen-diagnostics strong, .client-settings-header h2,
+  .client-settings-brand, .profile-settings-brand, .call-surface-title strong,
+  .call-sidebar-person-name, .sidebar-bottom-note strong, .empty-conversations > span,
+  .profile-menu > button, .shell-popover > button) { color: var(--theme-text); }
+:root[data-theme] :is(.topbar-note, .story-copy, .card-heading p, .auth-switch, .card-legal, .secure-note,
+  .story-foot, .workspace-picker > svg, .sidebar-section-title, .sidebar-nav-item,
+  .empty-conversations, .empty-conversations p, .conversation-item-copy small, .sidebar-bottom-note small,
+  .messages-intro p, .message-meta time, .message-list-note, .message-empty, .message-empty span,
+  .composer-hint, .header-subtle, .header-icon, .welcome-copy p, .welcome-eyebrow,
+  .next-step-note, .progress-card span, .app-statusbar, .account-controls button,
+  .profile-menu-user > svg, .profile-settings-header p, .profile-settings-card p,
+  .profile-settings-details span, .profile-password-form label, .profile-password-actions span,
+  .profile-settings-sidebar-note, .friends-heading p, .friends-tabs button, .friend-row-status,
+  .friend-presence, .request-date, .friends-empty-state, .friends-empty-state > span,
+  .friend-list-caption, .request-empty, .participant-picker > p,
+  .participant-picker-footer span, .participant-picker-empty,
+  .media-settings-scroll small, .media-settings-note, .media-screen-diagnostics,
+  .media-settings-heading button, .call-invite-copy small, .call-surface-title small,
+  .call-sidebar-heading, .call-share-picker strong, .call-sidebar-volume,
+  .call-waiting-label, .client-settings-nav-caption, .client-settings-sidebar-note,
+  .client-settings-intro) { color: var(--theme-muted); }
+:root[data-theme] :is(.field-label, .auth-footer, .secure-divider, .search-hint,
+  .call-connect-note, .call-connect-error, .call-sidebar-invited,
+  .call-view-menu > span, .call-view-menu-heading button,
+  .call-volume-popover-heading button, .client-theme-name,
+  .profile-password-field button, .chat-friend-outgoing_pending) { color: var(--theme-muted); }
+:root[data-theme] :is(.visibility-toggle, .visibility-toggle:hover, .account-controls button.is-on,
+  .call-invite-copy span) { color: var(--theme-accent-text); }
+:root[data-theme] :is(.auth-footer, .rail-separator, .header-divider) { border-color: var(--theme-border); background-color: var(--theme-border); }
+:root[data-theme] :is(.eyebrow, .card-overline, .auth-switch button, .card-legal a, .secure-lock,
+  .nav-add, .sidebar-section-title button:hover, .chat-friend-button,
+  .header-location > svg, .header-call-button, .friends-eyebrow, .friends-heading-glow,
+  .sidebar-note-icon, .progress-icon, .text-button, .app-statusbar b,
+  .notification-heading button, .shell-popover > button svg, .shell-popover-link,
+  .profile-settings-eyebrow, .profile-settings-section-heading,
+  .media-settings-heading > div svg, .participant-picker-heading > div svg,
+  .client-settings-header span, .client-settings-nav button.active svg,
+  .message-attachment a, .image-preview-header a) { color: var(--theme-accent-text); }
+:root[data-theme] :is(.auth-story h1 span, .welcome-copy h1 span) {
+  color: var(--theme-accent-text); text-shadow: none;
+}
+:root[data-theme] :is(.message-error button, .dot-b, .note-line) { color: var(--theme-accent-text); }
+:root[data-theme] .dot-b { background: var(--theme-accent-hover); }
+:root[data-theme] .note-line { background: linear-gradient(90deg, transparent, var(--theme-accent)); }
+:root[data-theme] :is(.sidebar-nav-item.active, .sidebar-nav-friends.active .sidebar-nav-item,
+  .friends-tabs button.active, .profile-settings-nav, .media-volume-setting strong,
+  .media-voice-profiles button.active, .small-action, .chat-friend-button) { color: var(--theme-accent-text); }
+:root[data-theme] :is(.conversation-unread, .mobile-conversation-unread) {
+  background: var(--theme-accent-hover); box-shadow: none;
+}
+:root[data-theme] .notification-new-dot { background: #fa5f73; }
+:root[data-theme] :is(.small-action, .icon-action, .nav-add, .chat-friend-button,
+  .progress-status, .friend-list-caption span, .notification-permission) {
+  background: var(--theme-veil); border-color: var(--theme-border); color: var(--theme-accent-text);
+}
+:root[data-theme] .notification-permission { background: var(--theme-veil) !important; border-color: var(--theme-border) !important; }
+:root[data-theme] .progress-status { color: var(--theme-accent-text) !important; }
+:root[data-theme] :is(.chat-friend-friends, .accept-action) {
+  background: rgba(55, 159, 104, .15); border-color: rgba(67, 176, 119, .36); color: #92e6b8;
+}
+:root[data-theme="white"] :is(.chat-friend-friends, .accept-action) { color: #197749; }
+:root[data-theme] :is(.small-action:hover:not(:disabled), .chat-friend-button:hover:not(:disabled),
+  .nav-add:hover, .header-icon:hover, .account-controls button:hover) {
+  background: var(--theme-hover); color: var(--theme-text);
+}
+:root[data-theme] :is(.composer-field .composer-attach, .call-focus-button, .call-control,
+  .call-start-audio, .call-share-picker button, .call-screen-focus-button,
+  .call-tile-volume-button, .call-screen-volume-button, .group-rename-form button) {
+  background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-text);
+}
+:root[data-theme] :is(.composer-field textarea, .sidebar-search input, .friend-search-input input,
+  .input-wrap input, .profile-password-field input, .participant-picker-search input,
+  .group-rename-form input) { color: var(--theme-text); }
+:root[data-theme] :is(.composer-field textarea::placeholder, .sidebar-search input::placeholder,
+  .friend-search-input input::placeholder, .input-wrap input::placeholder,
+  .profile-password-field input::placeholder) { color: var(--theme-faint); }
+:root[data-theme] :is(.input-wrap:focus-within, .friend-search-input:focus-within,
+  .composer-field:focus-within, .profile-password-field:focus-within) {
+  border-color: var(--theme-accent-hover); background: var(--theme-raised);
+}
+:root[data-theme] :is(button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible) {
+  outline-color: var(--theme-accent-hover);
+}
+:root[data-theme] :is(input[type="range"], input[type="checkbox"]) { accent-color: var(--theme-accent); }
+:root[data-theme] :is(.message-list, .friends-content, .media-settings-scroll,
+  .call-stage, .call-stage-sidebar, .profile-settings-content, .client-settings-body,
+  .shell-popover, .participant-picker-list) {
+  scrollbar-color: var(--theme-accent) var(--theme-panel);
+}
+:root[data-theme] .media-settings-scroll::-webkit-scrollbar-track { background: var(--theme-panel); }
+:root[data-theme] .media-settings-scroll::-webkit-scrollbar-thumb {
+  border-color: var(--theme-panel); background: var(--theme-accent);
+}
+
+:root[data-theme] :is(.call-surface, .call-invite) { background: var(--theme-media-bg); border-color: var(--theme-border); color: var(--theme-text); }
+:root[data-theme] :is(.call-surface-header, .call-surface-controls, .call-surface-compact) {
+  background: var(--theme-surface); color: var(--theme-text);
+}
+:root[data-theme] :is(.call-stage, .call-stage-sidebar, .call-sidebar-preview, .call-tile) {
+  background: var(--theme-media-bg);
+}
+:root[data-theme] :is(.call-tile, .call-tile-remote, .call-sidebar-person) { border-color: var(--theme-border); }
+:root[data-theme] :is(.call-tile-waiting, .call-sidebar-person) { background: var(--theme-media-tile); }
+:root[data-theme] :is(.call-tile-speaking, .call-sidebar-person-speaking,
+  .call-stage-sharing .call-tile-speaking) {
+  border-color: var(--theme-accent-hover);
+  box-shadow: inset 0 0 0 1px var(--theme-accent-hover), 0 0 16px var(--theme-veil);
+}
+:root[data-theme] :is(.call-tile-name, .call-tile-resolution, .call-participant-status > span) {
+  background: color-mix(in srgb, var(--theme-media-bg) 87%, transparent); color: #f6f8fb;
+  border-color: var(--theme-border);
+}
+:root[data-theme] :is(.call-participant-status-inline > span, .call-view-options button,
+  .call-control-screen[data-lk-enabled="false"], .call-control-screen[data-lk-enabled="false"]:hover) {
+  background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-text);
+}
+:root[data-theme] .call-view-options button.active {
+  background: var(--theme-veil-strong); border-color: var(--theme-accent); color: var(--theme-text);
+}
+:root[data-theme] :is(.call-share-picker button.active, .media-voice-profiles button.active) {
+  background: var(--theme-veil-strong); border-color: var(--theme-accent); color: var(--theme-text);
+}
+:root[data-theme] :is(.call-volume-popover input, .call-sidebar-volume input,
+  .media-volume-setting input, .media-setting-check input, .participant-picker-user input) {
+  accent-color: var(--theme-accent);
+}
+:root[data-theme] :is(.call-encryption, .account-online, .profile-menu-user span:not(.avatar)) { color: #61c994; }
+:root[data-theme="white"] :is(.call-encryption, .account-online, .profile-menu-user span:not(.avatar)) { color: #197749; }
+:root[data-theme] :is(.call-invite-end, .call-control-end) { background: #c34461 !important; color: white !important; }
+:root[data-theme] :is(.call-invite-accept, .accept-action) { color: #91e4ba; }
+:root[data-theme] .call-invite-accept { background: #268a63; color: white; }
+:root[data-theme] :is(.account-controls button.is-off, .decline-action:hover:not(:disabled)) {
+  background: rgba(191, 74, 105, .16); color: #ef9eb2;
+}
+:root[data-theme] .pending-action { background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-muted); }
+:root[data-theme] .message-attachment-expired { border-color: var(--theme-border); color: var(--theme-muted); }
+:root[data-theme] :is(.media-settings-scroll > label, .media-voice-profiles,
+  .media-settings-section-heading, .media-screen-diagnostics strong) { color: var(--theme-text); }
+:root[data-theme] :is(.media-settings-divider, .media-settings-heading,
+  .participant-picker-heading, .participant-picker-footer) { border-color: var(--theme-border); }
+:root[data-theme] .media-settings-divider { background: var(--theme-border); }
+:root[data-theme] .client-settings-media .media-settings-panel { background: var(--theme-panel); }
+:root[data-theme] .profile-settings-sidebar { background: var(--theme-sidebar); }
+:root[data-theme] .profile-settings-nav { background: var(--theme-veil); }
+:root[data-theme] .profile-password-actions button { color: white; }
+:root[data-theme] .client-settings-nav button { color: var(--theme-muted); }
+:root[data-theme] .client-settings-nav button.active { color: var(--theme-text); }
+:root[data-theme] .client-theme-card.active { border-color: var(--theme-accent); }
+:root[data-theme] .client-theme-card:hover { border-color: var(--theme-accent-hover); }
+
+.client-theme-card[data-preview-theme="purple"] { --preview-rail: #0d0918; --preview-sidebar: #171125; --preview-panel: #1b142a; --preview-raised: #392b52; --preview-accent: #9f59e9; --preview-muted: #9c8aaa; }
+.client-theme-card[data-preview-theme="black"] { --preview-rail: #050607; --preview-sidebar: #101114; --preview-panel: #15171a; --preview-raised: #34383e; --preview-accent: #717e8d; --preview-muted: #a7adb5; }
+.client-theme-card[data-preview-theme="gray"] { --preview-rail: #22262b; --preview-sidebar: #2d333b; --preview-panel: #353c45; --preview-raised: #586270; --preview-accent: #7a94b0; --preview-muted: #c8d0d8; }
+.client-theme-card[data-preview-theme="white"] { --preview-rail: #e2e8f0; --preview-sidebar: #edf1f6; --preview-panel: #f7f9fc; --preview-raised: #dce5ee; --preview-accent: #3565a7; --preview-muted: #8699ac; }
+.client-theme-card[data-preview-theme="navy"] { --preview-rail: #081326; --preview-sidebar: #10213c; --preview-panel: #11233e; --preview-raised: #29486e; --preview-accent: #397fcd; --preview-muted: #9bb4d2; }
+.client-theme-card[data-preview-theme="green"] { --preview-rail: #071a13; --preview-sidebar: #0d271c; --preview-panel: #11291f; --preview-raised: #305841; --preview-accent: #2b9667; --preview-muted: #9cc7ae; }
+
+:root[data-theme="white"] :is(.auth-grid, .art-orbit, .orbit) { opacity: .5; }
+:root[data-theme="white"] :is(.media-settings-scroll select, .media-voice-profiles button,
+  .participant-picker-search, .friend-search-input, .input-wrap,
+  .profile-password-field, .composer-field) { background: var(--theme-surface); }
+:root[data-theme="white"] :is(.media-settings-scroll small, .media-settings-note,
+  .profile-settings-card p, .message-meta time) { color: var(--theme-muted); }
+:root[data-theme="white"] :is(.form-error, .friends-error, .message-error,
+  .media-control-error, .call-inline-error) {
+  background: #ffe8ee; border-color: #efb5c3; color: #90213e;
+}
+:root[data-theme="white"] :is(.conversation-error, .profile-settings-error,
+  .media-settings-error, .participant-picker-error, .message-error button) { color: #90213e !important; }
+:root[data-theme="white"] .profile-settings-success { color: #197749 !important; }
+:root[data-theme="white"] .account-controls button.is-off { background: #fbe3e8; color: #90213e; }

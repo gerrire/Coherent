@@ -37,6 +37,7 @@ import {
 } from "../lib/media";
 import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
+import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
@@ -95,7 +96,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
   const [showGroupPicker, setShowGroupPicker] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [callSettingsOpen, setCallSettingsOpen] = useState(false);
+  const [clientSettingsOpen, setClientSettingsOpen] = useState(false);
+  const [clientSettingsSection, setClientSettingsSection] = useState<ClientSettingsSection>("appearance");
   const [controlError, setControlError] = useState("");
   const [media, setMedia] = useState(loadMediaPreferences);
   const [audioProcessingState, setAudioProcessingState] = useState<AudioProcessingState | null>(null);
@@ -726,9 +729,17 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setPopover(null);
   }
 
+  function openClientSettings(section: ClientSettingsSection = "appearance") {
+    setPopover(null);
+    setShowProfile(false);
+    setCallSettingsOpen(false);
+    setClientSettingsSection(section);
+    setClientSettingsOpen(true);
+  }
+
   function togglePopover(next: Exclude<ShellPopover, null>) {
     setShowProfile(false);
-    setSettingsOpen(false);
+    setCallSettingsOpen(false);
     if (popover === next) {
       setPopover(null);
       return;
@@ -797,9 +808,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className="rail-spacer" />
         <button
           className="rail-item rail-settings"
-          aria-label="Открыть настройки звука и видео"
-          title="Настройки звука и видео"
-          onClick={() => setSettingsOpen((open) => !open)}
+          aria-label="Открыть настройки клиента"
+          title="Настройки клиента"
+          onClick={() => openClientSettings()}
         >
           <Settings size={20} />
         </button>
@@ -899,7 +910,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <button className={section === "friends" ? "active" : ""} onClick={() => openFriends("all")} aria-label="Друзья"><Users size={18} /></button>
           </div>
           <div className="header-actions">
-            <button className="header-icon mobile-settings-button" aria-label="Настройки звука и видео" title="Настройки" onClick={() => setSettingsOpen(true)}><Settings size={18} /></button>
+            <button className="header-icon mobile-settings-button" aria-label="Настройки клиента" title="Настройки" onClick={() => openClientSettings()}><Settings size={18} /></button>
             {section === "messages" && selectedConversation && (
               <button
                 className="header-icon header-call-button"
@@ -960,8 +971,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               pending={callPending}
               media={media}
               audioProcessingState={audioProcessingState}
-              settingsOpen={settingsOpen}
-              onToggleSettings={() => setSettingsOpen((open) => !open)}
+              settingsOpen={callSettingsOpen}
+              onToggleSettings={() => setCallSettingsOpen((open) => !open)}
               onMediaChange={changeMedia}
               onRoomReady={setActiveRoom}
               onInvite={inviteToCall}
@@ -1034,7 +1045,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           <button role="menuitem" onClick={openHome}><Compass size={16} /> Главная</button>
           <button role="menuitem" onClick={openMessages}><MessageCircle size={16} /> Сообщения</button>
           <button role="menuitem" onClick={() => openFriends("all")}><Users size={16} /> Друзья</button>
-          <button role="menuitem" onClick={() => { setPopover(null); setSettingsOpen(true); }}><Settings size={16} /> Звук и видео</button>
+          <button role="menuitem" onClick={() => openClientSettings("media")}><Settings size={16} /> Звук и видео</button>
         </div>
       )}
       {popover === "notifications" && (
@@ -1077,7 +1088,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           <p>Найди человека по имени, открой беседу и нажми трубку для звонка. Кнопка с людьми рядом начинает групповой звонок.</p>
           <p>Во время звонка сетка и размер плиток меняются через кнопку отображения. Устройства и обработка микрофона находятся в настройках.</p>
           <button onClick={() => openFriends("search")}><Search size={16} /> Найти человека</button>
-          <button onClick={() => { setPopover(null); setSettingsOpen(true); }}><Settings size={16} /> Настроить звук и видео</button>
+          <button onClick={() => openClientSettings("media")}><Settings size={16} /> Настроить звук и видео</button>
         </div>
       )}
 
@@ -1094,6 +1105,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       )}
 
       {profileSettingsOpen && <ProfileSettingsDialog user={user} onClose={() => setProfileSettingsOpen(false)} />}
+      {clientSettingsOpen && <ClientSettingsDialog
+        section={clientSettingsSection}
+        onSectionChange={setClientSettingsSection}
+        onClose={() => setClientSettingsOpen(false)}
+        media={media}
+        audioProcessingState={audioProcessingState}
+        onMediaChange={changeMedia}
+      />}
 
       {draggingFiles && <div className="file-drop-overlay" aria-hidden="true">Перетащи файл сюда, чтобы прикрепить к беседе</div>}
 
@@ -1128,8 +1147,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         </div>
       </div>
       {controlError && <div className="media-control-error" role="alert">{controlError}</div>}
-      {settingsOpen && !callPanelReady && (
-        <MediaSettingsPanel media={media} audioProcessingState={audioProcessingState} onChange={changeMedia} onClose={() => setSettingsOpen(false)} />
+      {callSettingsOpen && !callPanelReady && (
+        <MediaSettingsPanel media={media} audioProcessingState={audioProcessingState} onChange={changeMedia} onClose={() => setCallSettingsOpen(false)} />
       )}
       {showGroupPicker && (
         <ParticipantPicker
