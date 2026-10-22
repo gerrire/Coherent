@@ -88,6 +88,7 @@ export interface Call {
 export interface CallJoin {
   server_url: string;
   token: string;
+  e2ee_key: string;
 }
 
 interface AuthResponse {

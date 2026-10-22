@@ -16,6 +16,8 @@ export type VideoQuality = "360p" | "720p" | "1080p";
 export type ScreenShareQuality = "720p" | "1080p" | "1440p" | "native";
 export type ScreenShareContent = "text" | "motion";
 export type ScreenShareFrameRate = 15 | 30 | 60;
+export type NoiseProcessor = "browser" | "rnnoise";
+export type RnnoisePreset = "natural" | "balanced" | "strong";
 
 export interface MediaPreferences {
   microphoneEnabled: boolean;
@@ -33,6 +35,8 @@ export interface MediaPreferences {
   screenShareFrameRate: ScreenShareFrameRate;
   screenShareBitrateMbps: number;
   noiseSuppression: boolean;
+  noiseProcessor: NoiseProcessor;
+  rnnoisePreset: RnnoisePreset;
   echoCancellation: boolean;
   autoGainControl: boolean;
 }
@@ -82,6 +86,8 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareFrameRate: 30,
   screenShareBitrateMbps: 20,
   noiseSuppression: false,
+  noiseProcessor: "browser",
+  rnnoisePreset: "balanced",
   echoCancellation: true,
   autoGainControl: false,
 };
@@ -113,6 +119,9 @@ export function loadMediaPreferences(): MediaPreferences {
       microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
         ? Math.min(100, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
       noiseSuppression: strongNoiseSuppression || (legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression),
+      noiseProcessor: saved.noiseProcessor === "rnnoise" ? "rnnoise" : "browser",
+      rnnoisePreset: (["natural", "balanced", "strong"] as RnnoisePreset[]).includes(saved.rnnoisePreset as RnnoisePreset)
+        ? saved.rnnoisePreset! : "balanced",
       autoGainControl: legacyAudioDefaults ? false : saved.autoGainControl ?? defaultMediaPreferences.autoGainControl,
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
       videoQuality: qualities.includes(storedQuality as VideoQuality) ? storedQuality! : "1080p",
@@ -142,7 +151,7 @@ export function saveMediaPreferences(value: MediaPreferences): void {
 export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions {
   return {
     deviceId: value.microphoneId || undefined,
-    noiseSuppression: value.noiseSuppression,
+    noiseSuppression: value.noiseProcessor === "browser" && value.noiseSuppression,
     echoCancellation: value.echoCancellation,
     autoGainControl: value.autoGainControl,
     voiceIsolation: false,

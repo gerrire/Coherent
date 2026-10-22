@@ -662,11 +662,11 @@ a {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding: 16px 0 94px;
+  padding: 16px 0 calc(16px + env(safe-area-inset-bottom, 0px));
   background: #0c0815;
 }
 
-.rail-home, .rail-item, .rail-voice, .rail-profile {
+.rail-home, .rail-item {
   position: relative;
   display: grid;
   place-items: center;
@@ -731,31 +731,8 @@ a {
   flex: 1;
 }
 
-.rail-voice {
+.rail-settings {
   background: #191323;
-}
-
-.rail-profile {
-  border: 0;
-  background: transparent;
-}
-
-.rail-profile .avatar {
-  width: 37px;
-  height: 37px;
-  border: 2px solid rgba(198, 145, 255, .5);
-  border-radius: 14px;
-}
-
-.rail-profile i {
-  position: absolute;
-  right: 4px;
-  bottom: 3px;
-  width: 9px;
-  height: 9px;
-  border: 2px solid #0c0815;
-  border-radius: 50%;
-  background: #64d89d;
 }
 
 .channel-sidebar {
@@ -2315,21 +2292,6 @@ a {
   color: #a184c2;
 }
 
-.app-statusbar button {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  margin-left: auto;
-  border: 0;
-  background: transparent;
-  color: #71687e;
-  cursor: pointer;
-}
-
-.app-statusbar button:hover {
-  color: #d1afff;
-}
 
 .account-bar {
   position: absolute;
@@ -2351,7 +2313,14 @@ a {
   align-items: center;
   gap: 9px;
   min-width: 0;
+  max-width: 145px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
+.account-profile:hover .account-name strong { color: #fff; }
 
 .avatar-user {
   width: 34px;
@@ -2378,24 +2347,15 @@ a {
   white-space: nowrap;
 }
 
-.account-name small {
-  color: #7d7389;
+.account-name small.account-online {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #69d69e;
   font-size: 9px;
 }
-
-.account-settings {
-  display: grid;
-  place-items: center;
-  width: 25px;
-  height: 25px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #80758e;
-  cursor: pointer;
-}
-
-.account-settings:hover, .account-controls button:hover {
+.account-online i { width: 6px; height: 6px; border-radius: 50%; background: #69d69e; box-shadow: 0 0 6px rgba(105,214,158,.55); }
+.account-controls button:hover {
   background: rgba(174, 121, 234, .14);
   color: #dbc5f5;
 }
@@ -3161,6 +3121,13 @@ a {
 }
 .friend-offline i { width: 6px; height: 6px; border-radius: 50%; background: #786e86; }
 .conversation-presence { align-self: center; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #69d69e; box-shadow: 0 0 7px rgba(105, 214, 158, .5); }
+.conversation-avatar-wrap { position: relative; display: flex; flex: 0 0 auto; }
+.conversation-avatar-wrap .conversation-presence { position: absolute; right: -2px; bottom: -2px; border: 2px solid #171122; box-sizing: content-box; }
+.call-encryption { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; color: #83cda5; font-size: 10px; white-space: nowrap; }
+.call-encryption span { margin-left: 4px; font-size: 12px; letter-spacing: 1px; }
+@media (max-width: 900px) { .call-encryption { font-size: 0; } .call-encryption span { font-size: 11px; } }
+.mobile-settings-button { display: none !important; }
+@media (max-width: 680px), (max-height: 520px) and (pointer: coarse) { .mobile-settings-button { display: grid !important; } }
 .notification-permission { border: 1px solid #8059a8 !important; background: #3b2b51 !important; }
 .notification-event { line-height: 1.4; }
 .friend-presence, .request-date {

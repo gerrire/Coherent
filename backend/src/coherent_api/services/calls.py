@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -441,4 +444,13 @@ async def join_call(
         .with_ttl(timedelta(minutes=2))
         .to_jwt()
     )
-    return CallJoinResponse(server_url=settings.livekit_url, token=token)
+    key = hmac.new(
+        settings.secret_key.get_secret_value().encode(),
+        b"coherent-call-e2ee-v1:" + call.id.bytes,
+        hashlib.sha256,
+    ).digest()
+    return CallJoinResponse(
+        server_url=settings.livekit_url,
+        token=token,
+        e2ee_key=base64.urlsafe_b64encode(key).decode().rstrip("="),
+    )

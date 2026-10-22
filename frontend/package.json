@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@livekit/components-react": "2.8.0",
+    "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "livekit-client": "2.17.2",
     "lucide-react": "^0.468.0",
     "react": "^19.3.0",

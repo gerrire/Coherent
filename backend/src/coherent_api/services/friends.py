@@ -295,7 +295,7 @@ async def remove_friend_request(
     session: AsyncSession,
     current_user: User,
     request_id: UUID,
-) -> None:
+) -> FriendRequest:
     friend_request = await session.get(FriendRequest, request_id)
     if friend_request is None or friend_request.status != "pending":
         raise FriendRequestNotFoundError
@@ -303,3 +303,4 @@ async def remove_friend_request(
         raise FriendRequestPermissionError
     await session.delete(friend_request)
     await session.commit()
+    return friend_request

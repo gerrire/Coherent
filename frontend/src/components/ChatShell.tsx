@@ -57,6 +57,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [friendsInitialTab, setFriendsInitialTab] = useState<FriendsTab>("search");
   const [popover, setPopover] = useState<ShellPopover>(null);
   const [notificationRequests, setNotificationRequests] = useState<FriendRequest[]>([]);
+  const [friendRequestVersion, setFriendRequestVersion] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState("");
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
@@ -238,27 +239,28 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     )) ?? result.calls.find((call) => call.id === current?.id) ?? result.calls[0] ?? null);
   }, [showNotification, user.id]);
 
+  const refreshRequests = useCallback(async () => {
+    const result = await api.friendRequests();
+    setNotificationRequests(result.incoming);
+    for (const request of result.incoming) {
+      if (notifiedRequests.has(request.request_id)) continue;
+      notifiedRequests.add(request.request_id);
+      try {
+        localStorage.setItem(`coherent.notified-requests.${user.id}`, JSON.stringify([...notifiedRequests].slice(-200)));
+      } catch {
+        // Notifications still work when browser storage is unavailable.
+      }
+      showNotification(`friend-${request.request_id}`, "Заявка в друзья", `${request.username} хочет добавить тебя в друзья`, "");
+    }
+  }, [notifiedRequests, showNotification, user.id]);
+
   useEffect(() => {
     let active = true;
-    async function refreshRequests() {
-      const result = await api.friendRequests();
-      if (!active) return;
-      setNotificationRequests(result.incoming);
-      for (const request of result.incoming) {
-        if (notifiedRequests.has(request.request_id)) continue;
-        notifiedRequests.add(request.request_id);
-        try {
-          localStorage.setItem(`coherent.notified-requests.${user.id}`, JSON.stringify([...notifiedRequests].slice(-200)));
-        } catch {
-          // Notifications still work when browser storage is unavailable.
-        }
-        showNotification(`friend-${request.request_id}`, "Заявка в друзья", `${request.username} хочет добавить тебя в друзья`, "");
-      }
-    }
-    void refreshRequests().catch(() => undefined);
-    const timer = window.setInterval(() => void refreshRequests().catch(() => undefined), 15000);
+    const update = () => { if (active) void refreshRequests().catch(() => undefined); };
+    update();
+    const timer = window.setInterval(update, 15000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [notifiedRequests, showNotification, user.id]);
+  }, [refreshRequests]);
 
   const incomingCallId = currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") ? currentCall.id : null;
   useEffect(() => {
@@ -327,6 +329,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         reconnectDelay = 1000;
         void refreshConversations().catch(() => undefined);
         void refreshPresence().catch(() => undefined);
+        void refreshRequests().catch(() => undefined);
+        setFriendRequestVersion((current) => current + 1);
         setMessageVersion((current) => current + 1);
       };
       socket.onmessage = (event) => {
@@ -335,6 +339,11 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           if (payload.type === "call") {
             void refreshCalls().catch(() => undefined);
             void refreshConversations().catch(() => undefined);
+            return;
+          }
+          if (payload.type === "friend_request") {
+            void refreshRequests().catch(() => undefined);
+            setFriendRequestVersion((current) => current + 1);
             return;
           }
           if (payload.type !== "message" && payload.type !== "conversation") return;
@@ -370,7 +379,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, [refreshConversations, refreshCalls, refreshPresence, showNotification, user.id]);
+  }, [refreshConversations, refreshCalls, refreshPresence, refreshRequests, showNotification, user.id]);
 
   const setActiveRoom = useCallback((room: Room | null) => {
     roomRef.current = room;
@@ -395,6 +404,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       if (room?.state === ConnectionState.Connected) {
         const participant = room.localParticipant;
         const microphoneCaptureChanged = patch.noiseSuppression !== undefined
+          || patch.noiseProcessor !== undefined
           || patch.echoCancellation !== undefined
           || patch.autoGainControl !== undefined;
         const cameraCaptureChanged = patch.videoCodec !== undefined
@@ -437,7 +447,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         const actualProcessing = readAudioProcessing(room);
         const needsRefreshAfterUnmute = patch.microphoneEnabled === true && !current.microphoneEnabled
           && actualProcessing !== null
-          && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== next.noiseSuppression)
+          && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== (next.noiseProcessor === "browser" && next.noiseSuppression))
             || (actualProcessing.echoCancellation !== null && actualProcessing.echoCancellation !== next.echoCancellation)
             || (actualProcessing.autoGainControl !== null && actualProcessing.autoGainControl !== next.autoGainControl));
         if (next.microphoneEnabled && (microphoneCaptureChanged || needsRefreshAfterUnmute)) {
@@ -452,8 +462,19 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           }
         }
         if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined || patch.microphoneVolume !== undefined
-          || microphoneCaptureChanged || patch.microphoneId !== undefined)) {
-          await applyMicrophoneProcessing(room, next.microphoneVolume, next.noiseSuppression ? "noisy" : "soft");
+          || microphoneCaptureChanged || patch.microphoneId !== undefined || patch.rnnoisePreset !== undefined)) {
+          try {
+            await applyMicrophoneProcessing(room, next.microphoneVolume, next.noiseSuppression ? "noisy" : "soft", next.noiseProcessor, next.rnnoisePreset);
+          } catch (reason) {
+            const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
+            if (track) await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+            try {
+              await applyMicrophoneProcessing(room, current.microphoneVolume, current.noiseSuppression ? "noisy" : "soft", current.noiseProcessor, current.rnnoisePreset);
+            } catch {
+              await participant.setMicrophoneEnabled(false).catch(() => undefined);
+            }
+            throw reason;
+          }
         }
         if (patch.cameraId !== undefined && next.cameraEnabled) {
           if (!await room.switchActiveDevice("videoinput", next.cameraId || "default")) {
@@ -468,7 +489,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         if (microphoneCaptureChanged && next.microphoneEnabled) {
           const applied = readAudioProcessing(room);
           if ((patch.noiseSuppression !== undefined && applied?.noiseSuppression != null
-              && applied.noiseSuppression !== next.noiseSuppression)
+              && applied.noiseSuppression !== (next.noiseProcessor === "browser" && next.noiseSuppression))
             || (patch.echoCancellation !== undefined && applied?.echoCancellation != null
               && applied.echoCancellation !== next.echoCancellation)
             || (patch.autoGainControl !== undefined && applied?.autoGainControl != null
@@ -689,20 +710,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         </button>
         <div className="rail-spacer" />
         <button
-          className="rail-item rail-voice"
+          className="rail-item rail-settings"
           aria-label="Открыть настройки звука и видео"
           title="Настройки звука и видео"
           onClick={() => setSettingsOpen((open) => !open)}
         >
-          <Headphones size={20} />
-        </button>
-        <button
-          className="rail-profile"
-          onClick={() => { setPopover(null); setShowProfile((visible) => !visible); }}
-          aria-label="Профиль"
-        >
-          <span className="avatar avatar-user">{initial}</span>
-          <i />
+          <Settings size={20} />
         </button>
       </aside>
 
@@ -711,7 +724,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           <span className="workspace-symbol">
             <span className="brand-mark"><span /><span /><span /></span>
           </span>
-          <span className="workspace-name">Coherent</span>
+          <span className="workspace-name">Когерент</span>
           <ChevronDown size={16} />
         </button>
 
@@ -759,13 +772,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                   setShowWelcome(false);
                 }}
               >
-                <span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={18} /> : conversationTitle(conversation)[0]?.toUpperCase()}</span>
+                <span className="conversation-avatar-wrap"><span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={18} /> : conversationTitle(conversation)[0]?.toUpperCase()}</span>
+                  {conversation.kind === "direct" && conversation.other_user && onlineIds.has(conversation.other_user.id) && <i className="conversation-presence" title="В сети" />}
+                </span>
                 <span className="conversation-item-copy">
                   <strong>{conversationTitle(conversation)}</strong>
                   <small>{conversation.last_message?.body ?? "Беседа начата"}</small>
                 </span>
                 {conversation.unread && <i className="conversation-unread" title="Непрочитанные сообщения" aria-label="Непрочитанные сообщения" />}
-                {conversation.kind === "direct" && conversation.other_user && onlineIds.has(conversation.other_user.id) && <i className="conversation-presence" title="В сети" />}
               </button>
             ))}
           </div>
@@ -780,7 +794,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className="sidebar-bottom-note">
           <span className="sidebar-note-icon"><SparkleGlyph /></span>
           <div>
-            <strong>Coherent в разработке</strong>
+            <strong>Когерент в разработке</strong>
             <small>Мы создаём место для общения</small>
           </div>
         </div>
@@ -799,6 +813,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <button className={section === "friends" ? "active" : ""} onClick={() => openFriends("all")} aria-label="Друзья"><Users size={18} /></button>
           </div>
           <div className="header-actions">
+            <button className="header-icon mobile-settings-button" aria-label="Настройки звука и видео" title="Настройки" onClick={() => setSettingsOpen(true)}><Settings size={18} /></button>
             {section === "messages" && selectedConversation && (
               <button
                 className="header-icon header-call-button"
@@ -898,7 +913,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               ) : (
                 <>
                   <div className="welcome-eyebrow">
-                    <span className="welcome-pulse" /> ПЕРВОЕ ПРОСТРАНСТВО COHERENT
+                    <span className="welcome-pulse" /> ПЕРВОЕ ПРОСТРАНСТВО КОГЕРЕНТ
                   </div>
                   <WelcomeArt />
                   <div className="welcome-copy">
@@ -912,17 +927,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
               )}
             </>
           ) : (
-            <FriendsPanel initialTab={friendsInitialTab} onStartConversation={startConversation} onlineIds={onlineIds} />
+            <FriendsPanel initialTab={friendsInitialTab} requestVersion={friendRequestVersion} onStartConversation={startConversation} onlineIds={onlineIds} />
           )}
         </div>
         )}
 
         <footer className="app-statusbar">
           <span><i className="status-dot" /> Сессия активна</span>
-          <span>Coherent <b>·</b> ранняя версия</span>
-          <button aria-label="Настройки звука и видео" onClick={() => setSettingsOpen((open) => !open)}>
-            <Settings size={15} />
-          </button>
+          <span>Когерент <b>·</b> ранняя версия</span>
         </footer>
       </section>
 
@@ -954,7 +966,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           {notificationLoading && <p>Загружаем заявки...</p>}
           {notificationError && <p role="alert">{notificationError}</p>}
           {!notificationLoading && !notificationError && notificationRequests.every((item) => dismissedNotificationIds.has(`friend-${item.request_id}`)) && recentNotifications.length === 0 && (!incomingCallId || dismissedNotificationIds.has(`call-${incomingCallId}`)) && <p>Новых уведомлений нет.</p>}
-          {recentNotifications.map((notice) => <button className="notification-event" key={notice.id} onClick={() => {
+          {recentNotifications.filter((notice) => !notice.id.startsWith("friend-")).map((notice) => <button className="notification-event" key={notice.id} onClick={() => {
             setPopover(null);
             setSection(notice.conversationId ? "messages" : "friends");
             if (notice.conversationId) setActiveConversationId(notice.conversationId);
@@ -964,7 +976,6 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           {!notificationLoading && notificationRequests.filter((request) => !dismissedNotificationIds.has(`friend-${request.request_id}`)).slice(0, 4).map((request) => (
             <button key={request.request_id} onClick={() => openFriends("requests")}><UserPlus size={16} /> Заявка от {request.username}</button>
           ))}
-          <button className="shell-popover-link" onClick={() => openFriends("requests")}>Открыть все заявки →</button>
         </div>
       )}
       {popover === "help" && (
@@ -994,26 +1005,18 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       </audio>
 
       <div className="account-bar">
-        <div className="account-profile">
-          <button
-            className="avatar avatar-user"
-            onClick={() => setShowProfile((visible) => !visible)}
-            aria-label="Открыть профиль"
+        <button className="account-profile" onClick={() => { setPopover(null); setShowProfile((visible) => !visible); }} aria-expanded={showProfile} aria-label="Открыть профиль">
+          <span className="avatar avatar-user"
+            role="img"
+            aria-label={user.username}
           >
             {initial}
-          </button>
+          </span>
           <span className="account-name">
             <strong>{user.username}</strong>
-            <small>В сети</small>
+            <small className="account-online"><i /> В сети</small>
           </span>
-          <button
-            className="account-settings"
-            aria-label="Настройки звука и видео"
-            onClick={() => setSettingsOpen((open) => !open)}
-          >
-            <Settings size={16} />
-          </button>
-        </div>
+        </button>
         <div className="account-controls">
           <button className={media.microphoneEnabled ? "is-on" : "is-off"} aria-label={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} title={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} onClick={() => void changeMedia({ microphoneEnabled: !media.microphoneEnabled }).catch(() => undefined)}>
             {media.microphoneEnabled ? <Mic size={16} /> : <MicOff size={16} />}

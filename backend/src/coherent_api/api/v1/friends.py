@@ -88,6 +88,7 @@ async def list_friend_requests(
 )
 async def send_friend_request(
     body: CreateFriendRequest,
+    request: Request,
     user: CurrentUser,
     session: SessionDep,
 ) -> FriendRequestResponse:
@@ -99,6 +100,11 @@ async def send_friend_request(
         raise HTTPException(status_code=404, detail="Пользователь не найден") from error
     except FriendRequestConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+
+    await request.app.state.message_events.publish(
+        (friend_request.sender_id, friend_request.recipient_id),
+        {"type": "friend_request"},
+    )
 
     return FriendRequestResponse(
         request_id=friend_request.id,
@@ -112,6 +118,7 @@ async def send_friend_request(
 )
 async def accept_request(
     request_id: UUID,
+    request: Request,
     user: CurrentUser,
     session: SessionDep,
 ) -> FriendRequestResponse:
@@ -124,19 +131,28 @@ async def accept_request(
             status_code=403,
             detail="Эту заявку может принять только получатель",
         ) from error
+    await request.app.state.message_events.publish(
+        (friend_request.sender_id, friend_request.recipient_id),
+        {"type": "friend_request"},
+    )
     return FriendRequestResponse(request_id=friend_request.id, status=friend_request.status)
 
 
 @router.delete("/friends/requests/{request_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_or_decline_request(
     request_id: UUID,
+    request: Request,
     user: CurrentUser,
     session: SessionDep,
 ) -> Response:
     try:
-        await remove_friend_request(session, user, request_id)
+        friend_request = await remove_friend_request(session, user, request_id)
     except FriendRequestNotFoundError as error:
         raise HTTPException(status_code=404, detail="Заявка не найдена") from error
     except FriendRequestPermissionError as error:
         raise HTTPException(status_code=403, detail="Нет доступа к этой заявке") from error
+    await request.app.state.message_events.publish(
+        (friend_request.sender_id, friend_request.recipient_id),
+        {"type": "friend_request"},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

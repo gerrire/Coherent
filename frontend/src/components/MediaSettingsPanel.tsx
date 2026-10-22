@@ -128,11 +128,11 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
 
   const outputSupported = typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
   const processingSupported = supportedAudioProcessing();
-  const naturalVoice = !media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
-  const noisyVoice = media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
+  const naturalVoice = media.noiseProcessor === "browser" && !media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
+  const noisyVoice = media.noiseProcessor === "browser" && media.noiseSuppression && media.echoCancellation && !media.autoGainControl;
 
   function chooseVoiceProfile(profile: "natural" | "noisy") {
-    const patch: Partial<MediaPreferences> = {};
+    const patch: Partial<MediaPreferences> = { noiseProcessor: "browser" };
     if (processingSupported.noiseSuppression) patch.noiseSuppression = profile === "noisy";
     if (processingSupported.echoCancellation) patch.echoCancellation = true;
     if (processingSupported.autoGainControl) patch.autoGainControl = false;
@@ -251,6 +251,23 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. При исходном разрешении браузер сам выбирает частоту захвата; настройка ограничивает частоту отправки. Для передачи звука без эха выбирай отдельную вкладку.</p>
         <div className="media-settings-divider" />
         <div className="media-settings-section-heading"><strong>Обработка голоса</strong></div>
+        <label>
+          Способ подавления шума
+          <select disabled={busy} value={media.noiseProcessor} onChange={(event) => void change({ noiseProcessor: event.target.value as MediaPreferences["noiseProcessor"] })}>
+            <option value="browser">Обработка браузера</option>
+            <option value="rnnoise">RNNoise</option>
+          </select>
+          <small>RNNoise обрабатывает звук на твоём устройстве. Подавление эха браузера остаётся доступным.</small>
+        </label>
+        {media.noiseProcessor === "rnnoise" && <div className="media-voice-profiles">
+          <div>
+            <button type="button" className={media.rnnoisePreset === "natural" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "natural" })}>Естественный</button>
+            <button type="button" className={media.rnnoisePreset === "balanced" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "balanced" })}>Сбалансированный</button>
+            <button type="button" className={media.rnnoisePreset === "strong" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "strong" })}>Подавление</button>
+          </div>
+          <small>Естественный пропускает часть исходного звука, сбалансированный — меньше, а подавление оставляет только обработанный поток.</small>
+        </div>}
+        {media.noiseProcessor === "browser" && <>
         <div className="media-voice-profiles">
           <div>
             <button type="button" className={naturalVoice ? "active" : ""} disabled={busy} onClick={() => chooseVoiceProfile("natural")}>Естественный</button>
@@ -262,6 +279,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <input type="checkbox" disabled={busy || !processingSupported.noiseSuppression} checked={media.noiseSuppression && processingSupported.noiseSuppression} onChange={(event) => void change({ noiseSuppression: event.target.checked })} />
           <span className="media-setting-option">Подавление шума<small>{processingCaption("noiseSuppression", media.noiseSuppression)}</small></span>
         </label>
+        </>}
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy || !processingSupported.echoCancellation} checked={media.echoCancellation && processingSupported.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
           <span className="media-setting-option">Подавление эха<small>{processingCaption("echoCancellation", media.echoCancellation)}</small></span>
@@ -274,7 +292,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <input type="checkbox" disabled={busy} checked={media.deafened} onChange={(event) => void change({ deafened: event.target.checked })} />
           Не слышать собеседников
         </label>
-        <p className="media-settings-note">Подавление шума и эха выполняет браузер. Щелчки во время речи могут оставаться слышны, чтобы не обрезать слова.</p>
+        <p className="media-settings-note">Подавление эха выполняет браузер. При выборе RNNoise браузерное шумоподавление отключается, чтобы голос не обрабатывался дважды.</p>
       </div>
     </aside>
   );

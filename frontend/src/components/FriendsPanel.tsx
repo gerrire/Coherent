@@ -8,10 +8,12 @@ export default function FriendsPanel({
   onStartConversation,
   initialTab = "search",
   onlineIds,
+  requestVersion,
 }: {
   onStartConversation: (userId: string) => Promise<void>;
   initialTab?: Tab;
   onlineIds: Set<string>;
+  requestVersion: number;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState("");
@@ -49,7 +51,8 @@ export default function FriendsPanel({
     refreshOverview().catch((requestError: unknown) => {
       setError(requestError instanceof Error ? requestError.message : "Не удалось загрузить друзей.");
     });
-  }, []);
+    if (query.trim().length >= 2) void refreshSearch().catch(() => undefined);
+  }, [requestVersion]);
 
   async function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

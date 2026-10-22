@@ -17,6 +17,7 @@ import {
   Camera,
   CameraOff,
   LayoutGrid,
+  LockKeyhole,
   Maximize2,
   MessageCircle,
   Mic,
@@ -31,7 +32,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { AudioPresets, ConnectionQuality, RoomEvent, Track, type Participant, type Room } from "livekit-client";
+import { AudioPresets, ConnectionQuality, ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type Participant } from "livekit-client";
 import { api, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
@@ -50,6 +51,31 @@ type ViewMode = "grid" | "focus";
 type TileDensity = "normal" | "compact";
 const VOLUME_STORAGE_KEY = "coherent-participant-volumes";
 const SCREEN_VOLUME_STORAGE_KEY = "coherent-screen-volumes";
+const KEY_EMOJIS = ["🔒", "🌙", "⭐", "🌿", "🦊", "🍋", "🎲", "🪐", "🐳", "🎯", "🍀", "🔥", "🦋", "🎵", "🧩", "💎"];
+let speechContext: AudioContext | undefined;
+let speechContextUsers = 0;
+
+function acquireSpeechContext(): AudioContext {
+  speechContext ??= new AudioContext({ latencyHint: "interactive" });
+  speechContextUsers += 1;
+  return speechContext;
+}
+
+function releaseSpeechContext(context: AudioContext): void {
+  speechContextUsers -= 1;
+  if (speechContextUsers === 0 && speechContext === context) {
+    speechContext = undefined;
+    void context.close();
+  }
+}
+
+async function keyFingerprint(key: string): Promise<{ emoji: string; code: string }> {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)));
+  return {
+    emoji: Array.from(hash.slice(0, 4), (byte) => KEY_EMOJIS[byte % KEY_EMOJIS.length]).join(" "),
+    code: Array.from(hash.slice(0, 8), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+  };
+}
 
 function loadVolumes(key: string, maximum: number): Record<string, number> {
   try {
@@ -273,7 +299,7 @@ function CallRoom({
   onEnd: () => void;
   pending: boolean;
 }) {
-  const [join, setJoin] = useState<CallJoin | null>(null);
+  const [join, setJoin] = useState<(CallJoin & { callId: string }) | null>(null);
   const [joinAttempt, setJoinAttempt] = useState(0);
   const [error, setError] = useState("");
   const [mediaError, setMediaError] = useState("");
@@ -281,6 +307,7 @@ function CallRoom({
   const [seconds, setSeconds] = useState(0);
   const [participantVolumes, setParticipantVolumes] = useState(loadParticipantVolumes);
   const [screenVolumes, setScreenVolumes] = useState(loadScreenVolumes);
+  const [encryptedRoom, setEncryptedRoom] = useState<{ callId: string; room: Room; fingerprint: { emoji: string; code: string } } | null>(null);
   const roomOptions = useMemo(() => ({
     adaptiveStream: true,
     dynacast: true,
@@ -311,13 +338,43 @@ function CallRoom({
 
   useEffect(() => {
     let active = true;
+    setJoin(null);
+    setEncryptedRoom(null);
     api.joinCall(call.id).then((result) => {
-      if (active) setJoin(result);
+      if (active) setJoin({ ...result, callId: call.id });
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "Не удалось подключиться к звонку.");
     });
     return () => { active = false; };
   }, [call.id, joinAttempt]);
+
+  useEffect(() => {
+    if (!join || join.callId !== call.id) return;
+    let active = true;
+    let room: Room | undefined;
+    let worker: Worker | undefined;
+    async function prepareEncryption() {
+      if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
+      if (!join?.e2ee_key) throw new Error("Не получен ключ шифрования звонка.");
+      const provider = new ExternalE2EEKeyProvider();
+      worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
+      room = new Room({ ...roomOptions, encryption: { keyProvider: provider, worker } });
+      await provider.setKey(join.e2ee_key);
+      await room.setE2EEEnabled(true);
+      const fingerprint = await keyFingerprint(join.e2ee_key);
+      if (active) setEncryptedRoom({ callId: call.id, room, fingerprint });
+    }
+    void prepareEncryption().catch((reason: unknown) => {
+      if (room) void room.disconnect();
+      worker?.terminate();
+      if (active) setError(reason instanceof Error ? reason.message : "Не удалось включить шифрование звонка.");
+    });
+    return () => {
+      active = false;
+      if (room) void room.disconnect();
+      worker?.terminate();
+    };
+  }, [join, roomOptions, call.id]);
 
   function retryConnection() {
     setError("");
@@ -342,6 +399,7 @@ function CallRoom({
         <strong>{title}</strong>
         <small>{error || (connected ? `${joinedCount} в звонке · ${time}` : "Подключение...")}</small>
       </div>
+      {connected && encryptedRoom?.callId === call.id && <span className="call-encryption" title={`Сквозное шифрование медиа. Ключ выдаёт Когерент, LiveKit его не получает. Сверь эмодзи и код с собеседниками: ${encryptedRoom.fingerprint.code}`}><LockKeyhole size={13} /> Шифрование <span>{encryptedRoom.fingerprint.emoji}</span></span>}
       {compact ? (
         <button className="call-focus-button" onClick={onFocus} aria-label="Вернуться к беседе со звонком" title="Вернуться к беседе">
           <MessageCircle size={17} />
@@ -362,19 +420,20 @@ function CallRoom({
   if (error) {
     return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>Повторить подключение</button><button onClick={onEnd}>Выйти</button></div></div></>;
   }
-  if (!join) return <>{header}<div className="call-connect-note">Подключаем звонок...</div></>;
+  if (!join || join.callId !== call.id || !encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note">Подключаем защищённый звонок...</div></>;
 
   return (
     <LiveKitRoom
       serverUrl={join.server_url}
       token={join.token}
+      room={encryptedRoom.room}
       connect
       audio={false}
       video={false}
-      options={roomOptions}
       onConnected={() => setConnected(true)}
       onDisconnected={() => setConnected(false)}
       onError={(reason) => setError(reason.message)}
+      onEncryptionError={(reason) => { setError(`Ошибка шифрования: ${reason.message}`); void encryptedRoom.room.disconnect(); }}
     >
       <CallMediaBridge connected={connected} media={media} onRoomReady={onRoomReady} onError={setMediaError} />
       <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
@@ -413,7 +472,12 @@ function CallMediaBridge({
       await room.localParticipant.setAttributes({ "coherent.deafened": selected.deafened ? "true" : "false" }).catch(() => undefined);
       if (selected.microphoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(selected));
-        await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.noiseSuppression ? "noisy" : "soft");
+        try {
+          await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.noiseSuppression ? "noisy" : "soft", selected.noiseProcessor, selected.rnnoisePreset);
+        } catch (reason) {
+          await room.localParticipant.setMicrophoneEnabled(false);
+          throw reason;
+        }
       }
       if (selected.cameraEnabled) {
         await room.localParticipant.setCameraEnabled(
@@ -608,7 +672,7 @@ function ParticipantTile({ participant, camera, volume, onVolumeOpen, media }: {
   onVolumeOpen: () => void;
   media: MediaPreferences;
 }) {
-  const isSpeaking = useIsSpeaking(participant);
+  const isSpeaking = useFastSpeaking(participant);
   const label = participant.isLocal ? "Ты" : participant.name || "Участник";
   return (
     <div className={`call-tile ${isSpeaking ? "call-tile-speaking" : ""}`} onContextMenu={participant.isLocal ? undefined : (event) => { event.preventDefault(); onVolumeOpen(); }}>
@@ -622,6 +686,39 @@ function ParticipantTile({ participant, camera, volume, onVolumeOpen, media }: {
       )}
     </div>
   );
+}
+
+function useFastSpeaking(participant: Participant): boolean {
+  const serverSpeaking = useIsSpeaking(participant);
+  const microphone = useParticipantTracks([Track.Source.Microphone], participant.identity)[0]?.publication.track?.mediaStreamTrack;
+  const [localSpeaking, setLocalSpeaking] = useState(false);
+  useEffect(() => {
+    setLocalSpeaking(false);
+    if (!microphone || microphone.readyState !== "live") return;
+    const context = acquireSpeechContext();
+    const source = context.createMediaStreamSource(new MediaStream([microphone]));
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    let lastVoice = 0;
+    void context.resume().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      analyser.getFloatTimeDomainData(samples);
+      let power = 0;
+      for (const sample of samples) power += sample * sample;
+      const rms = Math.sqrt(power / samples.length);
+      if (rms > 0.012) lastVoice = performance.now();
+      setLocalSpeaking(performance.now() - lastVoice < 180);
+    }, 60);
+    return () => {
+      window.clearInterval(timer);
+      source.disconnect();
+      analyser.disconnect();
+      releaseSpeechContext(context);
+    };
+  }, [microphone]);
+  return localSpeaking || serverSpeaking;
 }
 
 function SidebarParticipant({ participant, camera, volume, onVolumeChange, media }: {
