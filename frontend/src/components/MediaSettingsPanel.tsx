@@ -215,6 +215,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
             <option value="720p">1280×720</option>
             <option value="1080p">1920×1080</option>
             <option value="1440p">2560×1440</option>
+            <option value="2160p">3840×2160 · 4K</option>
             <option value="native">Исходное разрешение экрана</option>
           </select>
         </label>

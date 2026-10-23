@@ -14,7 +14,7 @@ import {
 
 export type VideoCodec = "vp8" | "h264" | "vp9" | "av1";
 export type VideoQuality = "360p" | "720p" | "1080p";
-export type ScreenShareQuality = "720p" | "1080p" | "1440p" | "native";
+export type ScreenShareQuality = "720p" | "1080p" | "1440p" | "2160p" | "native";
 export type ScreenShareContent = "text" | "motion";
 export type ScreenShareFrameRate = 15 | 30 | 60;
 
@@ -120,7 +120,7 @@ export function loadMediaPreferences(): MediaPreferences {
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
       videoQuality: qualities.includes(storedQuality as VideoQuality) ? storedQuality! : "1080p",
       screenShareQuality: saved.screenShareDefaultsVersion !== 1 && saved.screenShareQuality === "1080p"
-        ? "native" : (["720p", "1080p", "1440p", "native"] as ScreenShareQuality[]).includes(saved.screenShareQuality as ScreenShareQuality)
+        ? "native" : (["720p", "1080p", "1440p", "2160p", "native"] as ScreenShareQuality[]).includes(saved.screenShareQuality as ScreenShareQuality)
           ? saved.screenShareQuality! : "native",
       screenShareContent: saved.screenShareContent === "motion" ? "motion" : "text",
       screenShareCodec: codecs.includes(saved.screenShareCodec as VideoCodec) ? saved.screenShareCodec! : "h264",
@@ -210,8 +210,8 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
     resolution: value.screenShareQuality === "native"
       ? { width: 0, height: 0, frameRate: value.screenShareFrameRate }
       : safari ? undefined : {
-        width: value.screenShareQuality === "720p" ? 1280 : value.screenShareQuality === "1440p" ? 2560 : 1920,
-        height: value.screenShareQuality === "720p" ? 720 : value.screenShareQuality === "1440p" ? 1440 : 1080,
+        width: value.screenShareQuality === "720p" ? 1280 : value.screenShareQuality === "1440p" ? 2560 : value.screenShareQuality === "2160p" ? 3840 : 1920,
+        height: value.screenShareQuality === "720p" ? 720 : value.screenShareQuality === "1440p" ? 1440 : value.screenShareQuality === "2160p" ? 2160 : 1080,
         frameRate: value.screenShareFrameRate,
       },
   };
