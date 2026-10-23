@@ -45,6 +45,8 @@ import {
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
+import { NativeScreenAudio } from "../lib/nativeScreenAudio";
+import { isTauri } from "@tauri-apps/api/core";
 
 type ViewMode = "grid" | "focus";
 type TileDensity = "normal" | "compact";
@@ -455,8 +457,30 @@ function CallControls({
   const { isScreenShareEnabled } = useLocalParticipant();
   const room = useRoomContext();
   const checkedShareId = useRef<string | null>(null);
+  const nativeAudio = useRef<NativeScreenAudio | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (isScreenShareEnabled && media.systemAudioEnabled) {
+      const bridge = new NativeScreenAudio(room);
+      nativeAudio.current = bridge;
+      void bridge.start(onError).catch((reason: unknown) => {
+        onError(reason instanceof Error ? reason.message : "Не удалось передать системный звук.");
+      });
+    } else {
+      const bridge = nativeAudio.current;
+      nativeAudio.current = null;
+      if (bridge) void bridge.stop();
+    }
+    return () => {
+      const bridge = nativeAudio.current;
+      nativeAudio.current = null;
+      if (bridge) void bridge.stop();
+    };
+  }, [isScreenShareEnabled, media.systemAudioEnabled, room, onError]);
 
   const protectScreenAudio = useCallback(() => {
+    if (isTauri()) return;
     const video = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
     const audio = room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio)?.track;
     if (!video || !audio || checkedShareId.current === video.id) return;

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMaybeRoomContext } from "@livekit/components-react";
 import { LocalVideoTrack, Track } from "livekit-client";
 import { Settings2, X } from "lucide-react";
+import { isTauri } from "@tauri-apps/api/core";
 import { supportedAudioProcessing, supportedVideoCodec, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
 
 interface MediaSettingsPanelProps {
@@ -204,6 +205,10 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <strong>Демонстрация экрана</strong>
           <small>Для текста приоритет у чёткости. Для видео доступна более плавная передача.</small>
         </div>
+        {isTauri() && <label className="media-setting-check">
+          <input type="checkbox" disabled={busy} checked={media.systemAudioEnabled} onChange={(event) => void change({ systemAudioEnabled: event.target.checked })} />
+          <span className="media-setting-option">Передавать звук компьютера<small>Звук самого Coherent исключается, чтобы собеседники не слышали себя повторно.</small></span>
+        </label>}
         <label>
           Разрешение
           <select disabled={busy} value={media.screenShareQuality} onChange={(event) => void change({ screenShareQuality: event.target.value as MediaPreferences["screenShareQuality"] })}>
@@ -248,7 +253,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <span>Фактический битрейт: {screenDiagnostics.bitrate === null ? "считаем..." : `${screenDiagnostics.bitrate.toFixed(1)} Мбит/с`}</span>
           {screenDiagnostics.limitation && <span>Ограничение: {screenDiagnostics.limitation === "bandwidth" ? "скорость сети" : screenDiagnostics.limitation === "cpu" ? "нагрузка на процессор" : screenDiagnostics.limitation}</span>}
         </div>}
-        <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. При исходном разрешении браузер сам выбирает частоту захвата; настройка ограничивает частоту отправки. Для передачи звука без эха выбирай отдельную вкладку.</p>
+        <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. При исходном разрешении движок сам выбирает частоту захвата; настройка ограничивает частоту отправки. {isTauri() ? "Звук компьютера можно включить или выключить здесь во время трансляции." : "Для передачи звука без эха выбирай отдельную вкладку."}</p>
         <div className="media-settings-divider" />
         <div className="media-settings-section-heading"><strong>Обработка голоса</strong></div>
         <div className="media-voice-profiles">

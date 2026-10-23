@@ -1,3 +1,5 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+
 export interface User {
   id: string;
   username: string;
@@ -108,6 +110,10 @@ export class ApiError extends Error {
 let csrfToken: string | null = null;
 
 export async function initializeCsrf(): Promise<void> {
+  if (isTauri()) {
+    await invoke("api_initialize_csrf");
+    return;
+  }
   const response = await fetch("/api/v1/auth/csrf", { credentials: "include" });
   if (!response.ok) {
     throw new ApiError("Не удалось подготовить защищённое соединение.", response.status);
@@ -118,6 +124,20 @@ export async function initializeCsrf(): Promise<void> {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
+  if (isTauri()) {
+    const result = await invoke<{ status: number; body: unknown }>("api_request", {
+      path,
+      method,
+      body: init.body ? JSON.parse(String(init.body)) : null,
+    });
+    if (result.status === 204) return undefined as T;
+    if (result.status < 200 || result.status >= 300) {
+      const detail = (result.body as ApiErrorBody)?.detail;
+      const message = Array.isArray(detail) ? detail.map((item) => item.msg).join(". ") : detail;
+      throw new ApiError(message || "Не получилось выполнить запрос. Попробуй ещё раз.", result.status);
+    }
+    return result.body as T;
+  }
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && csrfToken === null) {
     await initializeCsrf();
   }
@@ -221,6 +241,10 @@ export const api = {
   endCall: (callId: string) =>
     request<Call>(`/api/v1/calls/${callId}/end`, { method: "POST" }),
   endCallOnPageHide: (callId: string) => {
+    if (isTauri()) {
+      void request<void>(`/api/v1/calls/${callId}/end`, { method: "POST" });
+      return;
+    }
     if (!csrfToken) return;
     void fetch(`/api/v1/calls/${callId}/end`, {
       method: "POST",

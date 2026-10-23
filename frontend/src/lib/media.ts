@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import {
   ScreenSharePresets,
   Track,
@@ -32,6 +33,7 @@ export interface MediaPreferences {
   screenShareCodec: VideoCodec;
   screenShareFrameRate: ScreenShareFrameRate;
   screenShareBitrateMbps: number;
+  systemAudioEnabled: boolean;
   noiseSuppression: boolean;
   echoCancellation: boolean;
   autoGainControl: boolean;
@@ -81,6 +83,7 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareCodec: "h264",
   screenShareFrameRate: 30,
   screenShareBitrateMbps: 20,
+  systemAudioEnabled: true,
   noiseSuppression: false,
   echoCancellation: true,
   autoGainControl: false,
@@ -196,7 +199,7 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
   const safari = /iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg|CriOS/i.test(navigator.userAgent));
   return {
-    audio: true,
+    audio: !isTauri(),
     // Keep the selected tab's audio, but do not feed the call's own playback back through system capture.
     selfBrowserSurface: "exclude",
     surfaceSwitching: "exclude",

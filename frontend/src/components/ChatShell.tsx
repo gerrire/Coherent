@@ -12,6 +12,7 @@ import {
   MoreHorizontal,
   Phone,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Users,
@@ -22,6 +23,9 @@ import {
   VolumeX,
 } from "lucide-react";
 import { ConnectionState, Track, type Room } from "livekit-client";
+import { isTauri } from "@tauri-apps/api/core";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { api, conversationTitle, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
 import {
   cameraCapture,
@@ -35,6 +39,7 @@ import {
   type AudioProcessingState,
   type MediaPreferences,
 } from "../lib/media";
+import { connectAppEvents } from "../lib/events";
 import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import MessagesPanel from "./MessagesPanel";
@@ -77,6 +82,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   });
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [updateStatus, setUpdateStatus] = useState("");
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateNoticeDismissed, setUpdateNoticeDismissed] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [conversationQuery, setConversationQuery] = useState("");
@@ -96,6 +105,47 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const roomRef = useRef<Room | null>(null);
   const mediaQueue = useRef<Promise<void>>(Promise.resolve());
   const ringtoneRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    const lookForUpdate = () => {
+      void check().then((update) => {
+        if (active && update) {
+          setAvailableUpdate(update);
+          setUpdateStatus(`Доступна версия ${update.version}`);
+          setUpdateNoticeDismissed(false);
+        }
+      }).catch(() => undefined);
+    };
+    lookForUpdate();
+    const timer = window.setInterval(lookForUpdate, 6 * 60 * 60 * 1000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  async function handleUpdate() {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    try {
+      if (availableUpdate) {
+        setUpdateStatus("Скачиваем обновление…");
+        await availableUpdate.downloadAndInstall((event) => {
+          if (event.event === "Finished") setUpdateStatus("Устанавливаем обновление…");
+        });
+        await relaunch();
+      } else {
+        setUpdateStatus("Проверяем обновления…");
+        const update = await check();
+        setAvailableUpdate(update);
+        setUpdateStatus(update ? `Доступна версия ${update.version}` : "Установлена последняя версия.");
+        if (update) setUpdateNoticeDismissed(false);
+      }
+    } catch (reason) {
+      setUpdateStatus(reason instanceof Error ? reason.message : "Не удалось проверить обновления.");
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
   const notifiedCalls = useRef(new Set<string>());
   const notifiedRequests = useMemo(() => {
     try {
@@ -315,23 +365,27 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }, [currentCall, user.id]);
 
   useEffect(() => {
-    let socket: WebSocket | null = null;
+    let disconnect: (() => void) | null = null;
     let reconnectTimer: number | undefined;
     let stopped = false;
     let reconnectDelay = 1000;
 
-    function connect() {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/conversations/events`);
-      socket.onopen = () => {
+    function scheduleReconnect() {
+      if (stopped) return;
+      reconnectTimer = window.setTimeout(() => void connect(), reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    }
+
+    async function connect() {
+      try {
+        const close = await connectAppEvents(() => {
         reconnectDelay = 1000;
         void refreshConversations().catch(() => undefined);
         void refreshPresence().catch(() => undefined);
         setMessageVersion((current) => current + 1);
-      };
-      socket.onmessage = (event) => {
+        }, (data) => {
         try {
-          const payload = JSON.parse(event.data) as { type?: string; message?: { id: string; sender_id: string; conversation_id: string; body: string } };
+          const payload = JSON.parse(data) as { type?: string; message?: { id: string; sender_id: string; conversation_id: string; body: string } };
           if (payload.type === "call") {
             void refreshCalls().catch(() => undefined);
             void refreshConversations().catch(() => undefined);
@@ -350,16 +404,19 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         } catch {
           // Ignore an event with an unknown payload.
         }
-      };
-      socket.onclose = (event) => {
-        if (stopped || event.code === 1008) return;
-        reconnectTimer = window.setTimeout(connect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-      };
-      socket.onerror = () => socket?.close();
+        }, (code) => {
+          disconnect?.();
+          disconnect = null;
+          if (code !== 1008) scheduleReconnect();
+        });
+        if (stopped) close();
+        else disconnect = close;
+      } catch {
+        scheduleReconnect();
+      }
     }
 
-    connect();
+    void connect();
     const pollTimer = window.setInterval(() => {
       void refreshConversations().catch(() => undefined);
       setMessageVersion((current) => current + 1);
@@ -368,7 +425,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       stopped = true;
       window.clearInterval(pollTimer);
       window.clearTimeout(reconnectTimer);
-      socket?.close();
+      disconnect?.();
     };
   }, [refreshConversations, refreshCalls, refreshPresence, showNotification, user.id]);
 
@@ -984,7 +1041,23 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <div><strong>{user.username}</strong><span>В сети</span></div>
             <MoreHorizontal size={18} />
           </div>
+          {isTauri() && <>
+            <button onClick={() => void handleUpdate()} disabled={updateBusy}>
+              <RefreshCw size={16} /> {availableUpdate ? `Установить ${availableUpdate.version}` : "Проверить обновления"}
+            </button>
+            {updateStatus && <p className="profile-update-status" role="status">{updateStatus}</p>}
+          </>}
           <button onClick={onLogout}><LogOut size={16} /> Выйти из аккаунта</button>
+        </div>
+      )}
+
+      {availableUpdate && !updateNoticeDismissed && (
+        <div className="desktop-update-banner" role="status">
+          <span>Доступна новая версия Coherent {availableUpdate.version}</span>
+          <button onClick={() => void handleUpdate()} disabled={updateBusy}>
+            {updateBusy ? "Устанавливаем…" : "Обновить"}
+          </button>
+          <button className="desktop-update-dismiss" aria-label="Напомнить позже" onClick={() => setUpdateNoticeDismissed(true)}>×</button>
         </div>
       )}
 

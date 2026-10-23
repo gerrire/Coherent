@@ -23,9 +23,11 @@ frontend/.vite/
 *.tsbuildinfo
 npm-debug.log*
 
-# Windows desktop client
-desktop/build/
-desktop/Releases/
+# Local desktop build tools and artifacts
+.tools/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/schemas/
+*.key
 
 # Editors and operating systems
 .idea/

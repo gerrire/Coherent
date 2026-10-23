@@ -31,10 +31,10 @@ Coherent — приложение для общения с личными и г�
 | Backend | Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic |
 | База данных | PostgreSQL 17, Alembic |
 | Frontend | React, TypeScript, Vite |
-| Windows-клиент | C++20, Qt Quick, LiveKit C++ SDK, Windows Core Audio, Velopack |
+| Windows-клиент | Tauri 2, Rust, React, TypeScript, WebView2, Windows Core Audio |
 | Авторизация | Argon2 для паролей, JWT в HttpOnly cookie, CSRF-токен |
 
-Windows-клиент самостоятельно показывает экраны чатов и звонков через Qt Quick, подключается к тому же API и устанавливает обновления из GitHub Releases. Сборка и выпуск описаны в [руководстве клиента](desktop/README.md).
+Windows-клиент использует тот же интерфейс React, что и сайт, но устанавливается как приложение Tauri. Запросы API и события WebSocket проходят через Rust, сессия хранится в защищённом хранилище Windows. Звук системы при показе экрана захватывает Windows Core Audio с исключением звука самого Coherent. Обновления внутри приложения проверяются через GitHub Releases и устанавливаются после проверки подписи. Сборка и выпуск описаны в [руководстве клиента](frontend/src-tauri/README.md).
 
 ## Структура проекта
 
@@ -53,9 +53,9 @@ frontend/
   src/
     components/             Авторизация, друзья, беседы и звонки
     lib/                    Клиент API
-desktop/
-  src/                      API, звонки, захват устройств и обновления
-  qml/                      Нативный интерфейс Qt Quick
+  src-tauri/                Windows-оболочка, API, звук и обновления
+scripts/
+  build-desktop.ps1         Локальная сборка установщика
 compose.yaml                PostgreSQL для локальной разработки
 docs/                       Спецификация MVP и архитектура
 ```

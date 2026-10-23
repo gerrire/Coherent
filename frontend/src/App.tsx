@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import AuthPanel from "./components/AuthPanel";
 import ChatShell from "./components/ChatShell";
 import { api, ApiError, initializeCsrf, type User } from "./lib/api";
+import { isTauri } from "@tauri-apps/api/core";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -50,8 +51,14 @@ export default function App() {
       <main className="connection-screen">
         <span className="brand-mark"><span /><span /><span /></span>
         <h1>Не удалось подключиться</h1>
-        <p>Запусти API-сервер и обнови страницу.</p>
-        <code>uvicorn coherent_api.main:app --reload --app-dir backend/src</code>
+        {isTauri() ? (
+          <p>Проверь подключение к интернету и попробуй снова.</p>
+        ) : (
+          <>
+            <p>Запусти API-сервер и обнови страницу.</p>
+            <code>uvicorn coherent_api.main:app --reload --app-dir backend/src</code>
+          </>
+        )}
         <button className="primary-button" onClick={() => window.location.reload()}>
           Попробовать снова
         </button>
