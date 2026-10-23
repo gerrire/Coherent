@@ -32,7 +32,6 @@ class AdminOverview(BaseModel):
     attachment_count: int
     attachment_bytes: int
     attachment_limit_bytes: int
-    attachment_user_limit_bytes: int
     disk_free_bytes: int
     disk_total_bytes: int
     recent_users: list[RecentUser]
@@ -57,7 +56,6 @@ async def overview(request: Request, user: CurrentUser, session: SessionDep) -> 
         attachment_count=await session.scalar(select(func.count()).select_from(MessageAttachment)) or 0,
         attachment_bytes=attachment_storage_bytes(directory),
         attachment_limit_bytes=settings.attachment_storage_limit_mb * 1024 * 1024,
-        attachment_user_limit_bytes=settings.attachment_user_limit_mb * 1024 * 1024,
         disk_free_bytes=disk.free,
         disk_total_bytes=disk.total,
         recent_users=[RecentUser(username=name, created_at=created) for name, created in recent],

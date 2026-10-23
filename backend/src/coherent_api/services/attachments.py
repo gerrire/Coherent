@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from coherent_api.core.config import Settings
@@ -92,13 +92,7 @@ async def save_message_files(
     if session.get_bind().dialect.name == "postgresql":
         await session.execute(text("SELECT pg_advisory_xact_lock(77814021)"))
     storage_used = attachment_storage_bytes(directory)
-    user_used = await session.scalar(
-        select(func.coalesce(func.sum(MessageAttachment.byte_size), 0))
-        .join(Message, Message.id == MessageAttachment.message_id)
-        .where(Message.sender_id == user.id)
-    ) or 0
     storage_limit = settings.attachment_storage_limit_mb * 1024 * 1024
-    user_limit = settings.attachment_user_limit_mb * 1024 * 1024
     free_reserve = settings.attachment_min_free_mb * 1024 * 1024
     stored: list[Path] = []
     attachments: list[MessageAttachment] = []
@@ -118,8 +112,6 @@ async def save_message_files(
                         raise AttachmentError(
                             "Файл слишком большой: до 25 МБ на файл и 50 МБ на сообщение"
                         )
-                    if user_used + total > user_limit:
-                        raise AttachmentQuotaError("Лимит файлов аккаунта исчерпан. Старые вложения удаляются через 3 дня.")
                     if storage_used + total > storage_limit or shutil.disk_usage(directory).free - len(chunk) < free_reserve:
                         raise AttachmentQuotaError("Хранилище файлов заполнено. Попробуй отправить файл позже.")
                     target.write(chunk)

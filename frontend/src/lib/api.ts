@@ -13,7 +13,6 @@ export interface AdminOverview {
   attachment_count: number;
   attachment_bytes: number;
   attachment_limit_bytes: number;
-  attachment_user_limit_bytes: number;
   disk_free_bytes: number;
   disk_total_bytes: number;
   recent_users: Array<{ username: string; created_at: string }>;

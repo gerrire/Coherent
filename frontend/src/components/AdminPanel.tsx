@@ -71,8 +71,8 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
             <div className="admin-card-title"><HardDrive size={18} /><h3>Файлы и место на диске</h3></div>
             <div className="admin-storage-line"><strong>{formatBytes(overview.attachment_bytes)} из {formatBytes(overview.attachment_limit_bytes)}</strong><span>{storagePercent}%</span></div>
             <div className="admin-storage-track"><i style={{ width: `${storagePercent}%` }} /></div>
-            <p>{overview.attachment_count} вложений · лимит одного аккаунта {formatBytes(overview.attachment_user_limit_bytes)} · свободно на сервере {formatBytes(overview.disk_free_bytes)} из {formatBytes(overview.disk_total_bytes)}</p>
-            <small>Файлы автоматически удаляются через 3 дня. Для загрузок сохраняется резерв свободного места.</small>
+            <p>{overview.attachment_count} вложений · свободно на сервере {formatBytes(overview.disk_free_bytes)} из {formatBytes(overview.disk_total_bytes)}</p>
+            <small>Общий лимит для всех пользователей — {formatBytes(overview.attachment_limit_bytes)}. После его достижения загрузки приостанавливаются до освобождения места. Файлы автоматически удаляются через 3 дня; для загрузок сохраняется резерв свободного места.</small>
           </section>
           <section className="admin-card">
             <div className="admin-card-title"><Users size={18} /><h3>Новые аккаунты</h3></div>
