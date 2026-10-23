@@ -55,6 +55,7 @@ class UserResponse(BaseModel):
     email: EmailStr | None
     username: str
     created_at: datetime
+    is_admin: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -62,6 +63,7 @@ class AuthResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
 

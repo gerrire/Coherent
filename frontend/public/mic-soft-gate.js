@@ -27,7 +27,12 @@ class CoherentSoftGate extends AudioWorkletProcessor {
     }
     const rms = Math.sqrt(energy / Math.max(1, count));
     let target = 1;
-    if (this.mode === "soft") {
+    if (this.mode.startsWith("rnnoise-")) {
+      const floor = this.mode === "rnnoise-natural" ? 0.85 : this.mode === "rnnoise-balanced" ? 0.48 : 0.18;
+      const level = Math.min(1, Math.max(0, (rms - 0.0018) / 0.007));
+      target = floor + (1 - floor) * level;
+      this.gain += (target - this.gain) * (target > this.gain ? 0.3 : 0.025);
+    } else if (this.mode === "soft") {
       // A low floor reduces hiss between words without silencing quiet syllables.
       const level = Math.min(1, Math.max(0, (rms - 0.0025) / 0.009));
       target = 0.3 + 0.7 * level;

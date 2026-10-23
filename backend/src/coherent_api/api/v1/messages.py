@@ -33,6 +33,7 @@ from coherent_api.schemas.messages import (
 from coherent_api.services.attachments import (
     INLINE_TYPES,
     AttachmentError,
+    AttachmentQuotaError,
     get_attachment,
     save_message_files,
 )
@@ -111,10 +112,12 @@ async def post_message_attachments(
             conversation_id,
             body,
             files,
-            request.app.state.settings.attachment_dir,
+            request.app.state.settings,
         )
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    except AttachmentQuotaError as error:
+        raise HTTPException(status_code=507, detail=str(error)) from error
     except AttachmentError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     await request.app.state.message_events.publish(

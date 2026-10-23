@@ -1,11 +1,14 @@
 import mimetypes
 import os
+import shutil
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from coherent_api.core.config import Settings
 from coherent_api.models.message import Message
 from coherent_api.models.message_attachment import MessageAttachment
 from coherent_api.models.user import User
@@ -20,6 +23,25 @@ MAX_FILES = 4
 
 class AttachmentError(Exception):
     pass
+
+
+class AttachmentQuotaError(AttachmentError):
+    pass
+
+
+def attachment_storage_bytes(directory: Path) -> int:
+    if not directory.is_dir():
+        return 0
+    total = 0
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+            except FileNotFoundError:
+                # The retention worker may delete an expired file during this scan.
+                continue
+    return total
 
 
 def safe_name(value: str | None) -> str:
@@ -55,7 +77,7 @@ async def save_message_files(
     conversation_id: UUID,
     body: str,
     files: list[UploadFile],
-    storage: str,
+    settings: Settings,
 ) -> tuple[MessageResponse, tuple[UUID, ...]]:
     from coherent_api.services.messages import conversation_member_ids
 
@@ -63,9 +85,21 @@ async def save_message_files(
     clean_body = body.strip()
     if len(clean_body) > 4000 or not files or len(files) > MAX_FILES:
         raise AttachmentError("Можно отправить до четырёх файлов и 4000 символов текста")
-    directory = Path(storage)
+    directory = Path(settings.attachment_dir)
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory.chmod(0o700)
+    # Serialize quota checks across API workers before any bytes are written.
+    if session.get_bind().dialect.name == "postgresql":
+        await session.execute(text("SELECT pg_advisory_xact_lock(77814021)"))
+    storage_used = attachment_storage_bytes(directory)
+    user_used = await session.scalar(
+        select(func.coalesce(func.sum(MessageAttachment.byte_size), 0))
+        .join(Message, Message.id == MessageAttachment.message_id)
+        .where(Message.sender_id == user.id)
+    ) or 0
+    storage_limit = settings.attachment_storage_limit_mb * 1024 * 1024
+    user_limit = settings.attachment_user_limit_mb * 1024 * 1024
+    free_reserve = settings.attachment_min_free_mb * 1024 * 1024
     stored: list[Path] = []
     attachments: list[MessageAttachment] = []
     total = 0
@@ -84,6 +118,10 @@ async def save_message_files(
                         raise AttachmentError(
                             "Файл слишком большой: до 25 МБ на файл и 50 МБ на сообщение"
                         )
+                    if user_used + total > user_limit:
+                        raise AttachmentQuotaError("Лимит файлов аккаунта исчерпан. Старые вложения удаляются через 3 дня.")
+                    if storage_used + total > storage_limit or shutil.disk_usage(directory).free - len(chunk) < free_reserve:
+                        raise AttachmentQuotaError("Хранилище файлов заполнено. Попробуй отправить файл позже.")
                     target.write(chunk)
             if not size:
                 raise AttachmentError("Пустой файл нельзя отправить")

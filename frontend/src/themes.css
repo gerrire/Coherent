@@ -1,10 +1,10 @@
 :root[data-theme="purple"] {
   color-scheme: dark;
-  --theme-rail: #0d0918; --theme-sidebar: #171125; --theme-panel: #1b142a;
-  --theme-surface: #241b35; --theme-raised: #302442; --theme-hover: #3c2d50;
-  --theme-text: #f5efff; --theme-muted: #b3a6c4; --theme-faint: #887b99;
-  --theme-border: rgba(192, 153, 236, .2); --theme-accent: #9f59e9;
-  --theme-accent-hover: #b775f4; --theme-accent-text: #dfbaff;
+  --theme-rail: #0c0a17; --theme-sidebar: #151123; --theme-panel: #191427;
+  --theme-surface: #211a33; --theme-raised: #2c2242; --theme-hover: #382b51;
+  --theme-text: #f3efff; --theme-muted: #b3a8c7; --theme-faint: #887c9f;
+  --theme-border: rgba(156, 132, 217, .22); --theme-accent: #7739dc;
+  --theme-accent-hover: #9156eb; --theme-accent-text: #cbb2ff;
   --theme-media-bg: #11101b; --theme-media-tile: #1b1928;
 }
 :root[data-theme="black"] {
@@ -80,7 +80,11 @@
 :root[data-theme] :is(.channel-sidebar, .profile-settings-sidebar, .client-settings-sidebar) {
   background: var(--theme-sidebar); border-color: var(--theme-border);
 }
-:root[data-theme] :is(.content-area, .welcome-content) { background: var(--theme-panel); }
+:root[data-theme] :is(.content-area, .welcome-content) {
+  background: radial-gradient(ellipse 70% 65% at 53% 43%,
+    color-mix(in srgb, var(--theme-accent) 13%, var(--theme-panel)),
+    var(--theme-panel) 84%);
+}
 :root[data-theme] :is(.content-header, .messages-intro, .message-composer, .app-statusbar, .profile-settings-person) {
   border-color: var(--theme-border); background-color: var(--theme-panel);
 }
@@ -100,6 +104,19 @@
   .shell-popover > button:hover, .profile-menu > button:hover, .friends-tabs button:hover,
   .friends-tabs button.active, .mobile-nav button.active, .mobile-conversations button.active) {
   background: var(--theme-hover); color: var(--theme-text); border-color: var(--theme-border);
+}
+:root[data-theme] .sidebar-nav-friends:hover { background: var(--theme-hover); }
+:root[data-theme] .sidebar-nav-friends .sidebar-nav-item:hover,
+:root[data-theme] .sidebar-nav-friends.active .sidebar-nav-item {
+  background: transparent; border-color: transparent;
+}
+:root[data-theme] .sidebar-nav-friends .nav-add { color: var(--theme-muted); }
+:root[data-theme] .sidebar-nav-friends .nav-add:hover {
+  background: var(--theme-raised); color: var(--theme-text);
+}
+:root[data-theme] .sidebar-section-title button { color: var(--theme-muted); }
+:root[data-theme] .sidebar-section-title button:hover {
+  background: var(--theme-hover); color: var(--theme-text);
 }
 :root[data-theme] :is(.rail-item, .rail-settings, .sidebar-search, .sidebar-search kbd, .friend-search-input,
   .input-wrap, .profile-password-field, .participant-picker-search, .media-settings-scroll select,
@@ -168,7 +185,7 @@
 :root[data-theme] .art-avatar-purple { color: white; }
 
 :root[data-theme] :is(.brand, .workspace-name, .account-name strong, .header-location, .header-user,
-  .conversation-item-copy strong, .messages-intro h1, .message-entry p, .message-meta strong,
+  .conversation-item-copy strong, .messages-intro h1, .message-entry p,
   .friend-username, .friends-heading h1, .friends-empty-state strong, .welcome-copy h1,
   .progress-card strong, .profile-menu-user strong, .profile-settings-header h2,
   .profile-settings-section-heading h3, .profile-settings-details strong,
@@ -176,6 +193,7 @@
   .client-settings-brand, .profile-settings-brand, .call-surface-title strong,
   .call-sidebar-person-name, .sidebar-bottom-note strong, .empty-conversations > span,
   .profile-menu > button, .shell-popover > button) { color: var(--theme-text); }
+:root[data-theme] .message-meta strong { color: var(--theme-accent-text); }
 :root[data-theme] :is(.topbar-note, .story-copy, .card-heading p, .auth-switch, .card-legal, .secure-note,
   .story-foot, .workspace-picker > svg, .sidebar-section-title, .sidebar-nav-item,
   .empty-conversations, .empty-conversations p, .conversation-item-copy small, .sidebar-bottom-note small,
@@ -202,7 +220,7 @@
   .call-invite-copy span) { color: var(--theme-accent-text); }
 :root[data-theme] :is(.auth-footer, .rail-separator, .header-divider) { border-color: var(--theme-border); background-color: var(--theme-border); }
 :root[data-theme] :is(.eyebrow, .card-overline, .auth-switch button, .card-legal a, .secure-lock,
-  .nav-add, .sidebar-section-title button:hover, .chat-friend-button,
+  .nav-add, .chat-friend-button,
   .header-location > svg, .header-call-button, .friends-eyebrow, .friends-heading-glow,
   .sidebar-note-icon, .progress-icon, .text-button, .app-statusbar b,
   .notification-heading button, .shell-popover > button svg, .shell-popover-link,
@@ -324,7 +342,7 @@
 :root[data-theme] .client-theme-card.active { border-color: var(--theme-accent); }
 :root[data-theme] .client-theme-card:hover { border-color: var(--theme-accent-hover); }
 
-.client-theme-card[data-preview-theme="purple"] { --preview-rail: #0d0918; --preview-sidebar: #171125; --preview-panel: #1b142a; --preview-raised: #392b52; --preview-accent: #9f59e9; --preview-muted: #9c8aaa; }
+.client-theme-card[data-preview-theme="purple"] { --preview-rail: #0c0a17; --preview-sidebar: #151123; --preview-panel: #191427; --preview-raised: #382b51; --preview-accent: #7739dc; --preview-muted: #9c8aaa; }
 .client-theme-card[data-preview-theme="black"] { --preview-rail: #050607; --preview-sidebar: #101114; --preview-panel: #15171a; --preview-raised: #34383e; --preview-accent: #717e8d; --preview-muted: #a7adb5; }
 .client-theme-card[data-preview-theme="gray"] { --preview-rail: #22262b; --preview-sidebar: #2d333b; --preview-panel: #353c45; --preview-raised: #586270; --preview-accent: #7a94b0; --preview-muted: #c8d0d8; }
 .client-theme-card[data-preview-theme="white"] { --preview-rail: #e2e8f0; --preview-sidebar: #edf1f6; --preview-panel: #f7f9fc; --preview-raised: #dce5ee; --preview-accent: #3565a7; --preview-muted: #8699ac; }

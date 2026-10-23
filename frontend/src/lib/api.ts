@@ -2,6 +2,21 @@ export interface User {
   id: string;
   username: string;
   created_at: string;
+  is_admin: boolean;
+}
+
+export interface AdminOverview {
+  users: number;
+  conversations: number;
+  messages: number;
+  active_calls: number;
+  attachment_count: number;
+  attachment_bytes: number;
+  attachment_limit_bytes: number;
+  attachment_user_limit_bytes: number;
+  disk_free_bytes: number;
+  disk_total_bytes: number;
+  recent_users: Array<{ username: string; created_at: string }>;
 }
 
 export type RelationshipStatus =
@@ -160,8 +175,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
-  changePassword: (newPassword: string) =>
-    request<void>("/api/v1/auth/password", { method: "POST", body: JSON.stringify({ new_password: newPassword }) }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/api/v1/auth/password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
+  adminOverview: () => request<AdminOverview>("/api/v1/admin/overview"),
   pushKey: () => request<{ public_key: string }>("/api/v1/push/key"),
   subscribePush: (subscription: PushSubscriptionJSON) =>
     request<void>("/api/v1/push/subscriptions", { method: "POST", body: JSON.stringify(subscription) }),

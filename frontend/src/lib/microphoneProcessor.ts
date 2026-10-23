@@ -51,9 +51,6 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   private source?: MediaStreamAudioSourceNode;
   private gate?: AudioWorkletNode;
   private rnnoise?: RnnoiseWorkletNode;
-  private wetGain?: GainNode;
-  private dryGain?: GainNode;
-  private blend?: GainNode;
   private gain?: GainNode;
   private compressor?: DynamicsCompressorNode;
   private limiter?: DynamicsCompressorNode;
@@ -96,15 +93,18 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
       }
       const wasmBinary = await loadRnnoiseProcessor(audioContext);
       this.rnnoise = new RnnoiseWorkletNode(audioContext, { wasmBinary, maxChannels: 1 });
-      this.wetGain = audioContext.createGain();
-      this.dryGain = audioContext.createGain();
-      this.blend = audioContext.createGain();
       input.connect(this.rnnoise);
-      this.rnnoise.connect(this.wetGain);
-      this.wetGain.connect(this.blend);
-      input.connect(this.dryGain);
-      this.dryGain.connect(this.blend);
-      input = this.blend;
+      input = this.rnnoise;
+      // A parallel dry signal arrives earlier than RNNoise and sounds like a second voice.
+      // Presets adjust only a gate after the processed signal.
+      try {
+        await loadSoftGate(audioContext);
+        this.gate = new AudioWorkletNode(audioContext, "coherent-soft-gate");
+        input.connect(this.gate);
+        input = this.gate;
+      } catch {
+        // RNNoise still works when the optional gate cannot be loaded.
+      }
       this.setRnnoisePreset(this.preset);
     }
     if (this.engine === "browser" && audioContext.audioWorklet && typeof AudioWorkletNode !== "undefined") {
@@ -142,15 +142,12 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
 
   setGateMode(mode: "soft" | "noisy"): void {
     this.gateMode = mode;
-    this.gate?.port.postMessage({ mode });
+    if (this.engine === "browser") this.gate?.port.postMessage({ mode });
   }
 
   setRnnoisePreset(preset: RnnoisePreset): void {
     this.preset = preset;
-    if (!this.context || !this.wetGain || !this.dryGain) return;
-    const dry = preset === "natural" ? 0.6 : preset === "balanced" ? 0.35 : 0.12;
-    this.wetGain.gain.setTargetAtTime(1 - dry, this.context.currentTime, 0.03);
-    this.dryGain.gain.setTargetAtTime(dry, this.context.currentTime, 0.03);
+    if (this.engine === "rnnoise") this.gate?.port.postMessage({ mode: `rnnoise-${preset}` });
   }
 
   getEngine(): NoiseProcessor { return this.engine; }
@@ -161,9 +158,6 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     this.gate?.disconnect();
     this.rnnoise?.disconnect();
     this.rnnoise?.destroy();
-    this.wetGain?.disconnect();
-    this.dryGain?.disconnect();
-    this.blend?.disconnect();
     this.gain?.disconnect();
     this.compressor?.disconnect();
     this.limiter?.disconnect();
@@ -175,9 +169,6 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     this.highpass = undefined;
     this.gate = undefined;
     this.rnnoise = undefined;
-    this.wetGain = undefined;
-    this.dryGain = undefined;
-    this.blend = undefined;
     this.gain = undefined;
     this.compressor = undefined;
     this.limiter = undefined;

@@ -266,7 +266,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
             <button type="button" className={media.rnnoisePreset === "balanced" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "balanced" })}>Сбалансированный</button>
             <button type="button" className={media.rnnoisePreset === "strong" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "strong" })}>Подавление</button>
           </div>
-          <small>Естественный пропускает часть исходного звука, сбалансированный — меньше, а подавление оставляет только обработанный поток.</small>
+          <small>Все режимы передают один обработанный поток. Пресеты меняют приглушение фона в паузах, без смешивания с исходным голосом.</small>
         </div>}
         {media.noiseProcessor === "browser" && <>
         <div className="media-voice-profiles">

@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     livekit_api_key: str | None = None
     livekit_api_secret: SecretStr | None = None
     attachment_dir: str = "/tmp/coherent-attachments"
+    attachment_storage_limit_mb: int = Field(default=2048, ge=100)
+    attachment_user_limit_mb: int = Field(default=512, ge=25)
+    attachment_min_free_mb: int = Field(default=2048, ge=100)
+    admin_username: str | None = None
     vapid_key_path: str = "/tmp/coherent-vapid/private.pem"
     vapid_subject: str = "https://coherent-web.ru"
 

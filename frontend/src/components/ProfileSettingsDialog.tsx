@@ -8,6 +8,7 @@ interface ProfileSettingsDialogProps {
 }
 
 export default function ProfileSettingsDialog({ user, onClose }: ProfileSettingsDialogProps) {
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -33,12 +34,13 @@ export default function ProfileSettingsDialog({ user, onClose }: ProfileSettings
 
   async function savePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || newPassword.length < 8) return;
+    if (busy || !currentPassword || newPassword.length < 8) return;
     setBusy(true);
     setError("");
     setSaved(false);
     try {
-      await api.changePassword(newPassword);
+      await api.changePassword(currentPassword, newPassword);
+      setCurrentPassword("");
       setNewPassword("");
       setSaved(true);
     } catch (reason) {
@@ -95,8 +97,22 @@ export default function ProfileSettingsDialog({ user, onClose }: ProfileSettings
 
           <section className="profile-settings-card" aria-label="Безопасность">
             <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>Безопасность</h3></div>
-            <p>Сменить пароль можно прямо здесь. Текущий пароль вводить не нужно.</p>
+            <p>Для смены пароля введи текущий и новый пароль.</p>
             <form className="profile-password-form" onSubmit={(event) => void savePassword(event)}>
+              <label htmlFor="profile-current-password">Текущий пароль</label>
+              <div className="profile-password-field">
+                <KeyRound size={18} />
+                <input
+                  id="profile-current-password"
+                  type={showPassword ? "text" : "password"}
+                  value={currentPassword}
+                  onChange={(event) => { setCurrentPassword(event.target.value); setSaved(false); }}
+                  maxLength={128}
+                  placeholder="Пароль от аккаунта"
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
               <label htmlFor="profile-new-password">Новый пароль</label>
               <div className="profile-password-field">
                 <KeyRound size={18} />
@@ -117,7 +133,7 @@ export default function ProfileSettingsDialog({ user, onClose }: ProfileSettings
               </div>
               <div className="profile-password-actions">
                 <span>После смены пароля другие сеансы завершатся.</span>
-                <button type="submit" disabled={busy || newPassword.length < 8}>{busy ? "Сохраняем..." : "Сохранить пароль"}</button>
+                <button type="submit" disabled={busy || !currentPassword || newPassword.length < 8}>{busy ? "Сохраняем..." : "Сохранить пароль"}</button>
               </div>
               {error && <p className="profile-settings-error" role="alert">{error}</p>}
               {saved && <p className="profile-settings-success" role="status"><Check size={16} /> Пароль изменён.</p>}

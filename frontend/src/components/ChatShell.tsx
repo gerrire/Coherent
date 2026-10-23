@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Settings,
+  ShieldCheck,
   Users,
   UsersRound,
   UserPlus,
@@ -41,6 +42,7 @@ import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettin
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
+import AdminPanel from "./AdminPanel";
 import { applyMicrophoneProcessing, prepareRnnoise } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 
@@ -83,6 +85,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<{ nonce: number; files: File[] } | null>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -132,6 +135,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const busyInCall = Boolean(currentCall?.participants.some((participant) =>
     participant.user_id === user.id && (participant.state === "joined" || participant.state === "invited")
   ));
+  const microphoneLive = roomRef.current?.state === ConnectionState.Connected;
+  const microphoneButtonLabel = microphoneLive
+    ? media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"
+    : media.microphoneEnabled ? "Подключаться с выключенным микрофоном" : "Подключаться с включённым микрофоном";
+  const microphoneButtonTitle = microphoneLive ? microphoneButtonLabel
+    : media.microphoneEnabled
+      ? "При входе микрофон включён. Нажми, чтобы входить без микрофона"
+      : "При входе микрофон выключен. Нажми, чтобы входить с микрофоном";
   const resumableCall = availableCalls.find((call) => call.conversation_id === activeConversationId
     && call.status === "active"
     && call.participants.some((participant) => participant.user_id === user.id && participant.state === "left"));
@@ -546,6 +557,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           }
         }
         if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined || patch.microphoneVolume !== undefined
+          || patch.noiseProcessor !== undefined
           || microphoneCaptureChanged || patch.microphoneId !== undefined || patch.rnnoisePreset !== undefined)) {
           try {
             await applyMicrophoneProcessing(room, next.microphoneVolume, next.noiseSuppression ? "noisy" : "soft", next.noiseProcessor, next.rnnoisePreset);
@@ -1100,11 +1112,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <MoreHorizontal size={18} />
           </div>
           <button onClick={() => { setShowProfile(false); setProfileSettingsOpen(true); }}><Settings size={16} /> Настройки профиля</button>
+          {user.is_admin && <button onClick={() => { setShowProfile(false); setAdminPanelOpen(true); }}><ShieldCheck size={16} /> Админ-панель</button>}
           <button onClick={() => { void disablePush().catch(() => undefined).finally(onLogout); }}><LogOut size={16} /> Выйти из аккаунта</button>
         </div>
       )}
 
       {profileSettingsOpen && <ProfileSettingsDialog user={user} onClose={() => setProfileSettingsOpen(false)} />}
+      {adminPanelOpen && <AdminPanel onClose={() => setAdminPanelOpen(false)} />}
       {clientSettingsOpen && <ClientSettingsDialog
         section={clientSettingsSection}
         onSectionChange={setClientSettingsSection}
@@ -1135,7 +1149,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </span>
         </button>
         <div className="account-controls">
-          <button className={media.microphoneEnabled ? "is-on" : "is-off"} aria-label={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} title={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} onClick={() => void changeMedia({ microphoneEnabled: !media.microphoneEnabled }).catch(() => undefined)}>
+          <button className={media.microphoneEnabled ? "is-on" : "is-off"} aria-label={microphoneButtonLabel} title={microphoneButtonTitle} onClick={() => void changeMedia({ microphoneEnabled: !media.microphoneEnabled }).catch(() => undefined)}>
             {media.microphoneEnabled ? <Mic size={16} /> : <MicOff size={16} />}
           </button>
           <button className={media.deafened ? "is-off" : "is-on"} aria-label={media.deafened ? "Включить звук собеседников" : "Не слышать собеседников"} title={media.deafened ? "Включить звук" : "Не слышать собеседников"} onClick={() => void changeMedia({ deafened: !media.deafened }).catch(() => undefined)}>

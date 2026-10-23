@@ -1,7 +1,7 @@
 export type ThemeName = "purple" | "black" | "gray" | "white" | "navy" | "green";
 
 export const themes: Array<{ id: ThemeName; label: string; color: string }> = [
-  { id: "purple", label: "Фиолетовая", color: "#9851e8" },
+  { id: "purple", label: "Фиолетовая", color: "#7739dc" },
   { id: "black", label: "Чёрная", color: "#24242b" },
   { id: "gray", label: "Серая", color: "#667080" },
   { id: "white", label: "Белая", color: "#eef1f5" },

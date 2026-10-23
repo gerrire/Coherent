@@ -3,7 +3,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
-from coherent_api.core.security import create_access_token, hash_password
+from coherent_api.core.security import create_access_token, hash_password, verify_password
 from coherent_api.models.user import User
 from coherent_api.schemas.auth import (
     AuthResponse,
@@ -24,6 +24,12 @@ router = APIRouter(prefix="/auth", tags=["Авторизация"])
 SESSION_COOKIE = "coherent_session"
 CSRF_COOKIE = "coherent_csrf"
 CSRF_MAX_AGE = 60 * 60 * 24 * 7
+
+
+def user_response(user: User, request: Request) -> UserResponse:
+    return UserResponse.model_validate(user).model_copy(
+        update={"is_admin": user.username == request.app.state.settings.admin_username}
+    )
 
 
 def set_session_cookies(response: Response, user: User, request: Request) -> None:
@@ -75,7 +81,7 @@ async def register(
         ) from error
 
     set_session_cookies(response, user, request)
-    return AuthResponse(user=UserResponse.model_validate(user))
+    return AuthResponse(user=user_response(user, request))
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -95,7 +101,7 @@ async def login(
         ) from error
 
     set_session_cookies(response, user, request)
-    return AuthResponse(user=UserResponse.model_validate(user))
+    return AuthResponse(user=user_response(user, request))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -113,8 +119,8 @@ async def logout(request: Request, response: Response) -> Response:
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(user: CurrentUser) -> UserResponse:
-    return UserResponse.model_validate(user)
+async def get_me(user: CurrentUser, request: Request) -> UserResponse:
+    return user_response(user, request)
 
 
 @router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
@@ -125,6 +131,8 @@ async def change_password(
     user: CurrentUser,
     session: SessionDep,
 ) -> None:
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Текущий пароль указан неверно")
     user.password_hash = hash_password(body.new_password)
     user.session_version += 1
     await session.commit()
