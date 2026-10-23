@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID
 
+import jwt
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from coherent_api.api.v1 import calls as calls_api
 from coherent_api.core.config import Settings
@@ -70,6 +72,35 @@ def test_leaving_disconnects_participant_and_last_exit_closes_room(
     assert last.status_code == 200
     assert last.json()["status"] == "ended"
     close.assert_awaited_once_with(client.app.state.settings, UUID(call_id))
+
+
+def test_join_token_requires_call_membership(
+    client: TestClient, csrf_token: str, monkeypatch
+) -> None:
+    monkeypatch.setattr(calls_api, "livekit_ready", lambda _: True)
+    call_id, alice_id, _, alice_token, _ = _active_call(client, csrf_token)
+    _, outsider_token = _register(client, csrf_token, "outsider")
+    client.cookies.delete("coherent_session")
+    settings = client.app.state.settings
+    monkeypatch.setattr(settings, "livekit_url", "ws://localhost:7880")
+    monkeypatch.setattr(settings, "livekit_api_key", "test-key")
+    monkeypatch.setattr(settings, "livekit_api_secret", SecretStr("test-secret"))
+
+    denied = client.post(
+        f"/api/v1/calls/{call_id}/join", headers=_headers(outsider_token, csrf_token)
+    )
+    assert denied.status_code == 404
+
+    allowed = client.post(
+        f"/api/v1/calls/{call_id}/join", headers=_headers(alice_token, csrf_token)
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["server_url"] == "ws://localhost:7880"
+    claims = jwt.decode(allowed.json()["token"], options={"verify_signature": False})
+    assert claims["sub"] == alice_id
+    assert claims["video"]["room"] == f"coherent-call-{call_id}"
+    assert 0 < claims["exp"] - datetime.now(UTC).timestamp() <= 121
+    assert allowed.json()["e2ee_key"]
 
 
 def test_cancelling_ringing_call_closes_room(

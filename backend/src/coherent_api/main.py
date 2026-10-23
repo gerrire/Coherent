@@ -12,8 +12,8 @@ from coherent_api.api.v1.router import api_router
 from coherent_api.core.config import Settings, get_settings
 from coherent_api.services.attachment_cleanup import attachment_cleanup_loop
 from coherent_api.services.call_cleanup import call_cleanup_loop
-from coherent_api.services.calls import livekit_ready
 from coherent_api.services.events import MessageEvents
+from coherent_api.services.livekit_media import livekit_ready
 
 
 def create_app(

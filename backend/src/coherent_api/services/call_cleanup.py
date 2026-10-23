@@ -17,17 +17,21 @@ from coherent_api.schemas.calls import CallResponse
 from coherent_api.services.calls import (
     LAST_PARTICIPANT_MINUTES,
     call_response,
-    close_livekit_room,
     is_expired,
     release_members,
 )
 from coherent_api.services.events import MessageEvents
+from coherent_api.services.livekit_media import (
+    ROOM_PREFIX,
+    close_livekit_room,
+    livekit_client,
+    room_name,
+)
 
 logger = logging.getLogger(__name__)
 SWEEP_SECONDS = 5
 ABSENT_SECONDS = 60
 LIVEKIT_REQUEST_SECONDS = 8
-ROOM_PREFIX = "coherent-call-"
 
 
 async def _publish(events: MessageEvents, call: CallResponse) -> None:
@@ -63,13 +67,8 @@ async def _expire_overdue(
 async def _reconcile_rooms(
     session_factory: async_sessionmaker[AsyncSession], settings: Settings
 ) -> dict[UUID, set[UUID]]:
-    assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     present: dict[UUID, set[UUID]] = {}
-    async with livekit_api.LiveKitAPI(
-        url=settings.livekit_url,
-        api_key=settings.livekit_api_key,
-        api_secret=settings.livekit_api_secret.get_secret_value(),
-    ) as client:
+    async with livekit_client(settings) as client:
         rooms = await asyncio.wait_for(
             client.room.list_rooms(livekit_api.ListRoomsRequest()), LIVEKIT_REQUEST_SECONDS
         )
@@ -172,17 +171,12 @@ async def _mark_absent(
 
 
 async def _still_absent(settings: Settings, call_id: UUID, user_id: UUID) -> bool:
-    assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
-    async with livekit_api.LiveKitAPI(
-        url=settings.livekit_url,
-        api_key=settings.livekit_api_key,
-        api_secret=settings.livekit_api_secret.get_secret_value(),
-    ) as client:
+    async with livekit_client(settings) as client:
         try:
             await asyncio.wait_for(
                 client.room.get_participant(
                     livekit_api.RoomParticipantIdentity(
-                        room=f"{ROOM_PREFIX}{call_id}", identity=str(user_id)
+                        room=room_name(call_id), identity=str(user_id)
                     )
                 ),
                 LIVEKIT_REQUEST_SECONDS,

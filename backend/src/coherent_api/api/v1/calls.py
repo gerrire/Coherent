@@ -18,16 +18,18 @@ from coherent_api.services.calls import (
     CallNotFoundError,
     CallStateError,
     accept_call,
-    close_livekit_room,
     current_calls,
     end_call,
     invite_to_call,
     join_call,
-    livekit_ready,
-    remove_livekit_participant,
     start_call,
 )
-from coherent_api.services.messages import ConversationNotFoundError
+from coherent_api.services.conversation_access import ConversationNotFoundError
+from coherent_api.services.livekit_media import (
+    close_livekit_room,
+    livekit_ready,
+    remove_livekit_participant,
+)
 from coherent_api.services.push import send_to_users
 
 router = APIRouter(tags=["Звонки"])

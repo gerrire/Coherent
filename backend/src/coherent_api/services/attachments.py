@@ -14,7 +14,7 @@ from coherent_api.models.message_attachment import MessageAttachment
 from coherent_api.models.user import User
 from coherent_api.schemas.messages import AttachmentResponse, MessageResponse
 from coherent_api.services.attachment_cleanup import is_expired
-from coherent_api.services.messages import get_conversation
+from coherent_api.services.conversation_access import conversation_member_ids, get_conversation
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
 MAX_TOTAL_SIZE = 50 * 1024 * 1024
@@ -79,8 +79,6 @@ async def save_message_files(
     files: list[UploadFile],
     settings: Settings,
 ) -> tuple[MessageResponse, tuple[UUID, ...]]:
-    from coherent_api.services.messages import conversation_member_ids
-
     conversation = await get_conversation(session, user, conversation_id)
     clean_body = body.strip()
     if len(clean_body) > 4000 or not files or len(files) > MAX_FILES:
@@ -112,8 +110,13 @@ async def save_message_files(
                         raise AttachmentError(
                             "Файл слишком большой: до 25 МБ на файл и 50 МБ на сообщение"
                         )
-                    if storage_used + total > storage_limit or shutil.disk_usage(directory).free - len(chunk) < free_reserve:
-                        raise AttachmentQuotaError("Хранилище файлов заполнено. Попробуй отправить файл позже.")
+                    if (
+                        storage_used + total > storage_limit
+                        or shutil.disk_usage(directory).free - len(chunk) < free_reserve
+                    ):
+                        raise AttachmentQuotaError(
+                            "Хранилище файлов заполнено. Попробуй отправить файл позже."
+                        )
                     target.write(chunk)
             if not size:
                 raise AttachmentError("Пустой файл нельзя отправить")

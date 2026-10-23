@@ -52,8 +52,12 @@ async def overview(request: Request, user: CurrentUser, session: SessionDep) -> 
         users=await session.scalar(select(func.count()).select_from(User)) or 0,
         conversations=await session.scalar(select(func.count()).select_from(Conversation)) or 0,
         messages=await session.scalar(select(func.count()).select_from(Message)) or 0,
-        active_calls=await session.scalar(select(func.count()).select_from(Call).where(Call.status == "active")) or 0,
-        attachment_count=await session.scalar(select(func.count()).select_from(MessageAttachment)) or 0,
+        active_calls=await session.scalar(
+            select(func.count()).select_from(Call).where(Call.status == "active")
+        ) or 0,
+        attachment_count=await session.scalar(
+            select(func.count()).select_from(MessageAttachment)
+        ) or 0,
         attachment_bytes=attachment_storage_bytes(directory),
         attachment_limit_bytes=settings.attachment_storage_limit_mb * 1024 * 1024,
         disk_free_bytes=disk.free,

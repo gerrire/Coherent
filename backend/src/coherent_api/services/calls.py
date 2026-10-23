@@ -1,12 +1,9 @@
-import asyncio
 import base64
 import hashlib
 import hmac
-import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from livekit import api as livekit_api
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +17,7 @@ from coherent_api.schemas.calls import (
     CallResponse,
     CurrentCallsResponse,
 )
-from coherent_api.services.messages import (
+from coherent_api.services.conversation_access import (
     GroupMembershipError,
     add_group_members,
     conversation_member_ids,
@@ -28,18 +25,12 @@ from coherent_api.services.messages import (
     other_user_id,
     validate_friends,
 )
+from coherent_api.services.livekit_media import issue_join_token
 
 RING_SECONDS = 60
 MAX_CALL_HOURS = 4
 MAX_CALL_MEMBERS = 10
 LAST_PARTICIPANT_MINUTES = 3
-logger = logging.getLogger(__name__)
-
-
-def room_name(call_id: UUID) -> str:
-    return f"coherent-call-{call_id}"
-
-
 class CallNotFoundError(Exception):
     pass
 
@@ -62,10 +53,6 @@ class CallFullError(Exception):
 
 class CallInviteError(Exception):
     pass
-
-
-def livekit_ready(settings: Settings) -> bool:
-    return bool(settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret)
 
 
 async def call_response(session: AsyncSession, call: Call) -> CallResponse:
@@ -370,54 +357,6 @@ async def invite_to_call(
     return await call_response(session, call)
 
 
-async def close_livekit_room(settings: Settings, call_id: UUID) -> None:
-    if not livekit_ready(settings):
-        return
-    assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
-    try:
-        async with asyncio.timeout(8):
-            async with livekit_api.LiveKitAPI(
-                url=settings.livekit_url,
-                api_key=settings.livekit_api_key,
-                api_secret=settings.livekit_api_secret.get_secret_value(),
-            ) as client:
-                await client.room.delete_room(
-                    livekit_api.DeleteRoomRequest(room=room_name(call_id))
-                )
-    except livekit_api.ServerError as error:
-        if error.status != 404:
-            logger.warning("Could not close LiveKit room %s: %s", call_id, error)
-    except Exception as error:
-        logger.warning("Could not reach LiveKit to close room %s: %s", call_id, error)
-
-
-async def remove_livekit_participant(settings: Settings, call_id: UUID, user_id: UUID) -> None:
-    if not livekit_ready(settings):
-        return
-    assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
-    try:
-        async with asyncio.timeout(8):
-            async with livekit_api.LiveKitAPI(
-                url=settings.livekit_url,
-                api_key=settings.livekit_api_key,
-                api_secret=settings.livekit_api_secret.get_secret_value(),
-            ) as client:
-                await client.room.remove_participant(
-                    livekit_api.RoomParticipantIdentity(
-                        room=room_name(call_id), identity=str(user_id)
-                    )
-                )
-    except livekit_api.ServerError as error:
-        if error.status != 404:
-            logger.warning(
-                "Could not remove participant %s from call %s: %s", user_id, call_id, error
-            )
-    except Exception as error:
-        logger.warning(
-            "Could not reach LiveKit to remove participant from call %s: %s", call_id, error
-        )
-
-
 async def join_call(
     session: AsyncSession, user: User, call_id: UUID, settings: Settings
 ) -> CallJoinResponse:
@@ -426,24 +365,7 @@ async def join_call(
     if call.status != "active" or is_expired(call) or member is None or member.state != "joined":
         raise CallStateError
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
-    token = (
-        livekit_api.AccessToken(
-            settings.livekit_api_key, settings.livekit_api_secret.get_secret_value()
-        )
-        .with_identity(str(user.id))
-        .with_name(user.username)
-        .with_grants(
-            livekit_api.VideoGrants(
-                room_join=True,
-                room=room_name(call.id),
-                can_publish=True,
-                can_subscribe=True,
-                can_update_own_metadata=True,
-            )
-        )
-        .with_ttl(timedelta(minutes=2))
-        .to_jwt()
-    )
+    token = issue_join_token(settings, call.id, user.id, user.username)
     key = hmac.new(
         settings.secret_key.get_secret_value().encode(),
         b"coherent-call-e2ee-v1:" + call.id.bytes,

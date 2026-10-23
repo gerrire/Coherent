@@ -72,6 +72,44 @@ def test_direct_conversation_and_message_access(client: TestClient, csrf_token: 
     ).status_code == 404
 
 
+def test_group_conversation_access_requires_membership(
+    client: TestClient, csrf_token: str
+) -> None:
+    _, alice_token = create_user(client, csrf_token, "alice")
+    bob_id, bob_token = create_user(client, csrf_token, "bob")
+    charlie_id, charlie_token = create_user(client, csrf_token, "charlie")
+    _, outsider_token = create_user(client, csrf_token, "outsider")
+    client.cookies.delete("coherent_session")
+
+    for friend_id, friend_token in ((bob_id, bob_token), (charlie_id, charlie_token)):
+        request = client.post(
+            "/api/v1/friends/requests",
+            headers=auth_headers(alice_token, csrf_token),
+            json={"target_user_id": friend_id},
+        )
+        assert request.status_code == 201
+        accepted = client.post(
+            f"/api/v1/friends/requests/{request.json()['request_id']}/accept",
+            headers=auth_headers(friend_token, csrf_token),
+        )
+        assert accepted.status_code == 200
+
+    group = client.post(
+        "/api/v1/conversations/groups",
+        headers=auth_headers(alice_token, csrf_token),
+        json={"user_ids": [bob_id, charlie_id], "name": "Команда"},
+    )
+    assert group.status_code == 201
+    endpoint = f"/api/v1/conversations/{group.json()['id']}/messages"
+    assert client.get(endpoint, headers=auth_headers(bob_token, csrf_token)).status_code == 200
+    assert client.get(endpoint, headers=auth_headers(outsider_token, csrf_token)).status_code == 404
+    assert client.post(
+        endpoint,
+        headers=auth_headers(outsider_token, csrf_token),
+        json={"body": "Не мой чат"},
+    ).status_code == 404
+
+
 def test_message_validation_and_pagination(client: TestClient, csrf_token: str) -> None:
     alice_id, alice_token = create_user(client, csrf_token, "alice")
     _, bob_token = create_user(client, csrf_token, "bob")
@@ -129,6 +167,7 @@ def test_new_message_is_delivered_to_recipient(client: TestClient, csrf_token: s
         "/api/v1/conversations/events",
         headers={"origin": "http://localhost:5173"},
     ) as websocket:
+        assert websocket.receive_json()["type"] == "presence"
         client.cookies.delete("coherent_session")
         sent = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
