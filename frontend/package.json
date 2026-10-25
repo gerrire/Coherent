@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "crypto:build": "node scripts/build-crypto.mjs",
+    "crypto:bundle": "node scripts/bundle-crypto.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "tauri": "tauri"

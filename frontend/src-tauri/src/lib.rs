@@ -2,6 +2,7 @@ mod audio;
 mod capture_windows;
 mod desktop;
 mod diagnostics;
+mod e2ee;
 mod network;
 mod permissions;
 mod screen_capture;
@@ -68,6 +69,7 @@ pub fn run() {
         .on_window_event(desktop::on_window_event)
         .invoke_handler(tauri::generate_handler![
             network::api_initialize_csrf,
+            e2ee::desktop_crypto_request,
             permissions::desktop_media_permissions_get,
             permissions::desktop_media_permissions_set,
             network::api_request,

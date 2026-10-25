@@ -1,0 +1,47 @@
+import { isTauri, invoke } from "@tauri-apps/api/core";
+import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest } from "./types";
+
+/** The chat integration remains disabled until authenticated device approval,
+ * delivery sequencing and history migration are complete. This is the shared
+ * platform bridge, not an automatic upgrade of existing cloud conversations. */
+export class CryptoClient {
+  private worker: Worker | null = null;
+  private pending = new Map<string, { resolve(value: unknown): void; reject(reason: Error): void }>();
+
+  constructor(private readonly account: string) {
+    if (!UUID_PATTERN.test(account)) throw new Error("Неверный аккаунт");
+    if (!isTauri()) {
+      this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "coherent-crypto" });
+      this.worker.onmessage = (event: MessageEvent<{ id: string; result?: unknown; error?: string }>) => {
+        const request = this.pending.get(event.data.id);
+        if (!request) return;
+        this.pending.delete(event.data.id);
+        if (event.data.error) request.reject(new Error(event.data.error));
+        else request.resolve(event.data.result);
+      };
+      this.worker.onerror = () => this.close();
+    }
+  }
+
+  private call<T>(request: VaultRequest): Promise<T> {
+    if (isTauri()) return invoke<T>("desktop_crypto_request", { accountId: this.account, request });
+    const worker = this.worker;
+    if (!worker) return Promise.reject(new Error("Защищённое хранилище закрыто"));
+    const id = crypto.randomUUID();
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve: value => resolve(value as T), reject });
+      worker.postMessage({ id, account: this.account, request });
+    });
+  }
+
+  execute(command: CryptoCommand, deliveredId?: string): Promise<CryptoReply> {
+    return this.call({ type: "execute", command, delivered_id: deliveredId });
+  }
+  pendingDeliveries(): Promise<DeliveryItem[]> { return this.call({ type: "pending" }); }
+  delivered(deliveryId: string): Promise<CryptoReply> { return this.call({ type: "delivered", delivery_id: deliveryId }); }
+  close(): void {
+    this.worker?.terminate(); this.worker = null;
+    for (const request of this.pending.values()) request.reject(new Error("Защищённое хранилище закрыто"));
+    this.pending.clear();
+  }
+}

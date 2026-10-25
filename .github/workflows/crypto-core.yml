@@ -1,0 +1,40 @@
+name: Compile shared cryptography
+
+on:
+  push:
+    branches: [main, "codex/**"]
+    paths: ["crates/**", "frontend/src/lib/crypto/**", "frontend/scripts/*crypto.mjs", "frontend/src-tauri/src/e2ee.rs", "frontend/src-tauri/Cargo.*", ".github/workflows/crypto-core.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["crates/**", "frontend/src/lib/crypto/**", "frontend/scripts/*crypto.mjs", "frontend/src-tauri/src/e2ee.rs", "frontend/src-tauri/Cargo.*", ".github/workflows/crypto-core.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+          rustup default 1.99.1
+          rustup target add wasm32-unknown-unknown
+      - name: Check native core and storage adapter
+        run: |
+          cargo fmt --manifest-path crates/coherent-crypto/Cargo.toml --check
+          cargo check --locked --manifest-path crates/coherent-crypto/Cargo.toml --features native-vault
+      - name: Check browser core
+        run: cargo check --locked --manifest-path crates/coherent-crypto/Cargo.toml --target wasm32-unknown-unknown --features wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Compile browser bridge and Worker
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run crypto:bundle

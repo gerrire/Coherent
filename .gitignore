@@ -18,8 +18,12 @@ backups/
 data/
 
 # Frontend
+crates/**/target/
+crates/**/pkg/
 node_modules/
 frontend/dist/
+frontend/public/crypto/
+frontend/crypto-dist/
 frontend/src-tauri/target/
 frontend/src-tauri.zip
 frontend/src-tauri/tauri.conf.zip

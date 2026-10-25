@@ -1,4 +1,9 @@
 .git
+.tools
+.codex
+data
+backups
+**/target
 .env
 .env.*
 **/.venv
