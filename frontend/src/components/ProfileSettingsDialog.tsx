@@ -32,8 +32,14 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const emailCodeRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!emailSent) return;
+    emailCodeRef.current?.scrollIntoView({ block: "center", behavior: "auto" });
+  }, [emailSent]);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -162,7 +168,7 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
               <label htmlFor="profile-email-password">Текущий пароль для привязки адреса</label><div className="profile-password-field"><KeyRound size={18} /><input id="profile-email-password" type="password" autoComplete="current-password" value={emailPassword} onChange={(event) => setEmailPassword(event.target.value)} maxLength={128} required /></div>
               <div className="profile-password-actions"><span>Код действует 10 минут.</span><button type="submit" disabled={!user.email_delivery_available || emailBusy || emailWait > 0 || !emailPassword || !email.trim()}>{emailWait ? `Повторить через ${emailWait} с` : "Отправить код"}</button></div>
             </form>
-            {emailSent && <form className="profile-password-form" onSubmit={(event) => void confirmEmail(event)}><label htmlFor="profile-email-code">Код из письма</label><div className="profile-password-field"><input id="profile-email-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="000000" required /></div><div className="profile-password-actions"><span>Письмо отправлено на {email}.</span><button type="submit" disabled={emailBusy || emailCode.length !== 6}>Подтвердить адрес</button></div></form>}
+            {emailSent && <form className="profile-password-form" onSubmit={(event) => void confirmEmail(event)}><label htmlFor="profile-email-code">Код из письма</label><div className="profile-password-field"><input ref={emailCodeRef} id="profile-email-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="000000" required /></div><div className="profile-password-actions"><span>Письмо отправлено на {email}.</span><button type="submit" disabled={emailBusy || emailCode.length !== 6}>Подтвердить адрес</button></div></form>}
             {emailError && <p className="profile-settings-error" role="alert">{emailError}</p>}
           </section>
           <section className="profile-settings-card" aria-label="Безопасность">
