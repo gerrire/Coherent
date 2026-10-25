@@ -3792,33 +3792,6 @@ a {
   .admin-body { max-height: calc(100dvh - 106px); padding: 18px; }
   .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.desktop-update-notice {
-  position: fixed;
-  z-index: 3000;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  max-width: calc(100vw - 24px);
-  padding: 10px 12px 10px 16px;
-  border: 1px solid var(--border, #414459);
-  border-radius: 14px;
-  background: var(--surface, #202331);
-  color: var(--text, #fff);
-  box-shadow: 0 12px 36px #0005;
-}
-.desktop-update-notice button {
-  border: 0;
-  border-radius: 9px;
-  padding: 8px 12px;
-  background: #747bff;
-  color: #fff;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.desktop-update-notice button:disabled { opacity: .65; cursor: wait; }
 .desktop-settings-body { display: flex; flex-direction: column; gap: 16px; }
 .desktop-settings-body .client-settings-intro { margin-bottom: 2px; }
 .desktop-settings-group { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 13px; background: var(--bg-raised); padding: 15px 18px; }

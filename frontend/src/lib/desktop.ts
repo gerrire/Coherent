@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
 export interface DesktopSettings {
@@ -68,14 +68,30 @@ export async function desktopRaiseIncomingCall(callId: string): Promise<void> {
   }
 }
 
-type UpdateState = { available: boolean; status: string; busy: boolean };
+export type UpdateState = {
+  available: boolean; status: string; busy: boolean;
+  phase: "idle" | "checking" | "available" | "downloading" | "ready" | "installing" | "error";
+  currentVersion: string; version: string | null; notes: string;
+  downloaded: boolean; downloadedBytes: number; totalBytes: number | null;
+  progress: number | null; lastCheckedAt: number | null; callActive: boolean;
+};
 let update: Update | null = null;
-let updateState: UpdateState = { available: false, status: "", busy: false };
+let updateState: UpdateState = { available: false, status: "", busy: false, phase: "idle",
+  currentVersion: "", version: null, notes: "", downloaded: false, downloadedBytes: 0,
+  totalBytes: null, progress: null, lastCheckedAt: null, callActive: false };
 const updateListeners = new Set<() => void>();
 let watcherStarted = false;
 let mediaBusy = false;
 let downloadedUpdate: Update | null = null;
-export function setUpdateMediaBusy(value: boolean) { mediaBusy = value; }
+let versionRequest: Promise<void> | null = null;
+export function setUpdateMediaBusy(value: boolean) {
+  mediaBusy = value;
+  setUpdateState({ callActive: value,
+    ...(updateState.downloaded && !updateState.busy ? { status: value
+      ? "Обновление скачано. Установка доступна после звонка."
+      : "Обновление скачано и проверено. Можно установить и перезапустить приложение." } : {}),
+  });
+}
 
 function setUpdateState(patch: Partial<UpdateState>) {
   updateState = { ...updateState, ...patch };
@@ -97,35 +113,78 @@ export function startUpdateWatcher(): void {
 
 export async function checkForUpdates(silent = false): Promise<void> {
   if (!isTauri() || updateState.busy) return;
-  setUpdateState({ busy: true, status: silent ? updateState.status : "Проверяем обновления…" });
+  setUpdateState({ busy: true, phase: "checking", status: silent && updateState.available ? updateState.status : "Проверяем обновления…" });
   try {
-    update = await check();
-    setUpdateState({ available: Boolean(update), status: update ? "Доступно обновление Coherent." : "Обновлений пока нет." });
+    versionRequest ??= getVersion().then(currentVersion => { setUpdateState({ currentVersion }); }).catch(() => undefined);
+    await versionRequest;
+    const candidate = await check({ timeout: 20000 });
+    if (candidate && update && candidate.version === update.version && downloadedUpdate === update) {
+      if (candidate !== update) await candidate.close().catch(() => undefined);
+    } else {
+      const previous = update;
+      update = candidate;
+      downloadedUpdate = null;
+      if (previous && previous !== candidate) await previous.close().catch(() => undefined);
+      setUpdateState({ downloaded: false, downloadedBytes: 0, totalBytes: null, progress: null });
+    }
+    setUpdateState({ available: Boolean(update), version: update?.version ?? null, notes: update?.body ?? "",
+      phase: downloadedUpdate ? "ready" : update ? "available" : "idle", lastCheckedAt: Date.now(),
+      status: downloadedUpdate ? "Обновление скачано и проверено. Можно установить и перезапустить приложение."
+        : update ? "Новая версия готова к скачиванию." : "Установлена последняя версия Coherent.",
+    });
   } catch {
-    setUpdateState({ status: "Не удалось проверить обновления. Попробуй позже." });
+    setUpdateState({ phase: "error", status: "Не удалось проверить обновления. Проверь подключение и попробуй снова." });
   } finally {
     setUpdateState({ busy: false });
   }
 }
 
-export async function installUpdate(): Promise<void> {
-  if (!update || updateState.busy) return;
-  if (mediaBusy) { setUpdateState({ status: "Заверши звонок перед установкой обновления." }); return; }
-  setUpdateState({ busy: true, status: "Скачиваем обновление…" });
+export async function downloadUpdate(): Promise<void> {
+  if (!isTauri() || !update || updateState.busy || downloadedUpdate === update) return;
+  const selected = update;
+  let downloadedBytes = 0;
+  let totalBytes: number | null = null;
+  let acceptingProgress = true;
+  setUpdateState({ busy: true, phase: "downloading", status: "Скачиваем обновление…", downloaded: false,
+    downloadedBytes: 0, totalBytes: null, progress: null });
   try {
-    const selected = update;
-    if (downloadedUpdate !== selected) {
-      await selected.download();
-      downloadedUpdate = selected;
-    }
-    // A call may have started while the download was in progress.
-    if (mediaBusy) { setUpdateState({ status: "Обновление скачано. Установи его после звонка." }); return; }
-    setUpdateState({ status: "Устанавливаем обновление…" });
-    await selected.install();
-    await relaunch();
-  } catch (reason) {
-    setUpdateState({ status: reason instanceof Error ? reason.message : "Не удалось установить обновление." });
-  } finally {
-    setUpdateState({ busy: false });
+    await selected.download(event => {
+      if (!acceptingProgress || selected !== update) return;
+      if (event.event === "Started") totalBytes = event.data.contentLength || null;
+      if (event.event === "Progress") downloadedBytes += event.data.chunkLength;
+      setUpdateState({ downloadedBytes, totalBytes,
+        progress: totalBytes ? Math.min(99, Math.round(downloadedBytes / totalBytes * 100)) : null,
+        status: event.event === "Finished" ? "Проверяем подпись обновления…" : "Скачиваем обновление…",
+      });
+    }, { timeout: 120000 });
+    downloadedUpdate = selected;
+    setUpdateState({ phase: "ready", downloaded: true, progress: 100,
+      status: mediaBusy ? "Обновление скачано. Установка доступна после звонка."
+        : "Обновление скачано и проверено. Можно установить и перезапустить приложение." });
+  } catch {
+    downloadedUpdate = null;
+    setUpdateState({ phase: "error", downloaded: false, progress: null,
+      status: "Не удалось скачать или проверить обновление. Повтори скачивание." });
+  } finally { acceptingProgress = false; setUpdateState({ busy: false }); }
+}
+
+export async function installUpdate(): Promise<void> {
+  if (!isTauri() || !update || updateState.busy) return;
+  if (mediaBusy) { setUpdateState({ status: "Заверши звонок перед установкой обновления." }); return; }
+  const selected = update;
+  if (downloadedUpdate !== selected) await downloadUpdate();
+  if (downloadedUpdate !== selected || update !== selected || updateState.busy) return;
+  if (mediaBusy) { setUpdateState({ status: "Обновление скачано. Установка доступна после звонка." }); return; }
+  setUpdateState({ busy: true, phase: "installing", status: "Устанавливаем обновление. Приложение перезапустится…" });
+  try {
+    // On Windows the verified installer closes this process and restarts the
+    // installed client. A separate relaunch races with the installer replacing it.
+    await selected.install({ restartAfterInstall: true });
+  } catch {
+    // The native installer may have consumed its bytes before failing to launch.
+    // A retry must download/verify again instead of trusting an invalid resource.
+    downloadedUpdate = null;
+    setUpdateState({ phase: "error", downloaded: false, busy: false, progress: null,
+      status: "Не удалось установить обновление. Приложение продолжает работать; попробуй скачать его снова." });
   }
 }

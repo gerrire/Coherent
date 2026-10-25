@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import AuthPanel from "./components/AuthPanel";
 import ChatShell from "./components/ChatShell";
@@ -8,18 +8,8 @@ import DesktopMediaConsent from "./components/DesktopMediaConsent";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./components/ClientSettingsDialog";
 import { loadMediaPreferences, saveMediaPreferences, type MediaPreferences } from "./lib/media";
 import { api, ApiError, initializeCsrf, type User } from "./lib/api";
-import { getUpdateState, installUpdate, startUpdateWatcher, subscribeUpdate } from "./lib/desktop";
-
-function DesktopUpdateNotice() {
-  const update = useSyncExternalStore(subscribeUpdate, getUpdateState);
-  if (!isTauri() || !update.available) return null;
-  return <div className="desktop-update-notice" role="status">
-    <span>Доступно обновление Coherent</span>
-    <button type="button" disabled={update.busy} onClick={() => void installUpdate()}>
-      {update.busy ? update.status : "Обновить сейчас"}
-    </button>
-  </div>;
-}
+import { startUpdateWatcher } from "./lib/desktop";
+import { DesktopUpdateNotice } from "./components/DesktopUpdates";
 
 function MainApp() {
   const [user, setUser] = useState<User | null>(null);
@@ -97,7 +87,7 @@ function MainApp() {
     );
   }
 
-  return <><DesktopUpdateNotice />{user
+  return <>{user
     ? <ChatShell user={user} onLogout={logout} />
     : <AuthPanel onAuthenticated={setUser} />}</>;
 }
@@ -107,5 +97,5 @@ export default function App() {
     const windowMode = new URLSearchParams(window.location.search).get("window");
     if (windowMode === "incoming-call") return <IncomingCallWindow />;
   }
-  return <>{isTauri() && <DesktopTitleBar />}<MainApp />{isTauri() && <DesktopMediaConsent />}</>;
+  return <>{isTauri() && <><DesktopTitleBar /><DesktopUpdateNotice /></>}<MainApp />{isTauri() && <DesktopMediaConsent />}</>;
 }

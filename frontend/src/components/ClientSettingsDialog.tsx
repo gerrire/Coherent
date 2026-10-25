@@ -1,109 +1,50 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { Bell, Check, Monitor, Settings2, SlidersHorizontal, X } from "lucide-react";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import { type AudioProcessingState, type MediaPreferences } from "../lib/media";
 import { applyTheme, loadTheme, themes } from "../lib/theme";
-import { checkForUpdates, defaultDesktopSettings, getAutostart, getDesktopSettings, getUpdateState, installUpdate, requestDesktopNotifications, saveDesktopSettings, sendDesktopTestNotification, setAutostart, subscribeUpdate, type DesktopSettings } from "../lib/desktop";
-import { checkScreenBridgeOnly, checkScreenEncoder } from "../lib/nativeScreenShare";
-import { checkCallAudioIsolation } from "../lib/checkCallAudioIsolation";
+import { defaultDesktopSettings, getAutostart, getDesktopSettings, requestDesktopNotifications, saveDesktopSettings, setAutostart, type DesktopSettings } from "../lib/desktop";
+import { DesktopUpdateSettings } from "./DesktopUpdates";
 import { getMediaAccess, setMediaAccess, type MediaAccess } from "../lib/desktopPermissions";
 
 export type ClientSettingsSection = "appearance" | "media" | "desktop";
+
+const DesktopDiagnostics = lazy(() => import("./DesktopDiagnostics"));
 
 function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettingsDialogProps["onMediaChange"] }) {
   const [settings, setSettings] = useState<DesktopSettings>(defaultDesktopSettings);
   const [autostart, setAutostartState] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notificationTestStatus, setNotificationTestStatus] = useState("");
-  const [captureTestStatus, setCaptureTestStatus] = useState("");
-  const [access, setAccess] = useState<MediaAccess>({microphone:false,camera:false});
-  const update = useSyncExternalStore(subscribeUpdate, getUpdateState);
+  const [diagnosticsOpened, setDiagnosticsOpened] = useState(false);
+  const [access, setAccess] = useState<MediaAccess>({ microphone: false, camera: false });
 
   useEffect(() => {
-    void getDesktopSettings().then(setSettings).catch((reason) => setError(String(reason)));
+    void getDesktopSettings().then(setSettings).catch(() => setError("Не удалось загрузить настройки приложения."));
     void getAutostart().then(setAutostartState).catch(() => undefined);
     void getMediaAccess().then(setAccess).catch(() => undefined);
   }, []);
 
   async function save(patch: Partial<DesktopSettings>) {
-    setBusy(true);
-    setError("");
+    setBusy(true); setError("");
     try {
-      if (patch.showNotifications && !await requestDesktopNotifications()) {
-        throw new Error("Разреши уведомления в настройках Windows.");
-      }
+      if (patch.showNotifications && !await requestDesktopNotifications()) throw new Error("Разреши уведомления в настройках Windows.");
       const next = { ...settings, ...patch };
-      await saveDesktopSettings(next);
-      setSettings(next);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось сохранить настройку.");
-    } finally { setBusy(false); }
+      await saveDesktopSettings(next); setSettings(next);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось сохранить настройку."); }
+    finally { setBusy(false); }
   }
 
   async function changeAutostart() {
-    setBusy(true);
-    setError("");
-    try {
-      await setAutostart(!autostart);
-      setAutostartState(!autostart);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось изменить автозапуск.");
-    } finally { setBusy(false); }
-  }
-
-  async function testNotifications() {
-    setBusy(true);
-    setError("");
-    setNotificationTestStatus("");
-    try {
-      await sendDesktopTestNotification();
-      setNotificationTestStatus("Системное уведомление отправлено. Если баннер скрыт, проверь Центр уведомлений.");
-    }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось отправить тестовое уведомление."); }
-    finally { setBusy(false); }
-  }
-
-  async function testScreenCapture() {
-    setBusy(true);
-    setError("");
-    setCaptureTestStatus("");
-    try { setCaptureTestStatus(await invoke<string>("desktop_screen_self_check")); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось захватить экран."); }
-    finally { setBusy(false); }
-  }
-
-  async function testVideoBridge() {
-    setBusy(true);
-    setError("");
-    setCaptureTestStatus("");
-    try { setCaptureTestStatus(await checkScreenBridgeOnly()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось обработать видеопоток."); }
-    finally { setBusy(false); }
-  }
-
-  async function testVideoEncoder() {
-    setBusy(true);
-    setError("");
-    setCaptureTestStatus("");
-    try { setCaptureTestStatus(await checkScreenEncoder()); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось закодировать видеопоток."); }
-    finally { setBusy(false); }
-  }
-
-  async function testClientPlayback() {
-    setBusy(true);
-    setCaptureTestStatus("");
-    try {
-      setError("");
-      setCaptureTestStatus(await checkCallAudioIsolation());
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось проверить звук звонка."); }
+    setBusy(true); setError("");
+    try { await setAutostart(!autostart); setAutostartState(!autostart); }
+    catch { setError("Не удалось изменить автозапуск."); }
     finally { setBusy(false); }
   }
 
   return <div className="client-settings-body desktop-settings-body">
-    <p className="client-settings-intro">Как Coherent работает в Windows. Параметры сохраняются на этом компьютере.</p>
+    <DesktopUpdateSettings />
     {error && <p className="desktop-settings-error" role="alert">{error}</p>}
     <div className="desktop-settings-group">
       <strong>Окно и запуск</strong>
@@ -113,10 +54,8 @@ function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettings
     <div className="desktop-settings-group">
       <strong>Звонки и уведомления</strong>
       <label className="desktop-settings-row"><span><b>Показывать входящий звонок</b><small>Окно появится поверх других приложений.</small></span><input type="checkbox" checked={settings.raiseOnCall} disabled={busy} onChange={(event) => void save({ raiseOnCall: event.target.checked })} /></label>
-      <label className="desktop-settings-row"><span><b>Уведомления Windows</b><small>Сообщения, заявки и входящие звонки.</small></span><input type="checkbox" checked={settings.showNotifications} disabled={busy} onChange={(event) => void save({ showNotifications: event.target.checked })} /></label>
+      <label className="desktop-settings-row"><span><b>Уведомления Windows</b><small>Сообщения и заявки. Входящий звонок появляется отдельным окном.</small></span><input type="checkbox" checked={settings.showNotifications} disabled={busy} onChange={(event) => void save({ showNotifications: event.target.checked })} /></label>
       <label className="desktop-settings-row"><span><b>Звук уведомлений</b><small>Сообщения и заявки. Звонки используют свою мелодию.</small></span><input type="checkbox" checked={settings.notificationSound} disabled={busy || !settings.showNotifications} onChange={(event) => void save({ notificationSound: event.target.checked })} /></label>
-      <div className="desktop-settings-row"><span><b>Проверить уведомления</b><small>Отправить тест в системный центр уведомлений.</small></span><button type="button" disabled={busy} onClick={() => void testNotifications()}>Отправить тест</button></div>
-      {notificationTestStatus && <p className="desktop-settings-success" role="status">{notificationTestStatus}</p>}
     </div>
     <div className="desktop-settings-group">
       <strong>Доступ к устройствам</strong>
@@ -125,25 +64,17 @@ function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettings
         <span><b>{kind === "microphone" ? "Микрофон" : "Камера"}</b><small>{access[kind] ? "Доступ разрешён" : "Запрос при включении"}</small></span>
         <button disabled={busy || !access[kind]} onClick={() => {
           setBusy(true);
-          const next = {...access, [kind]:false};
-          void onMediaChange(kind === "microphone" ? {microphoneEnabled:false} : {cameraEnabled:false})
+          const next = { ...access, [kind]: false };
+          void onMediaChange(kind === "microphone" ? { microphoneEnabled: false } : { cameraEnabled: false })
             .then(() => setMediaAccess(next)).then(() => setAccess(next))
             .catch(() => setError("Не удалось изменить доступ.")).finally(() => setBusy(false));
         }}>Отозвать</button>
       </div>)}
     </div>
-    <div className="desktop-settings-group">
-      <strong>Демонстрация экрана</strong>
-      <div className="desktop-settings-row"><span><b>Проверить исключение звука звонка</b><small>Короткий тихий сигнал через локальный звонок. Перед проверкой остановите демонстрацию и другой звук.</small></span><button type="button" disabled={busy} onClick={() => void testClientPlayback()}>Проверить</button></div>
-      <div className="desktop-settings-row"><span><b>Проверить захват Windows</b><small>Один кадр без звонка, сохранения и передачи.</small></span><button type="button" disabled={busy} onClick={() => void testScreenCapture()}>Проверить</button></div>
-      <div className="desktop-settings-row"><span><b>Проверить видеопоток клиента</b><small>30 кадров без звонка и передачи собеседникам.</small></span><button type="button" disabled={busy} onClick={() => void testVideoBridge()}>Проверить</button></div>
-      <div className="desktop-settings-row"><span><b>Проверить кодирование видео</b><small>Локальное соединение внутри ПК, без звонка и интернета.</small></span><button type="button" disabled={busy} onClick={() => void testVideoEncoder()}>Проверить</button></div>
-      {captureTestStatus && <p className="desktop-settings-success" role="status">{captureTestStatus}</p>}
-    </div>
-    <div className="desktop-settings-group">
-      <strong>Обновления</strong>
-      <div className="desktop-settings-row"><span><b>Coherent Desktop</b><small>{update.status || "Проверяем обновления автоматически."}</small></span><button type="button" disabled={update.busy} onClick={() => void (update.available ? installUpdate() : checkForUpdates())}>{update.available ? "Установить" : "Проверить"}</button></div>
-    </div>
+    <details className="desktop-diagnostics" onToggle={event => { if (event.currentTarget.open) setDiagnosticsOpened(true); }}>
+      <summary>Диагностика и проверки</summary>
+      {diagnosticsOpened && <Suspense fallback={<p>Открываем инструменты диагностики…</p>}><DesktopDiagnostics /></Suspense>}
+    </details>
   </div>;
 }
 
