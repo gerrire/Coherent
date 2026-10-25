@@ -7,6 +7,8 @@ task_mail_host=mail.coherent-web.ru
 task_mail_selector=coherent2026
 task_mail_gateway=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
 task_mail_subnet=$(docker network inspect coherent_default --format '{{(index .IPAM.Config 0).Subnet}}')
+task_mail_network_id=$(docker network inspect coherent_default --format '{{.Id}}')
+task_mail_bridge="br-${task_mail_network_id:0:12}"
 test -n "$task_mail_gateway"
 test -n "$task_mail_subnet"
 printf '%s\n' "postfix postfix/mailname string $task_mail_domain" "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
@@ -61,5 +63,8 @@ systemctl daemon-reload
 systemctl enable opendkim postfix
 systemctl restart opendkim
 systemctl restart postfix
+if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
+    ufw allow in on "$task_mail_bridge" from "$task_mail_subnet" to "$task_mail_gateway" port 25 proto tcp comment 'Coherent private SMTP'
+fi
 printf '%s\n' 'SMTP is private to localhost and the Coherent Docker network. Public DKIM record:'
 cat "/etc/opendkim/keys/$task_mail_domain/$task_mail_selector.txt"
