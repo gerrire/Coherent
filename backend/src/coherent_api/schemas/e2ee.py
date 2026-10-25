@@ -50,6 +50,16 @@ class BootstrapRequest(StrictModel):
     device: DeviceBinding
     proof: str = Field(min_length=88, max_length=88)
     backup: RecoveryEnvelope
+    recovery_public_key: str = Field(min_length=44, max_length=44)
+
+    @field_validator("recovery_public_key")
+    @classmethod
+    def valid_recovery_public(cls, value: str) -> str:
+        decoded = base64.b64decode(value, validate=True)
+        if len(decoded) != 32 or base64.b64encode(decoded).decode() != value:
+            raise ValueError("Invalid recovery public key")
+        return value
+
     current_password: SecretStr = Field(min_length=1, max_length=128)
     label: str = Field(min_length=1, max_length=64)
     platform: Literal["browser", "windows", "macos", "linux", "android", "ios"]

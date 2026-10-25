@@ -11,6 +11,23 @@ use crate::{
 
 const RECOVERY_DOMAIN: &[u8] = b"coherent/recovery/archive/v1";
 
+pub fn authorization_public(account_id: &str, phrase: &str) -> Result<[u8; 32], CryptoError> {
+    let account = uuid_bytes(account_id)?;
+    let mnemonic =
+        Mnemonic::parse_in(Language::English, phrase).map_err(|_| CryptoError::InvalidInput)?;
+    if !matches!(mnemonic.word_count(), 12 | 24) {
+        return Err(CryptoError::InvalidInput);
+    }
+    let entropy = Zeroizing::new(mnemonic.to_entropy());
+    let mut seed = Zeroizing::new([0; 32]);
+    Hkdf::<Sha256>::new(Some(&account), entropy.as_ref())
+        .expand(b"coherent/recovery/authorization/v1", seed.as_mut())
+        .map_err(|_| CryptoError::InvalidInput)?;
+    Ok(ed25519_dalek::SigningKey::from_bytes(&seed)
+        .verifying_key()
+        .to_bytes())
+}
+
 /// Generated locally. Never send the phrase to an API or an email provider.
 pub fn generate_phrase() -> Result<Zeroizing<String>, CryptoError> {
     let entropy = random_key();

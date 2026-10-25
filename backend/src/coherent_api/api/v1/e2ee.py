@@ -166,6 +166,7 @@ async def bootstrap_recovery(
         b"coherent/bootstrap-backup/v1\0"
         + base64.b64decode(body.backup.nonce)
         + base64.b64decode(body.backup.ciphertext)
+        + base64.b64decode(body.recovery_public_key)
     ).digest()
     await verify_device_request(
         session,
@@ -189,6 +190,7 @@ async def bootstrap_recovery(
             and device.signature_key == body.device.signature_key
             and device.revoked_at is None
             and account.recovery_backup == body.backup.model_dump_json()
+            and account.recovery_public_key == body.recovery_public_key
         ):
             await session.commit()
             return {"configured": True}
@@ -203,6 +205,7 @@ async def bootstrap_recovery(
             user_id=user.id,
             first_device_id=body.device.device_id,
             recovery_backup=body.backup.model_dump_json(),
+            recovery_public_key=body.recovery_public_key,
             revision=1,
         )
     )

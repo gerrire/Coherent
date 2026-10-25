@@ -51,6 +51,7 @@ def upgrade() -> None:
         ),
         sa.Column("first_device_id", sa.Uuid(), nullable=False),
         sa.Column("recovery_backup", sa.Text(), nullable=False),
+        sa.Column("recovery_public_key", sa.String(44), nullable=False),
         sa.Column("revision", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("recovery_confirmed_at", sa.DateTime(timezone=True), nullable=True),

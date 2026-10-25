@@ -14,6 +14,7 @@ class E2eeAccount(Base):
     )
     first_device_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
     recovery_backup: Mapped[str] = mapped_column(Text)
+    recovery_public_key: Mapped[str] = mapped_column(String(44))
     revision: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

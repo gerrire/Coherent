@@ -372,7 +372,9 @@ impl CryptoEngine {
                 if reveal {
                     Ok(json!({ "phrase": phrase.as_str(), "backup": backup }))
                 } else {
-                    Ok(json!({ "backup": backup }))
+                    Ok(
+                        json!({ "backup": backup, "recovery_public_key": BASE64_STANDARD.encode(recovery::authorization_public(&self.mls.device().account_id, phrase)?) }),
+                    )
                 }
             }
             Command::ShowRecovery => Ok(
@@ -385,6 +387,13 @@ impl CryptoEngine {
             } => {
                 let hash: [u8; 32] = if purpose == "bootstrap" {
                     let backup = backup.ok_or(CryptoError::InvalidInput)?;
+                    let cached = self.recovery_backup.as_ref().ok_or(CryptoError::State)?;
+                    if backup.version != cached.version
+                        || backup.nonce != cached.nonce
+                        || backup.ciphertext != cached.ciphertext
+                    {
+                        return Err(CryptoError::Authentication);
+                    }
                     if backup.version != 1 {
                         return Err(CryptoError::InvalidInput);
                     }
@@ -400,6 +409,10 @@ impl CryptoEngine {
                     }
                     bytes.extend_from_slice(&iv);
                     bytes.extend_from_slice(&ciphertext);
+                    bytes.extend_from_slice(&recovery::authorization_public(
+                        &self.mls.device().account_id,
+                        self.recovery_phrase.as_ref().ok_or(CryptoError::State)?,
+                    )?);
                     Sha256::digest(bytes).into()
                 } else {
                     if backup.is_some() {

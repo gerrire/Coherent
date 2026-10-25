@@ -57,7 +57,7 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
         const backup = prepared.result.backup as Envelope;
         const challenge = await api.deviceChallenge("bootstrap");
         const signed = await local.execute({ operation: "sign_device_proof", purpose: "bootstrap", nonce: challenge.nonce, backup });
-        await api.bootstrapSecurity({ challenge_id: challenge.challenge_id, device: signed.result.device, proof: signed.result.proof, backup, current_password: password, label: isTauri() ? "Приложение Когерента" : "Браузер", platform: isTauri() ? "windows" : "browser" });
+        await api.bootstrapSecurity({ challenge_id: challenge.challenge_id, device: signed.result.device, proof: signed.result.proof, backup, recovery_public_key: prepared.result.recovery_public_key, current_password: password, label: isTauri() ? "Приложение Когерента" : "Браузер", platform: isTauri() ? "windows" : "browser" });
         setStatus(await api.securityStatus());
       }
       const result = await local.revealRecovery(password);
