@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
-import { api, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
+import { api, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
@@ -389,15 +389,12 @@ export default function MessagesPanel({
                 </div>
                 {message.body && (!attachmentsExpired || message.body !== "Вложение удалено") && <p>{message.body}</p>}
                 {attachmentsExpired && <span className="message-attachment-expired">Вложение удалено</span>}
-                {!attachmentsExpired && message.attachments?.map((attachment) => {
-                  const url = `/api/v1/conversations/${conversation.id}/attachments/${attachment.id}`;
-                  return <div className="message-attachment" key={attachment.id}>
-                    {attachment.media_type.startsWith("image/") && <button type="button" className="message-image-preview" onClick={() => setPreview({ url, name: attachment.filename })} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" /></button>}
-                    {attachment.media_type.startsWith("video/") && <video src={url} controls preload="metadata" />}
-                    {attachment.media_type.startsWith("audio/") && <audio src={url} controls preload="none" />}
-                    <a href={url} target="_blank" rel="noreferrer">{attachment.filename} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ</a>
-                  </div>;
-                })}
+                {!attachmentsExpired && message.attachments?.map((attachment) => <AttachmentView
+                  key={attachment.id}
+                  path={`/api/v1/conversations/${conversation.id}/attachments/${attachment.id}`}
+                  attachment={attachment}
+                  onPreview={(url) => setPreview({ url, name: attachment.filename })}
+                />)}
               </div>
             </div>
           );
@@ -445,4 +442,55 @@ export default function MessagesPanel({
       </div>}
     </div>
   );
+}
+
+function AttachmentView({ path, attachment, onPreview }: {
+  path: string;
+  attachment: Message["attachments"][number];
+  onPreview: (url: string) => void;
+}) {
+  const container = useRef<HTMLDivElement>(null);
+  const [requestNumber, setRequestNumber] = useState(0);
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!attachment.media_type.startsWith("image/")) return;
+    const element = container.current;
+    if (!element) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setRequestNumber(1);
+        observer.disconnect();
+      }
+    }, { rootMargin: "250px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [attachment.media_type]);
+
+  useEffect(() => {
+    if (!requestNumber) return;
+    setError("");
+    let active = true;
+    let loadedUrl = "";
+    void attachmentObjectUrl(path).then((value) => {
+      loadedUrl = value;
+      if (active) setUrl(value);
+      else if (value.startsWith("blob:")) URL.revokeObjectURL(value);
+    }).catch(() => { if (active) setError("Не удалось загрузить вложение"); });
+    return () => {
+      active = false;
+      if (loadedUrl.startsWith("blob:")) URL.revokeObjectURL(loadedUrl);
+    };
+  }, [path, requestNumber]);
+
+  return <div className="message-attachment" ref={container}>
+    {url && attachment.media_type.startsWith("image/") && <button type="button" className="message-image-preview" onClick={() => onPreview(url)} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" /></button>}
+    {url && attachment.media_type.startsWith("video/") && <video src={url} controls preload="metadata" />}
+    {url && attachment.media_type.startsWith("audio/") && <audio src={url} controls preload="none" />}
+    {url ? <a href={url} download={attachment.filename}>{attachment.filename} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ</a>
+      : <button type="button" onClick={() => setRequestNumber((value) => value + 1)} disabled={requestNumber > 0 && !error}>
+        {error || (requestNumber ? `Загружаем ${attachment.filename}…` : `Открыть ${attachment.filename} · ${(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ`)}
+      </button>}
+  </div>;
 }

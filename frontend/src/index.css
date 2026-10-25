@@ -33,6 +33,15 @@ body {
   min-height: 100dvh;
 }
 
+/* Keep precision-touchpad inertia inside the content pane, without rubber-banding
+   the whole desktop surface or chaining an exhausted pane into the viewport. */
+html { overscroll-behavior: none; }
+.tauri-main-window,
+.tauri-main-window body,
+.tauri-main-window #root { height: 100%; overflow: hidden; overscroll-behavior: none; }
+.tauri-main-window * { overscroll-behavior: none; }
+.connection-settings-button { margin-top: 14px; border: 0; background: none; color: var(--text-muted); cursor: pointer; text-decoration: underline; }
+
 button, input {
   font: inherit;
 }
@@ -655,6 +664,11 @@ a {
   overflow: hidden;
   background: var(--bg-panel);
 }
+
+.tauri-main-window .app-shell { height: calc(100dvh - 36px); }
+.tauri-main-window .loading-screen,
+.tauri-main-window .connection-screen { min-height: calc(100dvh - 36px); height: calc(100dvh - 36px); }
+.tauri-main-window .auth-page { min-height: calc(100dvh - 36px); }
 
 .server-rail {
   z-index: 2;
@@ -3778,3 +3792,60 @@ a {
   .admin-body { max-height: calc(100dvh - 106px); padding: 18px; }
   .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+.desktop-update-notice {
+  position: fixed;
+  z-index: 3000;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--border, #414459);
+  border-radius: 14px;
+  background: var(--surface, #202331);
+  color: var(--text, #fff);
+  box-shadow: 0 12px 36px #0005;
+}
+.desktop-update-notice button {
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  background: #747bff;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.desktop-update-notice button:disabled { opacity: .65; cursor: wait; }
+.desktop-settings-body { display: flex; flex-direction: column; gap: 16px; }
+.desktop-settings-body .client-settings-intro { margin-bottom: 2px; }
+.desktop-settings-group { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 13px; background: var(--bg-raised); padding: 15px 18px; }
+.desktop-settings-group > strong { margin-bottom: 4px; color: var(--text); font-size: 12px; }
+.desktop-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 53px; padding: 8px 0; }
+.desktop-settings-row + .desktop-settings-row { border-top: 1px solid var(--line); }
+.desktop-settings-row span { display: grid; gap: 4px; }
+.desktop-settings-row b { font-size: 12px; font-weight: 650; }
+.desktop-settings-row small { color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.desktop-settings-row input[type="checkbox"] { flex: 0 0 auto; width: 19px; height: 19px; accent-color: var(--purple); cursor: pointer; }
+.desktop-settings-row button { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); padding: 8px 13px; cursor: pointer; }
+.desktop-settings-error { margin: 0; color: #ff8293; font-size: 12px; }
+.desktop-settings-success { margin: -7px 0 0; color: #67d7a5; font-size: 11px; line-height: 1.45; }
+.incoming-call-backdrop { position: fixed; inset: auto 18px 18px auto; z-index: 2500; display: grid; place-items: center; padding: 0; background: transparent; backdrop-filter: none; }
+.incoming-call-card { width: min(390px, 100%); display: flex; flex-direction: column; align-items: center; padding: 35px 30px 29px; border: 1px solid var(--line); border-radius: 22px; background: var(--bg-raised); box-shadow: 0 25px 80px #0009; text-align: center; }
+.incoming-call-backdrop .incoming-call-card { width: 340px; padding: 20px 20px 17px; border-radius: 16px; }
+.incoming-call-backdrop .incoming-call-avatar { width: 54px; height: 54px; margin-bottom: 13px; border-radius: 17px; font-size: 23px; }
+.incoming-call-backdrop .incoming-call-card h2 { font-size: 18px; }
+.incoming-call-backdrop .incoming-call-actions { margin-top: 18px; }
+.incoming-call-backdrop .incoming-call-actions button { min-height: 39px; font-size: 11px; }
+.incoming-call-avatar { display: grid; place-items: center; width: 80px; height: 80px; margin-bottom: 23px; border-radius: 24px; background: var(--purple); color: #fff; font-size: 32px; font-weight: 750; }
+.incoming-call-card > span { color: var(--purple-bright); font-size: 10px; font-weight: 750; letter-spacing: .18em; }
+.incoming-call-card h2 { margin: 9px 0 4px; color: var(--text); font-size: 24px; }
+.incoming-call-card p { margin: 0; color: var(--text-muted); font-size: 13px; }
+.incoming-call-card .incoming-call-error { margin-top: 12px; color: #ff8293; }
+.incoming-call-actions { display: flex; width: 100%; gap: 12px; margin-top: 30px; }
+.incoming-call-actions button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 9px; min-height: 47px; border: 0; border-radius: 11px; color: white; font-weight: 700; cursor: pointer; }
+.incoming-call-actions button:disabled { opacity: .6; cursor: wait; }
+.incoming-call-decline { background: #af4056; }
+.incoming-call-accept { background: #259f70; }

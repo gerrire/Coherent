@@ -1,0 +1,44 @@
+[package]
+name = "coherent-desktop"
+version = "0.1.0"
+description = "Coherent for Windows"
+authors = ["Coherent"]
+license = ""
+repository = "https://github.com/gerrire/Coherent"
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "coherent_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+cc = "1"
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-log = "2"
+tauri-plugin-updater = "2.14"
+tauri-plugin-process = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "multipart"] }
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows-capture = "2.0.1"
+windows = { version = "0.62", features = ["Win32_System_Com", "Win32_System_Memory", "Win32_System_Threading", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Graphics_Capture", "Security_Authorization_AppCapabilityAccess"] }
+webview2-com = "0.39"
+
+[dev-dependencies]
+minisign-verify = "0.3"

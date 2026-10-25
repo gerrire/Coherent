@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "overlay-client"
+description = "Only incoming call state/actions and the current theme. API requests are further constrained in Rust."
+commands.allow = [
+    "api_initialize_csrf",
+    "api_request",
+    "desktop_current_call_overlay_id",
+    "desktop_close_call_overlay",
+    "desktop_show_main",
+    "desktop_theme_get",
+]

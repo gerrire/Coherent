@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-screen-start"
+description = "Enables the desktop_screen_start command without any pre-configured scope."
+commands.allow = ["desktop_screen_start"]
+
+[[permission]]
+identifier = "deny-desktop-screen-start"
+description = "Denies the desktop_screen_start command without any pre-configured scope."
+commands.deny = ["desktop_screen_start"]

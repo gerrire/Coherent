@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-api-initialize-csrf"
+description = "Enables the api_initialize_csrf command without any pre-configured scope."
+commands.allow = ["api_initialize_csrf"]
+
+[[permission]]
+identifier = "deny-api-initialize-csrf"
+description = "Denies the api_initialize_csrf command without any pre-configured scope."
+commands.deny = ["api_initialize_csrf"]

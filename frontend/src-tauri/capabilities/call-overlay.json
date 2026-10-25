@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "call-overlay",
+  "description": "Answer/decline UI; no media capture, updates, device permissions or window administration.",
+  "windows": ["call-overlay"],
+  "permissions": ["core:event:allow-emit", "overlay-client"]
+}

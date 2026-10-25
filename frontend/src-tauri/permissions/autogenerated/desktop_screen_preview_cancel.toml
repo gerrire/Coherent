@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-screen-preview-cancel"
+description = "Enables the desktop_screen_preview_cancel command without any pre-configured scope."
+commands.allow = ["desktop_screen_preview_cancel"]
+
+[[permission]]
+identifier = "deny-desktop-screen-preview-cancel"
+description = "Denies the desktop_screen_preview_cancel command without any pre-configured scope."
+commands.deny = ["desktop_screen_preview_cancel"]

@@ -1,3 +1,5 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+
 export interface User {
   id: string;
   username: string;
@@ -126,6 +128,10 @@ export class ApiError extends Error {
 let csrfToken: string | null = null;
 
 export async function initializeCsrf(): Promise<void> {
+  if (isTauri()) {
+    await invoke("api_initialize_csrf");
+    return;
+  }
   const response = await fetch("/api/v1/auth/csrf", { credentials: "include" });
   if (!response.ok) {
     throw new ApiError("Не удалось подготовить защищённое соединение.", response.status);
@@ -136,6 +142,33 @@ export async function initializeCsrf(): Promise<void> {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
+  if (isTauri()) {
+    const reply = init.body instanceof FormData
+      ? await invoke<{ status: number; body: unknown }>("api_upload", {
+        path,
+        body: String(init.body.get("body") ?? ""),
+        files: await Promise.all(init.body.getAll("files").filter((value): value is File => value instanceof File).map(async (file) => ({
+          name: file.name,
+          mediaType: file.type || "application/octet-stream",
+          data: await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          }),
+        }))),
+      })
+      : await invoke<{ status: number; body: unknown }>("api_request", {
+        path, method, body: init.body ? JSON.parse(String(init.body)) : null,
+      });
+    if (reply.status === 204) return undefined as T;
+    if (reply.status < 200 || reply.status >= 300) {
+      const detail = (reply.body as ApiErrorBody)?.detail;
+      const message = Array.isArray(detail) ? detail.map((item) => item.msg).join(". ") : detail;
+      throw new ApiError(message || "Не получилось выполнить запрос. Попробуй ещё раз.", reply.status);
+    }
+    return reply.body as T;
+  }
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && csrfToken === null) {
     await initializeCsrf();
   }
@@ -159,6 +192,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     );
   }
   return result as T;
+}
+
+export async function attachmentObjectUrl(path: string): Promise<string> {
+  if (!isTauri()) return path;
+  const result = await invoke<{ media_type: string; data: string }>("api_attachment", { path });
+  const bytes = Uint8Array.from(atob(result.data), (character) => character.charCodeAt(0));
+  return URL.createObjectURL(new Blob([bytes], { type: result.media_type }));
 }
 
 export const api = {
@@ -255,6 +295,7 @@ export const api = {
   endCall: (callId: string) =>
     request<Call>(`/api/v1/calls/${callId}/end`, { method: "POST" }),
   endCallOnPageHide: (callId: string) => {
+    if (isTauri()) return;
     if (!csrfToken) return;
     void fetch(`/api/v1/calls/${callId}/end`, {
       method: "POST",

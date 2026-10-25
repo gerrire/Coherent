@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-audio-bridge-status"
+description = "Enables the desktop_audio_bridge_status command without any pre-configured scope."
+commands.allow = ["desktop_audio_bridge_status"]
+
+[[permission]]
+identifier = "deny-desktop-audio-bridge-status"
+description = "Denies the desktop_audio_bridge_status command without any pre-configured scope."
+commands.deny = ["desktop_audio_bridge_status"]

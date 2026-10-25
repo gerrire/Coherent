@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-close-call-overlay"
+description = "Enables the desktop_close_call_overlay command without any pre-configured scope."
+commands.allow = ["desktop_close_call_overlay"]
+
+[[permission]]
+identifier = "deny-desktop-close-call-overlay"
+description = "Denies the desktop_close_call_overlay command without any pre-configured scope."
+commands.deny = ["desktop_close_call_overlay"]

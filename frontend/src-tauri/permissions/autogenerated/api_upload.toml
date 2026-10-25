@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-api-upload"
+description = "Enables the api_upload command without any pre-configured scope."
+commands.allow = ["api_upload"]
+
+[[permission]]
+identifier = "deny-api-upload"
+description = "Denies the api_upload command without any pre-configured scope."
+commands.deny = ["api_upload"]

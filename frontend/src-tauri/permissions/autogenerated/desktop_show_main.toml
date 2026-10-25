@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-show-main"
+description = "Enables the desktop_show_main command without any pre-configured scope."
+commands.allow = ["desktop_show_main"]
+
+[[permission]]
+identifier = "deny-desktop-show-main"
+description = "Denies the desktop_show_main command without any pre-configured scope."
+commands.deny = ["desktop_show_main"]

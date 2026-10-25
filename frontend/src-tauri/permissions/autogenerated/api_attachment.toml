@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-api-attachment"
+description = "Enables the api_attachment command without any pre-configured scope."
+commands.allow = ["api_attachment"]
+
+[[permission]]
+identifier = "deny-api-attachment"
+description = "Denies the api_attachment command without any pre-configured scope."
+commands.deny = ["api_attachment"]

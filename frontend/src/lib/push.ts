@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { isTauri } from "@tauri-apps/api/core";
 
 function applicationKey(value: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - value.length % 4) % 4);
@@ -7,6 +8,7 @@ function applicationKey(value: string): Uint8Array<ArrayBuffer> {
 }
 
 export async function enablePush(): Promise<boolean> {
+  if (isTauri()) return false;
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return false;
   if (Notification.permission !== "granted") return false;
   const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
@@ -30,6 +32,7 @@ export async function enablePush(): Promise<boolean> {
 }
 
 export async function disablePush(): Promise<void> {
+  if (isTauri()) return;
   if (!("serviceWorker" in navigator)) return;
   const registration = await navigator.serviceWorker.getRegistration("/");
   const subscription = await registration?.pushManager.getSubscription();

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMaybeRoomContext } from "@livekit/components-react";
 import { LocalVideoTrack, Track } from "livekit-client";
 import { Settings2, X } from "lucide-react";
+import { isTauri } from "@tauri-apps/api/core";
 import { supportedAudioProcessing, supportedVideoCodec, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
 
 interface MediaSettingsPanelProps {
@@ -205,13 +206,15 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <strong>Демонстрация экрана</strong>
           <small>Для текста приоритет у чёткости. Для видео доступна более плавная передача.</small>
         </div>
+        {isTauri() && <label className="media-setting-check">
+          <input type="checkbox" disabled={busy} checked={media.systemAudioEnabled} onChange={(event) => void change({ systemAudioEnabled: event.target.checked })} />
+          <span className="media-setting-option">Передавать звук компьютера<small>Звук Coherent исключается, чтобы собеседники не слышали себя повторно.</small></span>
+        </label>}
         <label>
           Разрешение
           <select disabled={busy} value={media.screenShareQuality} onChange={(event) => void change({ screenShareQuality: event.target.value as MediaPreferences["screenShareQuality"] })}>
             <option value="720p">1280×720</option>
-            <option value="1080p">1920×1080</option>
-            <option value="1440p">2560×1440</option>
-            <option value="native">Исходное разрешение экрана</option>
+            <option value="1080p">1920×1080</option><option value="1440p">2560×1440</option><option value="2160p">3840×2160</option><option value="native">Исходное разрешение экрана</option>
           </select>
         </label>
         <label>
@@ -226,8 +229,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           Частота кадров
           <select disabled={busy} value={media.screenShareFrameRate} onChange={(event) => void change({ screenShareFrameRate: Number(event.target.value) as MediaPreferences["screenShareFrameRate"] })}>
             <option value={15}>15 кадров/с — для текста</option>
-            <option value={30}>30 кадров/с — сбалансированно</option>
-            <option value={60}>60 кадров/с — для движения</option>
+            <option value={30}>30 кадров/с — сбалансированно</option><option value={60}>60 кадров/с — для движения</option>
           </select>
         </label>
         <label className="media-volume-setting">
@@ -240,7 +242,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <select disabled={busy} value={media.screenShareCodec} onChange={(event) => void change({ screenShareCodec: event.target.value as VideoCodec })}>
             {codecs.map((codec) => <option key={codec} value={codec}>{codecNames[codec]}</option>)}
           </select>
-          {supportedVideoCodec(media.screenShareCodec) !== media.screenShareCodec && <small>Браузер не поддерживает {codecNames[media.screenShareCodec]}; используется VP8.</small>}
+          {supportedVideoCodec(media.screenShareCodec) !== media.screenShareCodec && <small>На этом устройстве недоступен {codecNames[media.screenShareCodec]}; используется VP8.</small>}
         </label>
         {screenDiagnostics && <div className="media-screen-diagnostics">
           <strong>Текущая трансляция</strong>
@@ -249,7 +251,9 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <span>Фактический битрейт: {screenDiagnostics.bitrate === null ? "считаем..." : `${screenDiagnostics.bitrate.toFixed(1)} Мбит/с`}</span>
           {screenDiagnostics.limitation && <span>Ограничение: {screenDiagnostics.limitation === "bandwidth" ? "скорость сети" : screenDiagnostics.limitation === "cpu" ? "нагрузка на процессор" : screenDiagnostics.limitation}</span>}
         </div>}
-        <p className="media-settings-note">Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. «Исходное разрешение» не уменьшает захват намеренно, но браузер и видеокодек могут обрезать несколько пикселей и менять цветовые оттенки. Сравни «Захват» и «Отправка» выше; для мелкого текста попробуй VP9 и более высокий битрейт. Для передачи звука без эха выбирай отдельную вкладку.</p>
+        <p className="media-settings-note">{isTauri()
+          ? "Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. Доступные кодеки зависят от устройства; фактическое качество — от нагрузки и сети. Звук компьютера захватывается отдельно от звука звонка."
+          : "Разрешение, частота, режим и кодек применятся при следующем включении демонстрации. «Исходное разрешение» не уменьшает захват намеренно, но кодек может менять цветовые оттенки. Сравни «Захват» и «Отправка» выше; для мелкого текста попробуй VP9 и более высокий битрейт. Для передачи звука без эха выбирай отдельную вкладку."}</p>
         <div className="media-settings-divider" />
         <div className="media-settings-section-heading"><strong>Обработка голоса</strong></div>
         <label>

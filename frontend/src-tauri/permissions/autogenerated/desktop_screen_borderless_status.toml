@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-screen-borderless-status"
+description = "Enables the desktop_screen_borderless_status command without any pre-configured scope."
+commands.allow = ["desktop_screen_borderless_status"]
+
+[[permission]]
+identifier = "deny-desktop-screen-borderless-status"
+description = "Denies the desktop_screen_borderless_status command without any pre-configured scope."
+commands.deny = ["desktop_screen_borderless_status"]

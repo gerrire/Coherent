@@ -1,0 +1,7 @@
+[package]
+name = "coherent-capture-probe"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+windows-capture = "2.0.1"

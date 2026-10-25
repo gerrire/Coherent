@@ -4,8 +4,14 @@ import App from "./App";
 import "./index.css";
 import "./themes.css";
 import { applyTheme, loadTheme } from "./lib/theme";
+import { isTauri } from "@tauri-apps/api/core";
+import { installDesktopMediaConsent } from "./lib/desktopPermissions";
+installDesktopMediaConsent();
 
 applyTheme(loadTheme());
+if (isTauri() && !new URLSearchParams(window.location.search).has("window")) {
+  document.documentElement.classList.add("tauri-main-window");
+}
 
 type CaptureHandleMediaDevices = MediaDevices & {
   setCaptureHandleConfig?: (config: {

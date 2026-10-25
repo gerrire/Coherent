@@ -10,10 +10,11 @@ import {
   type TrackPublishOptions,
   type VideoCaptureOptions,
 } from "livekit-client";
+import { isTauri } from "@tauri-apps/api/core";
 
 export type VideoCodec = "vp8" | "h264" | "vp9" | "av1";
 export type VideoQuality = "360p" | "720p" | "1080p";
-export type ScreenShareQuality = "720p" | "1080p" | "1440p" | "native";
+export type ScreenShareQuality = "720p" | "1080p" | "1440p" | "2160p" | "native";
 export type ScreenShareContent = "text" | "motion";
 export type ScreenShareFrameRate = 15 | 30 | 60;
 export type NoiseProcessor = "browser" | "rnnoise";
@@ -34,6 +35,7 @@ export interface MediaPreferences {
   screenShareCodec: VideoCodec;
   screenShareFrameRate: ScreenShareFrameRate;
   screenShareBitrateMbps: number;
+  systemAudioEnabled: boolean;
   noiseSuppression: boolean;
   noiseProcessor: NoiseProcessor;
   rnnoisePreset: RnnoisePreset;
@@ -85,6 +87,7 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareCodec: "h264",
   screenShareFrameRate: 30,
   screenShareBitrateMbps: 20,
+  systemAudioEnabled: true,
   noiseSuppression: false,
   noiseProcessor: "browser",
   rnnoisePreset: "balanced",
@@ -126,7 +129,7 @@ export function loadMediaPreferences(): MediaPreferences {
       videoCodec: codecs.includes(storedCodec as VideoCodec) ? storedCodec! : "h264",
       videoQuality: qualities.includes(storedQuality as VideoQuality) ? storedQuality! : "1080p",
       screenShareQuality: saved.screenShareDefaultsVersion !== 1 && saved.screenShareQuality === "1080p"
-        ? "native" : (["720p", "1080p", "1440p", "native"] as ScreenShareQuality[]).includes(saved.screenShareQuality as ScreenShareQuality)
+        ? "native" : (["720p", "1080p", "1440p", "2160p", "native"] as ScreenShareQuality[]).includes(saved.screenShareQuality as ScreenShareQuality)
           ? saved.screenShareQuality! : "native",
       screenShareContent: saved.screenShareContent === "motion" ? "motion" : "text",
       screenShareCodec: codecs.includes(saved.screenShareCodec as VideoCodec) ? saved.screenShareCodec! : "h264",
@@ -205,7 +208,7 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
   const safari = /iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Edg|CriOS/i.test(navigator.userAgent));
   return {
-    audio: true,
+    audio: !isTauri(),
     // Keep the selected tab's audio, but do not feed the call's own playback back through system capture.
     selfBrowserSurface: "exclude",
     surfaceSwitching: "exclude",
@@ -216,8 +219,8 @@ export function screenShareCapture(value: MediaPreferences): ScreenShareCaptureO
     resolution: value.screenShareQuality === "native"
       ? { width: 0, height: 0, frameRate: value.screenShareFrameRate }
       : safari ? undefined : {
-        width: value.screenShareQuality === "720p" ? 1280 : value.screenShareQuality === "1440p" ? 2560 : 1920,
-        height: value.screenShareQuality === "720p" ? 720 : value.screenShareQuality === "1440p" ? 1440 : 1080,
+        width: value.screenShareQuality === "720p" ? 1280 : value.screenShareQuality === "1440p" ? 2560 : value.screenShareQuality === "2160p" ? 3840 : 1920,
+        height: value.screenShareQuality === "720p" ? 720 : value.screenShareQuality === "1440p" ? 1440 : value.screenShareQuality === "2160p" ? 2160 : 1080,
         frameRate: value.screenShareFrameRate,
       },
   };

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-media-permissions-get"
+description = "Enables the desktop_media_permissions_get command without any pre-configured scope."
+commands.allow = ["desktop_media_permissions_get"]
+
+[[permission]]
+identifier = "deny-desktop-media-permissions-get"
+description = "Denies the desktop_media_permissions_get command without any pre-configured scope."
+commands.deny = ["desktop_media_permissions_get"]

@@ -20,9 +20,14 @@ data/
 # Frontend
 node_modules/
 frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri.zip
+frontend/src-tauri/tauri.conf.zip
+scripts/capture_probe/target/
 frontend/.vite/
 *.tsbuildinfo
 npm-debug.log*
+.tools/
 
 # Editors and operating systems
 .idea/

@@ -1,0 +1,26 @@
+.desktop-titlebar {
+  position: relative;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  flex: 0 0 36px;
+  border-bottom: 1px solid var(--theme-border);
+  background: var(--theme-panel);
+  color: var(--theme-text);
+  user-select: none;
+}
+
+.desktop-titlebar-brand { display: inline-flex; align-items: center; gap: 9px; height: 100%; padding: 0 14px; color: var(--theme-text); font-size: 11px; font-weight: 750; letter-spacing: .01em; }
+.desktop-titlebar-mark { display: flex; align-items: center; justify-content: center; gap: 2px; width: 19px; height: 20px; }
+.desktop-titlebar-mark i { width: 3px; border-radius: 4px; background: var(--theme-accent); }
+.desktop-titlebar-mark i:nth-child(1) { height: 9px; }
+.desktop-titlebar-mark i:nth-child(2) { height: 15px; }
+.desktop-titlebar-mark i:nth-child(3) { height: 11px; }
+.desktop-titlebar-caption { position: absolute; left: 50%; transform: translateX(-50%); color: var(--theme-muted); font-size: 10px; letter-spacing: .02em; }
+.desktop-titlebar-controls { display: flex; height: 100%; margin-left: auto; }
+.desktop-titlebar-controls button { display: grid; place-items: center; width: 46px; height: 100%; border: 0; background: transparent; color: #a99db9; cursor: pointer; transition: background .12s ease, color .12s ease; }
+.desktop-titlebar-controls button:hover { background: rgba(255, 255, 255, .09); color: #fff; }
+.desktop-titlebar-controls button.desktop-titlebar-close:hover { background: #bf4057; color: #fff; }
+.desktop-titlebar-controls button:active { background: rgba(255, 255, 255, .14); }

@@ -48,6 +48,11 @@ import {
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
+import { NativeScreenAudio } from "../lib/nativeScreenAudio";
+import { NativeScreenShare, type ScreenSource } from "../lib/nativeScreenShare";
+import DesktopSharePicker from "./DesktopSharePicker";
+import { isTauri } from "@tauri-apps/api/core";
+import { cancelDesktopMediaRequests } from "../lib/desktopPermissions";
 
 type ViewMode = "grid" | "focus";
 type TileDensity = "normal" | "compact";
@@ -482,6 +487,7 @@ function CallMediaBridge({
     async function prepare() {
       const selected = mediaRef.current;
       await room.localParticipant.setAttributes({ "coherent.deafened": selected.deafened ? "true" : "false" }).catch(() => undefined);
+      if (!active) return;
       if (selected.microphoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(selected));
         try {
@@ -492,6 +498,7 @@ function CallMediaBridge({
         }
       }
       if (selected.cameraEnabled) {
+        if (!active) return;
         await room.localParticipant.setCameraEnabled(
           true,
           cameraCapture(selected),
@@ -509,6 +516,7 @@ function CallMediaBridge({
     });
     return () => {
       active = false;
+      cancelDesktopMediaRequests();
       onRoomReady(null);
     };
   }, [connected, room, onRoomReady, onError]);
@@ -531,8 +539,70 @@ function CallControls({
   const { isScreenShareEnabled } = useLocalParticipant();
   const room = useRoomContext();
   const checkedShareId = useRef<string | null>(null);
+  const nativeAudio = useRef<NativeScreenAudio | null>(null);
+  const nativeShare = useRef<NativeScreenShare | null>(null);
+  const [sharePickerOpen, setSharePickerOpen] = useState(false);
+  const [shareStarting, setShareStarting] = useState(false);
+  const shareOperation = useRef(false);
+
+  useEffect(() => () => {
+    const share = nativeShare.current;
+    nativeShare.current = null;
+    if (share) void share.stop();
+  }, []);
+
+  async function startNativeShare(source: ScreenSource) {
+    if (shareOperation.current) return;
+    shareOperation.current = true;
+    setShareStarting(true);
+    onError("");
+    const share = new NativeScreenShare(room);
+    nativeShare.current = share;
+    try {
+      await share.start(source.id, media, () => {
+        if (nativeShare.current === share) {
+          nativeShare.current = null;
+          onError("Демонстрация экрана остановлена.");
+        }
+      });
+      setSharePickerOpen(false);
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "Не удалось начать демонстрацию.");
+      if (nativeShare.current === share) nativeShare.current = null;
+    } finally {
+      shareOperation.current = false;
+      setShareStarting(false);
+    }
+  }
+
+  async function stopNativeShare() {
+    const share = nativeShare.current;
+    nativeShare.current = null;
+    if (share) await share.stop();
+  }
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (isScreenShareEnabled && media.systemAudioEnabled) {
+      const bridge = new NativeScreenAudio(room);
+      nativeAudio.current = bridge;
+      void bridge.start(onError).catch((reason: unknown) => {
+        onError(reason instanceof Error ? reason.message : "Не удалось передать звук компьютера.");
+      });
+    } else {
+      const bridge = nativeAudio.current;
+      nativeAudio.current = null;
+      if (bridge) void bridge.stop();
+    }
+    return () => {
+      const bridge = nativeAudio.current;
+      nativeAudio.current = null;
+      if (bridge) void bridge.stop();
+    };
+  }, [isScreenShareEnabled, media.systemAudioEnabled, room, onError]);
 
   const protectScreenAudio = useCallback(() => {
+    if (isTauri()) return;
     const video = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
     const audio = room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio)?.track;
     if (!video || !audio || checkedShareId.current === video.id) return;
@@ -582,9 +652,9 @@ function CallControls({
       <button className="call-control call-control-camera" onClick={() => change({ cameraEnabled: !media.cameraEnabled })} aria-label={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} title={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"}>
         {media.cameraEnabled ? <Camera size={20} /> : <CameraOff size={20} />}
       </button>
-      <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)} onChange={onScreenShareChange} onClick={() => onError("")}>
-        <MonitorUp size={20} />
-      </TrackToggle>
+      {isTauri() ? <button className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} disabled={shareStarting} onClick={() => { if (isScreenShareEnabled) void stopNativeShare(); else setSharePickerOpen(true); }}><MonitorUp size={20} /></button>
+        : <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)} onChange={onScreenShareChange} onClick={() => onError("")}><MonitorUp size={20} /></TrackToggle>}
+      {sharePickerOpen && <DesktopSharePicker onChoose={(source) => { void startNativeShare(source); }} onClose={() => { if (!shareStarting) setSharePickerOpen(false); }} busy={shareStarting} />}
       <button className="call-control call-control-end" onClick={onEnd} disabled={pending} aria-label="Выйти из звонка" title="Выйти из звонка">
         <PhoneOff size={20} />
       </button>

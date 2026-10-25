@@ -23,6 +23,8 @@ import {
   VolumeX,
 } from "lucide-react";
 import { ConnectionState, Track, type Room } from "livekit-client";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { api, conversationTitle, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
 import {
   cameraCapture,
@@ -39,12 +41,15 @@ import {
 import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
+import IncomingCallCard from "./IncomingCallCard";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
 import AdminPanel from "./AdminPanel";
 import { applyMicrophoneProcessing, prepareRnnoise } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
+import { connectAppEvents } from "../lib/events";
+import { desktopNotify, desktopRaiseIncomingCall, setUpdateMediaBusy } from "../lib/desktop";
 
 interface ChatShellProps {
   user: User;
@@ -66,7 +71,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState("");
   const [pushError, setPushError] = useState("");
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => isTauri() ? "granted" : typeof Notification === "undefined" ? "denied" : Notification.permission);
   const [recentNotifications, setRecentNotifications] = useState<Array<{ id: string; title: string; conversationId: string }>>([]);
   const [hasNewNotifications, setHasNewNotifications] = useState(() => {
     try {
@@ -136,6 +141,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     participant.user_id === user.id && (participant.state === "joined" || participant.state === "invited")
   ));
   const microphoneLive = roomRef.current?.state === ConnectionState.Connected;
+  useEffect(() => {
+    setUpdateMediaBusy(busyInCall);
+    return () => setUpdateMediaBusy(false);
+  }, [busyInCall]);
   const microphoneButtonLabel = microphoneLive
     ? media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"
     : media.microphoneEnabled ? "Подключаться с выключенным микрофоном" : "Подключаться с включённым микрофоном";
@@ -166,6 +175,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }, []);
 
   const activatePush = useCallback(async () => {
+    if (isTauri()) return;
     try {
       await enablePush();
       setPushError("");
@@ -257,6 +267,14 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         // The indicator remains visible until the page is reloaded.
       }
     }
+    if (isTauri()) {
+      // A call has its own centered overlay and ringtone; a Windows toast obscures it.
+      if (id.startsWith("call-")) return;
+      if (!id.startsWith("message-") || document.hasFocus()) {
+        void desktopNotify(title, body, id.startsWith("message-") ? "message" : id.startsWith("friend-") ? "friend" : "call");
+      }
+      return;
+    }
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     try {
       const notice = new Notification(title, { body, icon: "/favicon.svg", tag: id });
@@ -310,6 +328,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       if (!invited || notifiedCalls.current.has(call.id)) continue;
       notifiedCalls.current.add(call.id);
       showNotification(`call-${call.id}`, "Входящий звонок", `${call.caller_username} звонит тебе`, call.conversation_id);
+      void desktopRaiseIncomingCall(call.id);
     }
     setAvailableCalls(result.calls);
     setCurrentCall((current) => result.calls.find((call) => call.participants.some((participant) =>
@@ -370,6 +389,15 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   useEffect(() => { void refreshCalls().catch(() => undefined); }, [refreshCalls]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    void listen("desktop-call-updated", () => { void refreshCalls().catch(() => undefined); })
+      .then((dispose) => { unlisten = dispose; })
+      .catch(() => undefined);
+    return () => unlisten?.();
+  }, [refreshCalls]);
+
+  useEffect(() => {
     if (!currentCall || !currentCall.participants.some((participant) =>
       participant.user_id === user.id && participant.state === "joined"
     )) {
@@ -382,15 +410,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }, [currentCall, user.id]);
 
   useEffect(() => {
-    let socket: WebSocket | null = null;
+    let disconnect: (() => void) | null = null;
     let reconnectTimer: number | undefined;
     let stopped = false;
     let reconnectDelay = 1000;
 
     function connect() {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/conversations/events`);
-      socket.onopen = () => {
+      void connectAppEvents(() => {
         socketReadyRef.current = true;
         reconnectDelay = 1000;
         void refreshConversations().catch(() => undefined);
@@ -399,10 +425,9 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         void refreshCalls().catch(() => undefined);
         setFriendRequestVersion((current) => current + 1);
         setMessageVersion((current) => current + 1);
-      };
-      socket.onmessage = (event) => {
+      }, (data) => {
         try {
-          const payload = JSON.parse(event.data) as { type?: string; message?: { id: string; sender_id: string; conversation_id: string; body: string } };
+          const payload = JSON.parse(data) as { type?: string; message?: { id: string; sender_id: string; conversation_id: string; body: string } };
           if (payload.type === "call") {
             void refreshCalls().catch(() => undefined);
             void refreshConversations().catch(() => undefined);
@@ -420,7 +445,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           if (payload.type !== "message" && payload.type !== "conversation") return;
           if (payload.type === "message" && payload.message && payload.message.sender_id !== user.id) {
             const message = payload.message;
-            if (document.hidden || sectionRef.current !== "messages" || activeConversationRef.current !== message.conversation_id) {
+            if (document.hidden || !document.hasFocus() || sectionRef.current !== "messages" || activeConversationRef.current !== message.conversation_id) {
               const conversation = conversationsRef.current.find((item) => item.id === message.conversation_id);
               showNotification(`message-${message.id}`, conversation ? conversationTitle(conversation) : "Новое сообщение", message.body, message.conversation_id);
             }
@@ -430,14 +455,18 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         } catch {
           // Ignore an event with an unknown payload.
         }
-      };
-      socket.onclose = (event) => {
+      }, (code) => {
         socketReadyRef.current = false;
-        if (stopped || event.code === 1008) return;
+        if (stopped || code === 1008) return;
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-      };
-      socket.onerror = () => socket?.close();
+      }, user.id).then((cleanup) => {
+        if (stopped) cleanup();
+        else disconnect = cleanup;
+      }).catch(() => {
+        if (!stopped) reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      });
     }
 
     connect();
@@ -467,7 +496,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       window.clearInterval(pollTimer);
       document.removeEventListener("visibilitychange", onVisible);
       window.clearTimeout(reconnectTimer);
-      socket?.close();
+      disconnect?.();
     };
   }, [refreshConversations, refreshCalls, refreshPresence, refreshRequests, showNotification, user.id]);
 
@@ -1046,7 +1075,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
 
         <footer className="app-statusbar">
           <span><i className="status-dot" /> Сессия активна</span>
-          <span>Когерент <b>·</b> ранняя версия</span>
+          <span>Когерент</span>
         </footer>
       </section>
 
@@ -1129,6 +1158,10 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       />}
 
       {draggingFiles && <div className="file-drop-overlay" aria-hidden="true">Перетащи файл сюда, чтобы прикрепить к беседе</div>}
+
+      {!isTauri() && incomingCallId && currentCall && <div className="incoming-call-backdrop" role="dialog" aria-modal="true" aria-label="Входящий звонок">
+        <IncomingCallCard caller={currentCall.caller_username} error={callError} busy={callPending} onDecline={() => void endCall()} onAccept={() => void acceptCall()} />
+      </div>}
 
       <audio ref={ringtoneRef} loop preload="auto" aria-hidden="true">
         <source src="/audio/Coherent_Aura.ogg" type="audio/ogg" />

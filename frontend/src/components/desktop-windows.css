@@ -1,0 +1,27 @@
+.desktop-incoming-overlay {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.desktop-incoming-overlay .incoming-call-card {
+  width: 100%;
+  height: 100%;
+  padding: 20px 20px 17px;
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+.desktop-incoming-overlay .incoming-call-avatar {
+  width: 54px;
+  height: 54px;
+  margin-bottom: 13px;
+  border-radius: 17px;
+  font-size: 23px;
+}
+
+.desktop-incoming-overlay .incoming-call-card h2 { font-size: 18px; }
+.desktop-incoming-overlay .incoming-call-card p { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-incoming-overlay .incoming-call-actions { margin-top: 18px; }
+.desktop-incoming-overlay .incoming-call-actions button { min-height: 39px; font-size: 11px; }
+.desktop-incoming-overlay,.desktop-incoming-overlay button { pointer-events: auto; }
