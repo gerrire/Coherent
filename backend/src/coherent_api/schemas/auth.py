@@ -9,7 +9,10 @@ USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr | None = None
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+    verification_id: UUID
+    code: str = Field(pattern=r"^[0-9]{6}$")
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=128)
 
@@ -103,3 +106,13 @@ class EmailCodeRequest(BaseModel):
 
 class EmailCodeConfirm(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
+
+
+class RegistrationCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        return value.strip().lower()

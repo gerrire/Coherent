@@ -1,5 +1,6 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
-import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest } from "./types";
+import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest, type RevealRequest } from "./types";
+import { currentCsrfToken } from "../api";
 
 /** The chat integration remains disabled until authenticated device approval,
  * delivery sequencing and history migration are complete. This is the shared
@@ -23,7 +24,8 @@ export class CryptoClient {
     }
   }
 
-  private call<T>(request: VaultRequest): Promise<T> {
+  private call<T>(request: VaultRequest | RevealRequest): Promise<T> {
+    if (isTauri() && request.type === "reveal_recovery") return invoke<T>("desktop_crypto_reveal", { accountId: this.account, currentPassword: request.current_password });
     if (isTauri()) return invoke<T>("desktop_crypto_request", { accountId: this.account, request });
     const worker = this.worker;
     if (!worker) return Promise.reject(new Error("Защищённое хранилище закрыто"));
@@ -38,6 +40,9 @@ export class CryptoClient {
     return this.call({ type: "execute", command, delivered_id: deliveredId });
   }
   pendingDeliveries(): Promise<DeliveryItem[]> { return this.call({ type: "pending" }); }
+  async revealRecovery(currentPassword: string): Promise<CryptoReply> {
+    return this.call({ type: "reveal_recovery", current_password: currentPassword, csrf_token: await currentCsrfToken() });
+  }
   delivered(deliveryId: string): Promise<CryptoReply> { return this.call({ type: "delivered", delivery_id: deliveryId }); }
   close(): void {
     this.worker?.terminate(); this.worker = null;

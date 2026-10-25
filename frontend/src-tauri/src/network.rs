@@ -48,6 +48,20 @@ pub struct AttachmentReply {
 }
 
 impl NetworkState {
+    #[cfg(feature = "mls-preview")]
+    pub(crate) async fn crypto_post(&self, path: &str, body: Value) -> Result<Value, String> {
+        if !matches!(path, "/api/v1/security/challenges" | "/api/v1/security/recovery/authorize") { return Err("Недопустимый запрос устройства".into()); }
+        let mut session = self.session.lock().await;
+        if session.csrf_token.is_none() { self.initialize_csrf(&mut session).await?; }
+        let response = self.client.post(format!("{}{}", self.base_url, path))
+            .header(COOKIE, Self::cookie_header(&session))
+            .header("X-CSRF-Token", session.csrf_token.as_deref().unwrap_or(""))
+            .json(&body).send().await.map_err(|_| "Не удалось подтвердить доступ к ключу".to_string())?;
+        self.update_cookies(&mut session, &response)?;
+        if !response.status().is_success() { return Err("Проверь пароль и доверие к этому устройству".into()); }
+        response.json().await.map_err(|_| "Не удалось подтвердить доступ к ключу".to_string())
+    }
+
     pub fn new(app: &AppHandle) -> Result<Self, String> {
         let base_url = std::env::var("COHERENT_API_BASE_URL")
             .unwrap_or_else(|_| "https://coherent-web.ru".to_string())

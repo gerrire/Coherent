@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import jwt
+from conftest import verified_signup
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
@@ -16,10 +17,10 @@ from coherent_api.services import call_cleanup
 
 
 def _register(client: TestClient, csrf_token: str, username: str) -> tuple[str, str]:
-    response = client.post(
-        "/api/v1/auth/register",
+    response = verified_signup(
+        client,
         headers={"X-CSRF-Token": csrf_token},
-        json={"username": username, "password": "correct-horse-92"},
+        payload={"username": username, "password": "correct-horse-92"},
     )
     assert response.status_code == 201
     return response.json()["user"]["id"], client.cookies["coherent_session"]
@@ -122,9 +123,7 @@ def test_cancelling_ringing_call_closes_room(
         headers=_headers(alice_token, csrf_token),
     )
     call_id = started.json()["id"]
-    result = client.post(
-        f"/api/v1/calls/{call_id}/end", headers=_headers(alice_token, csrf_token)
-    )
+    result = client.post(f"/api/v1/calls/{call_id}/end", headers=_headers(alice_token, csrf_token))
     assert result.json()["status"] == "cancelled"
     close.assert_awaited_once_with(client.app.state.settings, UUID(call_id))
 

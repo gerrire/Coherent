@@ -1,11 +1,12 @@
+from conftest import verified_signup
 from fastapi.testclient import TestClient
 
 
 def register(client: TestClient, csrf_token: str, email: str = "alex@example.com"):
-    return client.post(
-        "/api/v1/auth/register",
+    return verified_signup(
+        client,
         headers={"X-CSRF-Token": csrf_token},
-        json={"email": email, "username": "alex_dev", "password": "correct-horse-92"},
+        payload={"email": email, "username": "alex_dev", "password": "correct-horse-92"},
     )
 
 
@@ -46,9 +47,7 @@ def test_mutating_requests_require_csrf_token(client: TestClient) -> None:
     assert response.status_code == 403
 
 
-def test_invalid_credentials_do_not_create_a_session(
-    client: TestClient, csrf_token: str
-) -> None:
+def test_invalid_credentials_do_not_create_a_session(client: TestClient, csrf_token: str) -> None:
     register(client, csrf_token)
     client.post("/api/v1/auth/logout", headers={"X-CSRF-Token": csrf_token})
     response = client.post(
@@ -66,10 +65,10 @@ def test_users_can_find_and_add_each_other(
 ) -> None:
     first_registration = register(client, csrf_token)
     first_token = client.cookies["coherent_session"]
-    second_registration = client.post(
-        "/api/v1/auth/register",
+    second_registration = verified_signup(
+        client,
         headers={"X-CSRF-Token": csrf_token},
-        json={
+        payload={
             "email": "sam@example.com",
             "username": "sam_player",
             "password": "correct-horse-93",

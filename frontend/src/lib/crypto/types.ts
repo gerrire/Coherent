@@ -1,6 +1,6 @@
 /** Wire contract shared with crates/coherent-crypto. Secrets stay in the crypto
  * Worker/native core. Recovery phrases cross the boundary only for user input
- * or one-time display; callers must never log or put them into an outbox. */
+ * or explicit reauthenticated display; never log or put them into an outbox. */
 export interface Envelope { version: 1; nonce: string; ciphertext: string }
 export interface DeviceBinding {
   version: 1;
@@ -15,7 +15,8 @@ export interface MessageContext {
   sender_device_id: string;
 }
 export type CryptoCommand =
-  | { operation: "identity" | "key_package" | "create_recovery" }
+  | { operation: "identity" | "key_package" | "recovery_backup" }
+  | { operation: "sign_device_proof"; purpose: "bootstrap" | "recovery_view" | "confirm_recovery"; nonce: string; backup: Envelope | null }
   | { operation: "pin_device"; device: DeviceBinding }
   | { operation: "authorize_conversation"; conversation_id: string; device_ids: string[] }
   | { operation: "create_group" | "members"; conversation_id: string }
@@ -41,6 +42,7 @@ export type VaultRequest =
   | { type: "execute"; command: CryptoCommand; delivered_id?: string }
   | { type: "pending" }
   | { type: "delivered"; delivery_id: string };
+export type RevealRequest = { type: "reveal_recovery"; current_password: string; csrf_token: string };
 
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function needsOutbox(operation: string): boolean {

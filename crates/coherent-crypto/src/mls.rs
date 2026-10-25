@@ -6,7 +6,7 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::{OpenMlsProvider, types::SignatureScheme};
+use openmls_traits::{OpenMlsProvider, signatures::Signer, types::SignatureScheme};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
@@ -190,6 +190,32 @@ impl MlsClient {
 
     pub fn device(&self) -> &DeviceBinding {
         &self.device
+    }
+
+    pub fn sign_device_proof(
+        &self,
+        purpose: &str,
+        nonce: &str,
+        payload_hash: &[u8; 32],
+    ) -> Result<String, CryptoError> {
+        if !matches!(purpose, "bootstrap" | "recovery_view" | "confirm_recovery") {
+            return Err(CryptoError::InvalidInput);
+        }
+        let nonce = BASE64_STANDARD
+            .decode(nonce)
+            .map_err(|_| CryptoError::InvalidInput)?;
+        if nonce.len() != 32 {
+            return Err(CryptoError::InvalidInput);
+        }
+        let mut bytes = b"coherent/device-proof/v1\0".to_vec();
+        bytes.extend_from_slice(purpose.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&uuid_bytes(&self.device.account_id)?);
+        bytes.extend_from_slice(&uuid_bytes(&self.device.device_id)?);
+        bytes.extend_from_slice(self.signer.public());
+        bytes.extend_from_slice(&nonce);
+        bytes.extend_from_slice(payload_hash);
+        Ok(BASE64_STANDARD.encode(self.signer.sign(&bytes).map_err(|_| CryptoError::Mls)?))
     }
 
     /// Never call this with an unverified server directory response.

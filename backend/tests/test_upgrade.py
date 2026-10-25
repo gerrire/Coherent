@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from conftest import verified_signup
 from cryptography.exceptions import InvalidTag
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -18,10 +19,10 @@ from coherent_api.services.attachment_cleanup import expire_batch, remove_files
 
 
 def register(client: TestClient, csrf: str, name: str) -> tuple[str, dict]:
-    response = client.post(
-        "/api/v1/auth/register",
+    response = verified_signup(
+        client,
         headers={"X-CSRF-Token": csrf},
-        json={"username": name, "password": "correct-horse-92"},
+        payload={"username": name, "password": "correct-horse-92"},
     )
     assert response.status_code == 201
     token = client.cookies["coherent_session"]

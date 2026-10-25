@@ -121,6 +121,25 @@ impl<K: VaultKeyStore> NativeVault<K> {
     }
 
     pub fn request(&self, account_id: &str, request_json: &str) -> Result<Value, CryptoError> {
+        self.request_inner(account_id, request_json, false)
+    }
+
+    /// Native shell calls this only after server reauthentication and a valid
+    /// proof of this active trusted device. Never expose snapshots via IPC.
+    pub fn reveal_recovery(&self, account_id: &str) -> Result<Value, CryptoError> {
+        self.request_inner(
+            account_id,
+            r#"{"type":"execute","command":{"operation":"show_recovery"}}"#,
+            true,
+        )
+    }
+
+    fn request_inner(
+        &self,
+        account_id: &str,
+        request_json: &str,
+        authorized_reveal: bool,
+    ) -> Result<Value, CryptoError> {
         if uuid::Uuid::from_bytes(uuid_bytes(account_id)?).to_string() != account_id
             || request_json.len() > 3 * 1024 * 1024
         {
@@ -128,6 +147,22 @@ impl<K: VaultKeyStore> NativeVault<K> {
         }
         let request: VaultRequest =
             serde_json::from_str(request_json).map_err(|_| CryptoError::InvalidInput)?;
+        if matches!(
+            &request,
+            VaultRequest::Execute {
+                command: Command::CreateRecovery,
+                ..
+            }
+        ) || (matches!(
+            &request,
+            VaultRequest::Execute {
+                command: Command::ShowRecovery,
+                ..
+            }
+        ) && !authorized_reveal)
+        {
+            return Err(CryptoError::State);
+        }
         let path = self.directory.join(format!("{account_id}.vault"));
         let lock_path = self.directory.join(format!("{account_id}.lock"));
         let mut options = OpenOptions::new();

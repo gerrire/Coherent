@@ -61,6 +61,41 @@ def send_code(settings: Settings, email: str, code: str) -> None:
         smtp.send_message(message)
 
 
+def send_recovery_notice(settings: Settings, email: str) -> None:
+    """An informational notice only. No Recovery Key ever enters SMTP."""
+    if not settings.smtp_host:
+        return
+    message = EmailMessage()
+    message["Subject"] = "Восстановление Когерента настроено"
+    message["From"] = settings.smtp_from
+    message["To"] = email
+    message["Date"] = formatdate(localtime=False)
+    message["Message-ID"] = make_msgid(domain=settings.smtp_from.rsplit("@", 1)[-1])
+    message.set_content(
+        "Ты подтвердил сохранение ключа восстановления Когерента.\n\n"
+        "12 слов остаются на доверенном устройстве и в сохранённой тобой копии. "
+        "В этом письме ключа нет. Храни его отдельно от пароля и никому не передавай.\n\n"
+        "Если действие выполнил не ты, смени пароль и проверь устройства аккаунта."
+    )
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+            smtp.ehlo()
+            if settings.smtp_starttls:
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+            if settings.smtp_username:
+                if not settings.smtp_starttls:
+                    return
+                smtp.login(
+                    settings.smtp_username,
+                    settings.smtp_password.get_secret_value() if settings.smtp_password else "",
+                )
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException):
+        # A notice delivery failure must not undo the user's saved local key.
+        return
+
+
 async def request_code(session: AsyncSession, settings: Settings, user: User, email: str) -> None:
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     if session.get_bind().dialect.name == "postgresql":
@@ -145,6 +180,7 @@ async def confirm_code(session: AsyncSession, settings: Settings, user: User, co
         raise EmailCodeError
     user.email = challenge.email
     user.email_verified_at = now
+    user.pending_email = None
     challenge.consumed_at = now
     challenge.code_digest = ""
     try:

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   ArrowRight,
   Eye,
@@ -6,8 +6,10 @@ import {
   LockKeyhole,
   Sparkles,
   UserRound,
+  Mail,
 } from "lucide-react";
 import { api, type User } from "../lib/api";
+import SecurityRecoveryCard from "./SecurityRecoveryCard";
 
 interface AuthPanelProps {
   onAuthenticated: (user: User) => void;
@@ -17,6 +19,34 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [verificationId, setVerificationId] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [delivery, setDelivery] = useState<"pending" | "sent" | "failed">("pending");
+  const [resendWait, setResendWait] = useState(0);
+  const [createdUser, setCreatedUser] = useState<User | null>(null);
+  useEffect(() => {
+    if (!resendWait) return;
+    const timer = window.setTimeout(() => setResendWait(value => Math.max(0, value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendWait]);
+  useEffect(() => {
+    if (!verificationId || createdUser) return;
+    let active = true;
+    let timer = 0;
+    let attempts = 0;
+    async function refresh() {
+      try {
+        const result = await api.registrationDelivery(verificationId!);
+        if (!active) return;
+        setDelivery(result.delivery);
+        if (result.delivery === "failed") setError("Письмо не удалось отправить. Попробуй запросить новый код позже.");
+        if (result.delivery === "pending" && ++attempts < 30) timer = window.setTimeout(() => void refresh(), 2000);
+      } catch { if (active) setError("Не удалось проверить доставку письма. Можно повторно запросить код."); }
+    }
+    void refresh();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [verificationId, createdUser]);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,10 +57,16 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
     setBusy(true);
 
     try {
+      if (mode === "register" && !verificationId) {
+        const challenge = await api.registrationCode(email.trim());
+        setDelivery("pending"); setVerificationId(challenge.verification_id); setResendWait(challenge.retry_after_seconds); setCode("");
+        return;
+      }
       const result = mode === "register"
-        ? await api.register({ username, password })
+        ? await api.register({ username, password, email: email.trim(), verification_id: verificationId!, code })
         : await api.login({ username, password });
-      onAuthenticated(result.user);
+      if (mode === "register") setCreatedUser(result.user);
+      else { setPassword(""); onAuthenticated(result.user); }
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -45,6 +81,15 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
   function toggleMode() {
     setMode((current) => current === "register" ? "login" : "register");
     setError("");
+    setPassword(""); setCode(""); setVerificationId(null);
+  }
+
+  async function resendCode() {
+    if (busy || resendWait) return;
+    setBusy(true); setError("");
+    try { const result = await api.registrationCode(email.trim()); setDelivery("pending"); setVerificationId(result.verification_id); setResendWait(result.retry_after_seconds); setCode(""); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось отправить код"); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -102,10 +147,10 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
 
         <div className="auth-card-wrap">
           <div className="auth-card">
-            <div className="card-heading">
+            {createdUser ? <SecurityRecoveryCard user={createdUser} initialPassword={password} onComplete={() => { setPassword(""); onAuthenticated(createdUser); }} /> : <><div className="card-heading">
               <div className="card-icon"><LockKeyhole size={20} /></div>
               <div className="card-overline">ТВОЁ ПРОСТРАНСТВО</div>
-              <h2>{mode === "register" ? "Создай аккаунт" : "С возвращением"}</h2>
+              <h2>{mode === "register" ? (verificationId ? "Подтверди почту" : "Создай аккаунт") : "С возвращением"}</h2>
               <p>
                 {mode === "register"
                   ? "Начни общаться по-новому"
@@ -114,7 +159,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
             </div>
 
             <form className="auth-form" onSubmit={submit}>
-              <label className="field-label">
+              {!verificationId && <><label className="field-label">
                 Имя пользователя
                 <span className="input-wrap">
                   <UserRound size={17} />
@@ -126,9 +171,12 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                     required
                     minLength={mode === "register" ? 3 : 1}
                     maxLength={32}
+                    pattern={mode === "register" ? "[A-Za-z0-9_]{3,32}" : undefined}
                   />
                 </span>
               </label>
+
+              {mode === "register" && <label className="field-label">Электронная почта<span className="input-wrap"><Mail size={17} /><input type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" maxLength={320} required /></span></label>}
 
               <label className="field-label">
                 Пароль
@@ -154,6 +202,8 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                   </button>
                 </span>
               </label>
+              </>}
+              {verificationId && <><p className="auth-mail-note">{delivery === "pending" ? "Отправляем код на" : delivery === "failed" ? "Не удалось отправить код на" : "Код отправлен на"} <strong>{email}</strong>. Он действует 10 минут. Проверь также папку «Спам».</p><label className="field-label">Логин<span className="input-wrap"><UserRound size={17} /><input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9_]{3,32}" required /></span></label><label className="field-label">Код из письма<span className="input-wrap"><Mail size={17} /><input autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="000000" required /></span></label><div className="auth-code-actions"><button type="button" disabled={busy || resendWait > 0} onClick={() => void resendCode()}>{resendWait ? `Повторить через ${resendWait} с` : "Отправить ещё раз"}</button><button type="button" disabled={busy} onClick={() => { setVerificationId(null); setCode(""); setError(""); }}>Изменить адрес</button></div></>}
 
               {error && <div className="form-error" role="alert">{error}</div>}
 
@@ -162,7 +212,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                   {busy
                     ? "Секунду..."
                     : mode === "register"
-                      ? "Создать аккаунт"
+                      ? (verificationId ? "Подтвердить и создать аккаунт" : "Получить код на почту")
                       : "Войти в Coherent"}
                 </span>
                 <ArrowRight size={17} />
@@ -180,6 +230,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
               Условия использования и политика конфиденциальности<br />
               будут опубликованы до публичного запуска Coherent.
             </div>
+            </>}
           </div>
 
           <div className="secure-note">

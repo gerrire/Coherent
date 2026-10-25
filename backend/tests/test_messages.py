@@ -1,11 +1,12 @@
+from conftest import verified_signup
 from fastapi.testclient import TestClient
 
 
 def create_user(client: TestClient, csrf_token: str, name: str) -> tuple[str, str]:
-    response = client.post(
-        "/api/v1/auth/register",
+    response = verified_signup(
+        client,
         headers={"X-CSRF-Token": csrf_token},
-        json={
+        payload={
             "email": f"{name}@example.com",
             "username": name,
             "password": "correct-horse-92",
@@ -61,20 +62,24 @@ def test_direct_conversation_and_message_access(client: TestClient, csrf_token: 
     assert history.status_code == 200
     assert [item["body"] for item in history.json()["messages"]] == ["Привет, Боб!"]
 
-    assert client.get(
-        f"/api/v1/conversations/{conversation_id}/messages",
-        headers=auth_headers(charlie_token, csrf_token),
-    ).status_code == 404
-    assert client.post(
-        f"/api/v1/conversations/{conversation_id}/messages",
-        headers=auth_headers(charlie_token, csrf_token),
-        json={"body": "Не мой чат"},
-    ).status_code == 404
+    assert (
+        client.get(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            headers=auth_headers(charlie_token, csrf_token),
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            headers=auth_headers(charlie_token, csrf_token),
+            json={"body": "Не мой чат"},
+        ).status_code
+        == 404
+    )
 
 
-def test_group_conversation_access_requires_membership(
-    client: TestClient, csrf_token: str
-) -> None:
+def test_group_conversation_access_requires_membership(client: TestClient, csrf_token: str) -> None:
     _, alice_token = create_user(client, csrf_token, "alice")
     bob_id, bob_token = create_user(client, csrf_token, "bob")
     charlie_id, charlie_token = create_user(client, csrf_token, "charlie")
@@ -103,11 +108,14 @@ def test_group_conversation_access_requires_membership(
     endpoint = f"/api/v1/conversations/{group.json()['id']}/messages"
     assert client.get(endpoint, headers=auth_headers(bob_token, csrf_token)).status_code == 200
     assert client.get(endpoint, headers=auth_headers(outsider_token, csrf_token)).status_code == 404
-    assert client.post(
-        endpoint,
-        headers=auth_headers(outsider_token, csrf_token),
-        json={"body": "Не мой чат"},
-    ).status_code == 404
+    assert (
+        client.post(
+            endpoint,
+            headers=auth_headers(outsider_token, csrf_token),
+            json={"body": "Не мой чат"},
+        ).status_code
+        == 404
+    )
 
 
 def test_message_validation_and_pagination(client: TestClient, csrf_token: str) -> None:
@@ -122,12 +130,18 @@ def test_message_validation_and_pagination(client: TestClient, csrf_token: str) 
     conversation_id = opened.json()["id"]
     endpoint = f"/api/v1/conversations/{conversation_id}/messages"
 
-    assert client.post(
-        endpoint, headers=auth_headers(alice_token, csrf_token), json={"body": "  "}
-    ).status_code == 422
-    assert client.post(
-        endpoint, headers={"Authorization": f"Bearer {alice_token}"}, json={"body": "Привет"}
-    ).status_code == 403
+    assert (
+        client.post(
+            endpoint, headers=auth_headers(alice_token, csrf_token), json={"body": "  "}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            endpoint, headers={"Authorization": f"Bearer {alice_token}"}, json={"body": "Привет"}
+        ).status_code
+        == 403
+    )
 
     for number in range(52):
         response = client.post(
@@ -202,41 +216,65 @@ def test_unread_messages_follow_each_users_read_position(
     ).json()["id"]
     inbox = client.get("/api/v1/conversations", headers=auth_headers(bob_token, csrf_token))
     assert inbox.json()["conversations"][0]["unread"] is True
-    assert client.get(
-        "/api/v1/conversations", headers=auth_headers(alice_token, csrf_token)
-    ).json()["conversations"][0]["unread"] is False
-    assert client.post(
-        f"{endpoint}/read",
-        headers=auth_headers(stranger_token, csrf_token),
-        json={"message_id": first},
-    ).status_code == 404
-    assert client.post(
-        f"{endpoint}/read",
-        headers=auth_headers(bob_token, csrf_token),
-        json={"message_id": first},
-    ).status_code == 204
-    assert client.get(
-        "/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)
-    ).json()["conversations"][0]["unread"] is False
+    assert (
+        client.get("/api/v1/conversations", headers=auth_headers(alice_token, csrf_token)).json()[
+            "conversations"
+        ][0]["unread"]
+        is False
+    )
+    assert (
+        client.post(
+            f"{endpoint}/read",
+            headers=auth_headers(stranger_token, csrf_token),
+            json={"message_id": first},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"{endpoint}/read",
+            headers=auth_headers(bob_token, csrf_token),
+            json={"message_id": first},
+        ).status_code
+        == 204
+    )
+    assert (
+        client.get("/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)).json()[
+            "conversations"
+        ][0]["unread"]
+        is False
+    )
 
     second = client.post(
         f"{endpoint}/messages",
         headers=auth_headers(alice_token, csrf_token),
         json={"body": "Второе"},
     ).json()["id"]
-    assert client.get(
-        "/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)
-    ).json()["conversations"][0]["unread"] is True
-    assert client.post(
-        f"{endpoint}/read",
-        headers=auth_headers(bob_token, csrf_token),
-        json={"message_id": second},
-    ).status_code == 204
-    assert client.post(
-        f"{endpoint}/read",
-        headers=auth_headers(bob_token, csrf_token),
-        json={"message_id": first},
-    ).status_code == 204
-    assert client.get(
-        "/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)
-    ).json()["conversations"][0]["unread"] is False
+    assert (
+        client.get("/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)).json()[
+            "conversations"
+        ][0]["unread"]
+        is True
+    )
+    assert (
+        client.post(
+            f"{endpoint}/read",
+            headers=auth_headers(bob_token, csrf_token),
+            json={"message_id": second},
+        ).status_code
+        == 204
+    )
+    assert (
+        client.post(
+            f"{endpoint}/read",
+            headers=auth_headers(bob_token, csrf_token),
+            json={"message_id": first},
+        ).status_code
+        == 204
+    )
+    assert (
+        client.get("/api/v1/conversations", headers=auth_headers(bob_token, csrf_token)).json()[
+            "conversations"
+        ][0]["unread"]
+        is False
+    )

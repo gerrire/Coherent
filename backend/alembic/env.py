@@ -11,11 +11,13 @@ from coherent_api.models import call_member as call_member_model  # noqa: F401
 from coherent_api.models import conversation as conversation_model  # noqa: F401
 from coherent_api.models import conversation_member as conversation_member_model  # noqa: F401
 from coherent_api.models import conversation_read as conversation_read_model  # noqa: F401
+from coherent_api.models import e2ee as e2ee_model  # noqa: F401
 from coherent_api.models import email_verification as email_verification_model  # noqa: F401
 from coherent_api.models import friend_request as friend_request_model  # noqa: F401
 from coherent_api.models import message as message_model  # noqa: F401
 from coherent_api.models import message_attachment as message_attachment_model  # noqa: F401
 from coherent_api.models import push_subscription as push_subscription_model  # noqa: F401
+from coherent_api.models import registration as registration_model  # noqa: F401
 from coherent_api.models import server as server_model  # noqa: F401
 from coherent_api.models import user as user_model  # noqa: F401
 

@@ -167,6 +167,12 @@ export class ApiError extends Error {
 
 let csrfToken: string | null = null;
 
+export async function currentCsrfToken(): Promise<string> {
+  if (!csrfToken) await initializeCsrf();
+  if (!csrfToken) throw new Error("Не удалось подтвердить запрос");
+  return csrfToken;
+}
+
 export async function initializeCsrf(): Promise<void> {
   if (isTauri()) {
     await invoke("api_initialize_csrf");
@@ -242,6 +248,12 @@ export async function attachmentObjectUrl(path: string): Promise<string> {
 }
 
 export const api = {
+  registrationCode: (email: string) => request<{ verification_id: string; expires_in_seconds: number; retry_after_seconds: number }>("/api/v1/auth/registration/code", { method: "POST", body: JSON.stringify({ email }) }),
+  registrationDelivery: (id: string) => request<{ delivery: "pending" | "sent" | "failed" }>(`/api/v1/auth/registration/${id}`),
+  securityStatus: () => request<{ setup_available: boolean; configured: boolean; recovery_confirmed: boolean; chat_encryption: string; devices: Array<{ id: string; label: string; platform: string; approved_at: string }> }>("/api/v1/security/status"),
+  deviceChallenge: (purpose: "bootstrap" | "confirm_recovery") => request<{ challenge_id: string; nonce: string }>("/api/v1/security/challenges", { method: "POST", body: JSON.stringify({ purpose }) }),
+  bootstrapSecurity: (body: unknown) => request<{ configured: boolean }>("/api/v1/security/bootstrap", { method: "POST", body: JSON.stringify(body) }),
+  confirmRecoverySaved: (body: unknown) => request<{ confirmed: boolean }>("/api/v1/security/recovery/confirm", { method: "POST", body: JSON.stringify(body) }),
   servers: () => request<CommunityServer[]>("/api/v1/servers"),
   createServer: (name: string) => request<CommunityServer>("/api/v1/servers", { method: "POST", body: JSON.stringify({ name }) }),
   joinServer: (code: string) => request<CommunityServer>("/api/v1/servers/join", { method: "POST", body: JSON.stringify({ code }) }),
@@ -249,7 +261,7 @@ export const api = {
   createServerInvite: (id: string) => request<{ code: string; expires_at: string; max_uses: number }>(`/api/v1/servers/${id}/invites`, { method: "POST" }),
   serverConversation: (serverId: string, channelId: string) => request<Conversation>(`/api/v1/servers/${serverId}/channels/${channelId}/conversation`),
   me: () => request<User>("/api/v1/auth/me"),
-  register: (payload: { username: string; password: string }) =>
+  register: (payload: { username: string; password: string; email: string; verification_id: string; code: string }) =>
     request<AuthResponse>("/api/v1/auth/register", {
       method: "POST",
       body: JSON.stringify(payload),

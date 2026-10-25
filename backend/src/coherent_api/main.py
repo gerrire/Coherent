@@ -17,6 +17,7 @@ from coherent_api.services.attachment_cleanup import attachment_cleanup_loop
 from coherent_api.services.call_cleanup import call_cleanup_loop
 from coherent_api.services.events import MessageEvents
 from coherent_api.services.livekit_media import livekit_ready
+from coherent_api.services.registration import registration_mail_loop
 from coherent_api.services.server_metrics import ServerMetrics
 
 
@@ -45,6 +46,9 @@ def create_app(
                     encrypted.body_ciphertext, encrypted.conversation_id, encrypted.id
                 )
         metrics = asyncio.create_task(application.state.server_metrics.run())
+        registration_mail = asyncio.create_task(
+            registration_mail_loop(session_factory, app_settings)
+        )
         attachments_cleanup = asyncio.create_task(
             attachment_cleanup_loop(session_factory, app_settings.attachment_dir)
         )
@@ -57,6 +61,9 @@ def create_app(
             yield
         finally:
             metrics.cancel()
+            registration_mail.cancel()
+            with suppress(asyncio.CancelledError):
+                await registration_mail
             with suppress(asyncio.CancelledError):
                 await metrics
             attachments_cleanup.cancel()

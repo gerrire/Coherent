@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CalendarDays, Check, Eye, EyeOff, KeyRound, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 import { api, displayName, type User } from "../lib/api";
+import SecurityRecoveryCard from "./SecurityRecoveryCard";
 
 interface ProfileSettingsDialogProps {
   user: User;
@@ -171,6 +172,7 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
             {emailSent && <form className="profile-password-form" onSubmit={(event) => void confirmEmail(event)}><label htmlFor="profile-email-code">Код из письма</label><div className="profile-password-field"><input ref={emailCodeRef} id="profile-email-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="000000" required /></div><div className="profile-password-actions"><span>Письмо отправлено на {email}.</span><button type="submit" disabled={emailBusy || emailCode.length !== 6}>Подтвердить адрес</button></div></form>}
             {emailError && <p className="profile-settings-error" role="alert">{emailError}</p>}
           </section>
+          <SecurityRecoveryCard user={user} />
           <section className="profile-settings-card" aria-label="Безопасность">
             <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>Безопасность</h3></div>
             <p>Для смены пароля введи текущий и новый пароль.</p>

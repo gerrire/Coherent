@@ -11,10 +11,10 @@ use crate::{
 
 const RECOVERY_DOMAIN: &[u8] = b"coherent/recovery/archive/v1";
 
-/// Generated locally; the caller displays once and must not send it to an API.
+/// Generated locally. Never send the phrase to an API or an email provider.
 pub fn generate_phrase() -> Result<Zeroizing<String>, CryptoError> {
     let entropy = random_key();
-    let phrase = Mnemonic::from_entropy_in(Language::English, entropy.as_ref())
+    let phrase = Mnemonic::from_entropy_in(Language::English, &entropy[..16])
         .map_err(|_| CryptoError::InvalidInput)?;
     Ok(Zeroizing::new(phrase.to_string()))
 }
@@ -23,8 +23,9 @@ fn wrapping_key(account_id: &str, phrase: &str) -> Result<Zeroizing<[u8; 32]>, C
     let account = uuid_bytes(account_id)?;
     let mnemonic =
         Mnemonic::parse_in(Language::English, phrase).map_err(|_| CryptoError::InvalidInput)?;
-    // This version accepts only 256-bit generated keys, not user passwords.
-    if mnemonic.word_count() != 24 {
+    // New keys contain 128 random bits (12 words). Existing 24-word backups
+    // remain readable; shortening an already-issued key would change it.
+    if !matches!(mnemonic.word_count(), 12 | 24) {
         return Err(CryptoError::InvalidInput);
     }
     let entropy = Zeroizing::new(mnemonic.to_entropy());

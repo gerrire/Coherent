@@ -14,10 +14,11 @@ from coherent_api.models import conversation_read as conversation_read_model  # 
 from coherent_api.models import friend_request as friend_request_model  # noqa: F401
 from coherent_api.models import message as message_model  # noqa: F401
 from coherent_api.models import user as user_model  # noqa: F401
+from coherent_api.services import email_verification
 
 
 @pytest.fixture
-def client(tmp_path) -> Iterator[TestClient]:
+def client(tmp_path, monkeypatch) -> Iterator[TestClient]:
     database_path = tmp_path / "test.sqlite3"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}", poolclass=NullPool)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -34,12 +35,37 @@ def client(tmp_path) -> Iterator[TestClient]:
         attachment_dir=str(tmp_path / "attachments"),
         chat_master_key_path=None,
         cloud_encryption_required=False,
-        smtp_host=None,
+        smtp_host="local-test",
     )
     application = create_app(settings=settings, session_factory=session_factory)
+    application.state.signup_codes = {}
+    monkeypatch.setattr(
+        email_verification,
+        "send_code",
+        lambda _settings, email, code: application.state.signup_codes.__setitem__(email, code),
+    )
     with TestClient(application) as test_client:
         yield test_client
     asyncio.run(engine.dispose())
+
+
+def verified_signup(client: TestClient, headers: dict, payload: dict):
+    email = payload.get("email") or f"{payload['username']}@example.com"
+    challenge = client.post(
+        "/api/v1/auth/registration/code", headers=headers, json={"email": email}
+    )
+    if challenge.status_code != 202:
+        return challenge
+    return client.post(
+        "/api/v1/auth/register",
+        headers=headers,
+        json={
+            **payload,
+            "email": email,
+            "verification_id": challenge.json()["verification_id"],
+            "code": client.app.state.signup_codes[email],
+        },
+    )
 
 
 @pytest.fixture

@@ -1,9 +1,12 @@
 import secrets
+from datetime import UTC, datetime
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.core.security import create_access_token, hash_password, verify_password
+from coherent_api.models.registration import RegistrationChallenge
 from coherent_api.models.user import User
 from coherent_api.schemas.auth import (
     AuthResponse,
@@ -13,6 +16,7 @@ from coherent_api.schemas.auth import (
     EmailCodeRequest,
     LoginRequest,
     RegisterRequest,
+    RegistrationCodeRequest,
     UpdateProfileRequest,
     UserResponse,
 )
@@ -28,6 +32,12 @@ from coherent_api.services.email_verification import (
     confirm_code,
     request_code,
 )
+from coherent_api.services.registration import (
+    RegistrationCodeError,
+    RegistrationRateError,
+    begin_registration,
+    deliver_registration_code,
+)
 
 router = APIRouter(prefix="/auth", tags=["Авторизация"])
 SESSION_COOKIE = "coherent_session"
@@ -40,6 +50,7 @@ def user_response(user: User, request: Request) -> UserResponse:
         update={
             "is_admin": user.username == request.app.state.settings.admin_username,
             "email_delivery_available": bool(request.app.state.settings.smtp_host),
+            "email": user.email or user.pending_email,
         }
     )
 
@@ -81,7 +92,11 @@ async def register(
     session: SessionDep,
 ) -> AuthResponse:
     try:
-        user = await register_user(session, body)
+        user = await register_user(session, body, request.app.state.settings)
+    except RegistrationCodeError as error:
+        raise HTTPException(
+            status_code=400, detail="Код почты недействителен, истёк или исчерпал попытки"
+        ) from error
     except AccountAlreadyExistsError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -94,6 +109,56 @@ async def register(
 
     set_session_cookies(response, user, request)
     return AuthResponse(user=user_response(user, request))
+
+
+@router.post("/registration/code", status_code=202)
+async def registration_email_code(
+    body: RegistrationCodeRequest,
+    request: Request,
+    session: SessionDep,
+    background: BackgroundTasks,
+) -> dict:
+    settings = request.app.state.settings
+    if not settings.smtp_host:
+        raise HTTPException(
+            status_code=503,
+            detail="Регистрация временно недоступна: отправка писем ещё настраивается",
+        )
+    try:
+        challenge = await begin_registration(
+            session, settings, body.email, request.client.host if request.client else "unknown"
+        )
+    except RegistrationRateError as error:
+        raise HTTPException(
+            status_code=429,
+            detail="Подожди перед новой отправкой кода",
+            headers={"Retry-After": "60"},
+        ) from error
+    background.add_task(
+        deliver_registration_code, request.app.state.session_factory, settings, challenge.id
+    )
+    return {
+        "verification_id": str(challenge.id),
+        "expires_in_seconds": 600,
+        "retry_after_seconds": 60,
+    }
+
+
+@router.get("/registration/{verification_id}")
+async def registration_delivery(verification_id: UUID, session: SessionDep) -> dict:
+    challenge = await session.get(RegistrationChallenge, verification_id)
+    if (
+        challenge is None
+        or challenge.consumed_at is not None
+        or challenge.expires_at.replace(tzinfo=UTC) <= datetime.now(UTC)
+    ):
+        raise HTTPException(status_code=404, detail="Запрос подтверждения истёк")
+    delivery = (
+        "sent"
+        if challenge.delivered_at
+        else ("failed" if challenge.code_ciphertext is None else "pending")
+    )
+    return {"delivery": delivery}
 
 
 @router.post("/login", response_model=AuthResponse)

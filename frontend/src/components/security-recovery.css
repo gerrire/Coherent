@@ -1,0 +1,19 @@
+.security-recovery-card { min-width: 0; }
+.recovery-rollout-note, .recovery-private-note, .auth-mail-note { color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.recovery-words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 18px 0 12px; padding: 0; list-style: none; }
+.recovery-words li { display: flex; align-items: center; gap: 8px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px; background: var(--bg-raised); }
+.recovery-words li span { color: var(--text-muted); font-size: 11px; }
+.recovery-words strong { color: var(--text); font-size: 14px; overflow-wrap: anywhere; user-select: all; }
+.recovery-actions, .auth-code-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.recovery-actions button, .recovery-action, .auth-code-actions button { display: inline-flex; justify-content: center; align-items: center; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); background: var(--bg-raised); color: var(--text); border-radius: 9px; cursor: pointer; font: inherit; font-size: 13px; }
+.recovery-action { background: var(--theme-veil, var(--bg-raised)); border-color: var(--purple); }
+.recovery-actions button:disabled, .recovery-action:disabled, .auth-code-actions button:disabled { opacity: .5; cursor: default; }
+.recovery-confirm { margin-top: 18px; }
+.recovery-confirm > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.recovery-confirm label { display: flex; flex-direction: column; gap: 7px; min-width: 0; color: var(--text-muted); font-size: 13px; }
+.recovery-confirm input { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--bg-raised); border-radius: 8px; padding: 11px; color: var(--text); }
+.recovery-continue { width: 100%; margin-top: 16px; }
+.auth-card .security-recovery-card { padding: 0; background: transparent; border: 0; }
+.auth-card .recovery-words { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.auth-card:has(.security-recovery-card) { max-height: calc(100dvh - 90px); overflow-y: auto; scrollbar-color: var(--line) transparent; }
+@media(max-width: 540px) { .recovery-words { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -20,12 +20,19 @@ struct LocalEngine {
     mls: String,
     archive_key: String,
     archive_in_use: bool,
+    #[serde(default)]
+    recovery_phrase: Option<String>,
+    #[serde(default)]
+    recovery_backup: Option<Envelope>,
 }
 
 impl Drop for LocalEngine {
     fn drop(&mut self) {
         self.mls.zeroize();
         self.archive_key.zeroize();
+        if let Some(phrase) = &mut self.recovery_phrase {
+            phrase.zeroize();
+        }
     }
 }
 
@@ -119,6 +126,13 @@ pub enum Command {
         archive: Envelope,
     },
     CreateRecovery,
+    RecoveryBackup,
+    ShowRecovery,
+    SignDeviceProof {
+        purpose: String,
+        nonce: String,
+        backup: Option<Envelope>,
+    },
     RecoverArchive {
         phrase: String,
         backup: Envelope,
@@ -129,6 +143,8 @@ pub struct CryptoEngine {
     mls: MlsClient,
     archive_key: Zeroizing<[u8; 32]>,
     archive_in_use: bool,
+    recovery_phrase: Option<Zeroizing<String>>,
+    recovery_backup: Option<Envelope>,
 }
 
 impl CryptoEngine {
@@ -137,6 +153,8 @@ impl CryptoEngine {
             mls: MlsClient::new(account_id, device_id)?,
             archive_key: envelope::random_key(),
             archive_in_use: false,
+            recovery_phrase: None,
+            recovery_backup: None,
         })
     }
 
@@ -337,24 +355,79 @@ impl CryptoEngine {
                 self.archive_in_use = true;
                 Ok(json!({ "context": context, "content": content }))
             }
-            Command::CreateRecovery => {
-                let phrase = recovery::generate_phrase()?;
-                let backup = recovery::protect_archive_key(
-                    &self.mls.device().account_id,
-                    &phrase,
-                    &self.archive_key,
-                )?;
-                Ok(json!({ "phrase": phrase.as_str(), "backup": backup }))
+            Command::CreateRecovery | Command::RecoveryBackup => {
+                let reveal = matches!(command, Command::CreateRecovery);
+                if self.recovery_phrase.is_none() {
+                    self.recovery_phrase = Some(recovery::generate_phrase()?);
+                }
+                let phrase = self.recovery_phrase.as_ref().ok_or(CryptoError::State)?;
+                if self.recovery_backup.is_none() {
+                    self.recovery_backup = Some(recovery::protect_archive_key(
+                        &self.mls.device().account_id,
+                        phrase,
+                        &self.archive_key,
+                    )?);
+                }
+                let backup = self.recovery_backup.as_ref().ok_or(CryptoError::State)?;
+                if reveal {
+                    Ok(json!({ "phrase": phrase.as_str(), "backup": backup }))
+                } else {
+                    Ok(json!({ "backup": backup }))
+                }
             }
-            Command::RecoverArchive { mut phrase, backup } => {
+            Command::ShowRecovery => Ok(
+                json!({ "phrase": self.recovery_phrase.as_ref().ok_or(CryptoError::State)?.as_str() }),
+            ),
+            Command::SignDeviceProof {
+                purpose,
+                nonce,
+                backup,
+            } => {
+                let hash: [u8; 32] = if purpose == "bootstrap" {
+                    let backup = backup.ok_or(CryptoError::InvalidInput)?;
+                    if backup.version != 1 {
+                        return Err(CryptoError::InvalidInput);
+                    }
+                    let mut bytes = b"coherent/bootstrap-backup/v1\0".to_vec();
+                    let iv = BASE64_STANDARD
+                        .decode(&backup.nonce)
+                        .map_err(|_| CryptoError::InvalidInput)?;
+                    let ciphertext = BASE64_STANDARD
+                        .decode(&backup.ciphertext)
+                        .map_err(|_| CryptoError::InvalidInput)?;
+                    if iv.len() != 12 || ciphertext.len() != 48 {
+                        return Err(CryptoError::InvalidInput);
+                    }
+                    bytes.extend_from_slice(&iv);
+                    bytes.extend_from_slice(&ciphertext);
+                    Sha256::digest(bytes).into()
+                } else {
+                    if backup.is_some() {
+                        return Err(CryptoError::InvalidInput);
+                    }
+                    [0; 32]
+                };
+                Ok(
+                    json!({ "device": self.mls.device(), "proof": self.mls.sign_device_proof(&purpose, &nonce, &hash)? }),
+                )
+            }
+            Command::RecoverArchive { phrase, backup } => {
+                let phrase = Zeroizing::new(phrase);
                 let result =
                     recovery::recover_archive_key(&self.mls.device().account_id, &phrase, &backup);
-                phrase.zeroize();
                 let recovered = result?;
                 if self.archive_in_use && *recovered != *self.archive_key {
                     return Err(CryptoError::State);
                 }
                 self.archive_key = recovered;
+                self.recovery_backup = Some(backup);
+                self.recovery_phrase = Some(Zeroizing::new(
+                    phrase
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase(),
+                ));
                 Ok(json!({}))
             }
         }
@@ -366,6 +439,11 @@ impl CryptoEngine {
             mls: BASE64_STANDARD.encode(self.mls.snapshot_local()?.as_slice()),
             archive_key: BASE64_STANDARD.encode(self.archive_key.as_ref()),
             archive_in_use: self.archive_in_use,
+            recovery_phrase: self
+                .recovery_phrase
+                .as_ref()
+                .map(|phrase| phrase.to_string()),
+            recovery_backup: self.recovery_backup.clone(),
         };
         Ok(Zeroizing::new(
             serde_json::to_vec(&snapshot).map_err(|_| CryptoError::State)?,
@@ -397,6 +475,11 @@ impl CryptoEngine {
             mls: MlsClient::restore_local(&mls_bytes)?,
             archive_key,
             archive_in_use: snapshot.archive_in_use,
+            recovery_phrase: snapshot
+                .recovery_phrase
+                .as_ref()
+                .map(|phrase| Zeroizing::new(phrase.clone())),
+            recovery_backup: snapshot.recovery_backup.clone(),
         })
     }
 }

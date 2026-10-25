@@ -16,6 +16,7 @@ class User(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    pending_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
