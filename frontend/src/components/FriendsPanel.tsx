@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Check, Clock3, MessageCircle, Search, UserPlus, UsersRound, X } from "lucide-react";
-import { api, type Friend, type FriendRequest, type UserSearchResult } from "../lib/api";
+import { api, displayName, type Friend, type FriendRequest, type UserSearchResult } from "../lib/api";
 
 type Tab = "search" | "all" | "requests";
 
@@ -242,7 +242,7 @@ export default function FriendsPanel({
               {friends.map((friend) => (
                 <FriendRow
                   key={friend.id}
-                  username={friend.username}
+                  username={displayName(friend)}
                   online={onlineIds.has(friend.id)}
                   busy={busyId === friend.id}
                   onMessage={() => startConversation(friend.id)}
@@ -262,7 +262,7 @@ export default function FriendsPanel({
             <div className="friend-results">
               {requests.incoming.map((request) => (
                 <div className="friend-row request-row" key={request.request_id}>
-                  <UserIdentity username={request.username} />
+                  <UserIdentity username={displayName(request)} />
                   <span className="request-date">{formatDate(request.created_at)}</span>
                   <div className="friend-row-actions">
                     <button
@@ -274,7 +274,7 @@ export default function FriendsPanel({
                     </button>
                     <button
                       className="icon-action decline-action"
-                      aria-label={`Отклонить заявку от ${request.username}`}
+                      aria-label={`Отклонить заявку от ${displayName(request)}`}
                       disabled={busyId === request.request_id}
                       onClick={() => removeRequest(request.request_id)}
                     >
@@ -295,7 +295,7 @@ export default function FriendsPanel({
             <div className="friend-results">
               {requests.outgoing.map((request) => (
                 <div className="friend-row request-row" key={request.request_id}>
-                  <UserIdentity username={request.username} />
+                  <UserIdentity username={displayName(request)} />
                   <span className="request-date">{formatDate(request.created_at)}</span>
                   <button
                     className="small-action pending-action"
@@ -336,7 +336,7 @@ function UserResultRow({
 
   return (
     <div className="friend-row">
-      <UserIdentity username={user.username} />
+      <UserIdentity username={displayName(user)} />
       <span className="friend-row-status">
         {user.relationship === "incoming_pending"
           ? "Отправил тебе заявку"

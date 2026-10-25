@@ -88,7 +88,7 @@ function MainApp() {
   }
 
   return <>{user
-    ? <ChatShell user={user} onLogout={logout} />
+    ? <ChatShell user={user} onLogout={logout} onUserChange={setUser} />
     : <AuthPanel onAuthenticated={setUser} />}</>;
 }
 

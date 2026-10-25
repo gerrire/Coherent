@@ -16,7 +16,11 @@ class User(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     username: Mapped[str] = mapped_column(String(32), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     session_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
@@ -27,3 +31,11 @@ class User(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+    @property
+    def public_name(self) -> str:
+        return self.display_name or self.username
+
+    @property
+    def email_verified(self) -> bool:
+        return self.email_verified_at is not None

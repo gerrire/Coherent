@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from coherent_api.models.conversation import Conversation
 from coherent_api.models.conversation_member import ConversationMember
 from coherent_api.models.friend_request import FriendRequest
+from coherent_api.models.server import ServerChannel, ServerMember
 from coherent_api.models.user import User
 
 
@@ -18,6 +19,12 @@ class ConversationNotFoundError(Exception):
 
 class GroupMembershipError(Exception):
     pass
+
+
+async def get_server_channel(session: AsyncSession, conversation_id: UUID) -> ServerChannel | None:
+    return await session.scalar(
+        select(ServerChannel).where(ServerChannel.conversation_id == conversation_id)
+    )
 
 
 def other_user_id(conversation: Conversation, user_id: UUID) -> UUID:
@@ -38,6 +45,15 @@ async def conversation_member_ids(
     if conversation.kind == "direct":
         assert conversation.user_low_id is not None and conversation.user_high_id is not None
         return (conversation.user_low_id, conversation.user_high_id)
+    channel = await get_server_channel(session, conversation.id)
+    if channel is not None:
+        return tuple(
+            await session.scalars(
+                select(ServerMember.user_id)
+                .where(ServerMember.server_id == channel.server_id)
+                .order_by(ServerMember.joined_at, ServerMember.user_id)
+            )
+        )
     return tuple(
         await session.scalars(
             select(ConversationMember.user_id)
@@ -56,8 +72,12 @@ async def get_conversation(
     if conversation.kind == "direct":
         allowed = current_user.id in (conversation.user_low_id, conversation.user_high_id)
     else:
+        channel = await get_server_channel(session, conversation_id)
         allowed = (
-            await session.get(ConversationMember, (conversation_id, current_user.id)) is not None
+            await session.get(ServerMember, (channel.server_id, current_user.id)) is not None
+            if channel is not None
+            else await session.get(ConversationMember, (conversation_id, current_user.id))
+            is not None
         )
     if not allowed:
         raise ConversationNotFoundError
@@ -94,6 +114,8 @@ async def add_group_members(
 ) -> None:
     if conversation.kind != "group":
         raise GroupMembershipError("Создайте групповой чат для общего звонка")
+    if await get_server_channel(session, conversation.id) is not None:
+        raise GroupMembershipError("Участники канала управляются через сервер")
     await validate_friends(session, current_user.id, target_ids)
     current = set(await conversation_member_ids(session, conversation))
     if target_ids & current:

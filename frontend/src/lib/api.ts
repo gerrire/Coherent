@@ -1,13 +1,21 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export interface User {
+  email?: string | null;
+  email_verified?: boolean;
+  email_delivery_available?: boolean;
   id: string;
   username: string;
+  display_name?: string | null;
   created_at: string;
   is_admin: boolean;
 }
 
 export interface AdminOverview {
+  cloud_encryption_enabled: boolean;
+  legacy_plaintext_messages: number;
+  legacy_plaintext_attachments: number;
+  online_users: number;
   users: number;
   conversations: number;
   messages: number;
@@ -20,6 +28,18 @@ export interface AdminOverview {
   recent_users: Array<{ username: string; created_at: string }>;
 }
 
+export interface ServerMetricSample {
+  at: string;
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  memory_used_bytes: number | null;
+  memory_total_bytes: number | null;
+  host_uptime_seconds: number | null;
+  api_uptime_seconds: number;
+  load_average: number[] | null;
+  cpu_count: number | null;
+}
+
 export type RelationshipStatus =
   | "none"
   | "outgoing_pending"
@@ -29,6 +49,7 @@ export type RelationshipStatus =
 export interface UserSearchResult {
   id: string;
   username: string;
+  display_name?: string | null;
   relationship: RelationshipStatus;
   request_id: string | null;
 }
@@ -36,6 +57,7 @@ export interface UserSearchResult {
 export interface Friend {
   id: string;
   username: string;
+  display_name?: string | null;
   since: string;
 }
 
@@ -43,6 +65,7 @@ export interface FriendRequest {
   request_id: string;
   user_id: string;
   username: string;
+  display_name?: string | null;
   created_at: string;
 }
 
@@ -63,21 +86,35 @@ export interface Message {
 }
 
 export interface Conversation {
+  server_id?: string | null;
+  channel_id?: string | null;
   id: string;
   kind: "direct" | "group";
   name: string | null;
-  members: Array<{ id: string; username: string }>;
-  other_user: { id: string; username: string } | null;
+  members: Array<{ id: string; username: string; display_name?: string | null }>;
+  other_user: { id: string; username: string; display_name?: string | null } | null;
   created_at: string;
   updated_at: string;
   last_message: Message | null;
   unread: boolean;
 }
 
+export interface CommunityServer {
+  id: string;
+  name: string;
+  owner_id: string;
+  member_count: number;
+  channels: Array<{ id: string; conversation_id: string; name: string; category: string }>;
+}
+
+export function displayName(person: { username: string; display_name?: string | null }): string {
+  return person.display_name?.trim() || person.username;
+}
+
 export function conversationTitle(conversation: Conversation): string {
   return conversation.kind === "group"
     ? conversation.name || "Групповой чат"
-    : conversation.other_user?.username || "Личная беседа";
+    : (conversation.other_user ? displayName(conversation.other_user) : "Личная беседа");
 }
 
 export interface MessagePage {
@@ -90,8 +127,10 @@ export interface Call {
   conversation_id: string;
   caller_id: string;
   caller_username: string;
+  caller_display_name?: string | null;
   callee_id: string;
   callee_username: string;
+  callee_display_name?: string | null;
   status: "ringing" | "active" | "declined" | "cancelled" | "ended" | "missed";
   created_at: string;
   expires_at: string;
@@ -100,6 +139,7 @@ export interface Call {
   participants: Array<{
     user_id: string;
     username: string;
+  display_name?: string | null;
     state: "invited" | "joined" | "declined" | "left";
   }>;
 }
@@ -202,6 +242,12 @@ export async function attachmentObjectUrl(path: string): Promise<string> {
 }
 
 export const api = {
+  servers: () => request<CommunityServer[]>("/api/v1/servers"),
+  createServer: (name: string) => request<CommunityServer>("/api/v1/servers", { method: "POST", body: JSON.stringify({ name }) }),
+  joinServer: (code: string) => request<CommunityServer>("/api/v1/servers/join", { method: "POST", body: JSON.stringify({ code }) }),
+  createServerChannel: (id: string, name: string, category: string) => request<CommunityServer>(`/api/v1/servers/${id}/channels`, { method: "POST", body: JSON.stringify({ name, category }) }),
+  createServerInvite: (id: string) => request<{ code: string; expires_at: string; max_uses: number }>(`/api/v1/servers/${id}/invites`, { method: "POST" }),
+  serverConversation: (serverId: string, channelId: string) => request<Conversation>(`/api/v1/servers/${serverId}/channels/${channelId}/conversation`),
   me: () => request<User>("/api/v1/auth/me"),
   register: (payload: { username: string; password: string }) =>
     request<AuthResponse>("/api/v1/auth/register", {
@@ -216,7 +262,11 @@ export const api = {
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/api/v1/auth/password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
+  updateProfile: (display_name: string) => request<User>("/api/v1/auth/profile", { method: "PATCH", body: JSON.stringify({ display_name }) }),
+  requestEmailCode: (email: string, current_password: string) => request<{ expires_in_seconds: number; retry_after_seconds: number }>("/api/v1/auth/email/code", { method: "POST", body: JSON.stringify({ email, current_password }) }),
+  confirmEmailCode: (code: string) => request<User>("/api/v1/auth/email/confirm", { method: "POST", body: JSON.stringify({ code }) }),
   adminOverview: () => request<AdminOverview>("/api/v1/admin/overview"),
+  adminMetrics: () => request<{ samples: ServerMetricSample[]; interval_seconds: number }>("/api/v1/admin/metrics"),
   pushKey: () => request<{ public_key: string }>("/api/v1/push/key"),
   subscribePush: (subscription: PushSubscriptionJSON) =>
     request<void>("/api/v1/push/subscriptions", { method: "POST", body: JSON.stringify(subscription) }),

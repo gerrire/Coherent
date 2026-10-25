@@ -1,0 +1,3 @@
+coherent2026._domainkey	IN	TXT	( "v=DKIM1; h=sha256; k=rsa; "
+	  "p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtkZUr7Y6rtVi1s/tCEymPWXEE/RPZQ3a+oAGZvySATCprlpaGe8LikuxPDVUex/vNZTUTWKZCEAKjEbu6zxJXoXazuV+qQch5FSiSla/FkxRZeTOdSuDo6m1tFLgApZ/EH072pSnQNBHN67tZLKbJPMgcxFDpH27wqnHPX/9NFH+SoNtBNrgsiNnAxFxU3XrTkjpqJw+Ftc3Rz"
+	  "rq7eBsL1mlc2kv4g8dBrSUK/PJX60I9lh5JpsE1ScATpQCs4+JKYtx4o9btxLpbTWniUWpltdxFSsWyu9tdTqfUvP8kqsI11sJ4Y0wWXitel0PdY3M5uQ281NybVmkkB6W8m+QJQIDAQAB" )  ; ----- DKIM key coherent2026 for coherent-web.ru

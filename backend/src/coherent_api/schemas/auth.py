@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from datetime import datetime
 from uuid import UUID
 
@@ -54,8 +55,11 @@ class UserResponse(BaseModel):
     id: UUID
     email: EmailStr | None
     username: str
+    display_name: str | None = None
     created_at: datetime
     is_admin: bool = False
+    email_verified: bool = False
+    email_delivery_available: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -67,5 +71,35 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class UpdateProfileRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=64)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(
+            unicodedata.category(char) == "Cc"
+            or char in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+            for char in value
+        ):
+            raise ValueError("Укажи отображаемое имя без управляющих символов")
+        return value
+
+
 class CsrfResponse(BaseModel):
     csrf_token: str
+
+
+class EmailCodeRequest(BaseModel):
+    email: EmailStr
+    current_password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class EmailCodeConfirm(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")

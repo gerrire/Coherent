@@ -5,8 +5,10 @@ import {
   CircleHelp,
   Compass,
   Headphones,
+  Hash,
   LogOut,
   MessageCircle,
+  Menu,
   Mic,
   MicOff,
   MoreHorizontal,
@@ -25,7 +27,7 @@ import {
 import { ConnectionState, Track, type Room } from "livekit-client";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { api, conversationTitle, type Call, type Conversation, type FriendRequest, type User } from "../lib/api";
+import { api, displayName, conversationTitle, type Call, type Conversation, type FriendRequest, type User, type CommunityServer } from "../lib/api";
 import {
   cameraCapture,
   cameraPublish,
@@ -46,6 +48,7 @@ import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
 import AdminPanel from "./AdminPanel";
+import ServerDialog from "./ServerDialog";
 import { applyMicrophoneProcessing, prepareRnnoise } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 import { connectAppEvents } from "../lib/events";
@@ -54,6 +57,7 @@ import { desktopNotify, desktopRaiseIncomingCall, setUpdateMediaBusy } from "../
 interface ChatShellProps {
   user: User;
   onLogout: () => void;
+  onUserChange: (user: User) => void;
 }
 
 type Section = "messages" | "friends";
@@ -61,7 +65,39 @@ type FriendsTab = "search" | "all" | "requests";
 type ShellPopover = "workspace" | "notifications" | "help" | null;
 const CallPanel = lazy(() => import("./CallPanel"));
 
-export default function ChatShell({ user, onLogout }: ChatShellProps) {
+export default function ChatShell({ user, onLogout, onUserChange }: ChatShellProps) {
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [servers, setServers] = useState<CommunityServer[]>([]);
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
+  const [serverDialogOpen, setServerDialogOpen] = useState(false);
+  const [serverDialogManage, setServerDialogManage] = useState(false);
+  const [channelConversation, setChannelConversation] = useState<Conversation | null>(null);
+  const selectedServer = servers.find((server) => server.id === selectedServerId);
+  const channelLoad = useRef(0);
+  const channelConversationRef = useRef(channelConversation);
+  const serversRef = useRef(servers);
+  const linkedChannelOpened = useRef(false);
+  channelConversationRef.current = channelConversation;
+  serversRef.current = servers;
+  const refreshServers = useCallback(async () => setServers(await api.servers()), []);
+  const refreshOpenChannel = useCallback(async () => {
+    const channel = channelConversationRef.current;
+    if (!channel?.server_id || !channel.channel_id) return;
+    const load = channelLoad.current;
+    const updated = await api.serverConversation(channel.server_id, channel.channel_id);
+    if (load === channelLoad.current && channelConversationRef.current?.id === updated.id) setChannelConversation(updated);
+  }, []);
+  useEffect(() => { void refreshServers().catch(() => undefined); }, [refreshServers]);
+  useEffect(() => {
+    if (linkedChannelOpened.current) return;
+    const linkedId = new URLSearchParams(window.location.search).get("conversation");
+    const server = servers.find((item) => item.channels.some((channel) => channel.conversation_id === linkedId));
+    const channel = server?.channels.find((item) => item.conversation_id === linkedId);
+    if (server && channel) {
+      linkedChannelOpened.current = true;
+      void openChannel(server, channel.id);
+    }
+  }, [servers]);
   const [section, setSection] = useState<Section>("messages");
   const [showWelcome, setShowWelcome] = useState(false);
   const [friendsInitialTab, setFriendsInitialTab] = useState<FriendsTab>("search");
@@ -91,7 +127,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<{ nonce: number; files: File[] } | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<{ nonce: number; conversationId: string; files: File[] } | null>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -135,8 +171,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   conversationsRef.current = conversations;
   popoverRef.current = popover;
   dismissedNotificationIdsRef.current = dismissedNotificationIds;
-  const initial = user.username.slice(0, 1).toUpperCase();
-  const selectedConversation = showWelcome ? undefined : conversations.find((item) => item.id === activeConversationId);
+  const initial = displayName(user).slice(0, 1).toUpperCase();
+  const selectedConversation = showWelcome ? undefined : channelConversation?.id === activeConversationId ? channelConversation : conversations.find((item) => item.id === activeConversationId);
   const busyInCall = Boolean(currentCall?.participants.some((participant) =>
     participant.user_id === user.id && (participant.state === "joined" || participant.state === "invited")
   ));
@@ -198,14 +234,16 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       if (!event.dataTransfer?.files.length) return;
       event.preventDefault();
       setDraggingFiles(false);
-      if (!conversationsRef.current.length) {
+      const target = channelConversationRef.current?.id
+        || conversationsRef.current.find((item) => item.id === activeConversationRef.current)?.id
+        || conversationsRef.current[0]?.id;
+      if (!target) {
         setConversationError("Открой беседу, чтобы отправить файл");
         return;
       }
-      setSection("messages");
-      setShowWelcome(false);
-      setActiveConversationId((current) => current ?? conversationsRef.current[0].id);
-      setPendingFiles({ nonce: ++dropNonceRef.current, files: Array.from(event.dataTransfer.files) });
+      if (channelConversationRef.current?.id !== target) navigateConversation(target);
+      else { setSection("messages"); setShowWelcome(false); }
+      setPendingFiles({ nonce: ++dropNonceRef.current, conversationId: target, files: Array.from(event.dataTransfer.files) });
     }
     function dragLeave(event: DragEvent) {
       if (!event.relatedTarget) setDraggingFiles(false);
@@ -281,7 +319,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       notice.onclick = () => {
         window.focus();
         setSection(conversationId ? "messages" : "friends");
-        if (conversationId) setActiveConversationId(conversationId);
+        if (conversationId) navigateConversation(conversationId);
         else setFriendsInitialTab("requests");
         setShowWelcome(false);
         notice.close();
@@ -327,7 +365,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       const invited = call.participants.some((participant) => participant.user_id === user.id && participant.state === "invited");
       if (!invited || notifiedCalls.current.has(call.id)) continue;
       notifiedCalls.current.add(call.id);
-      showNotification(`call-${call.id}`, "Входящий звонок", `${call.caller_username} звонит тебе`, call.conversation_id);
+      showNotification(`call-${call.id}`, "Входящий звонок", `${(call.caller_display_name || call.caller_username)} звонит тебе`, call.conversation_id);
       void desktopRaiseIncomingCall(call.id);
     }
     setAvailableCalls(result.calls);
@@ -349,7 +387,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       } catch {
         // Notifications still work when browser storage is unavailable.
       }
-      showNotification(`friend-${request.request_id}`, "Заявка в друзья", `${request.username} хочет добавить тебя в друзья`, "");
+      showNotification(`friend-${request.request_id}`, "Заявка в друзья", `${displayName(request)} хочет добавить тебя в друзья`, "");
     }
   }, [notifiedRequests, showNotification, user.id]);
 
@@ -423,6 +461,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         void refreshPresence().catch(() => undefined);
         void refreshRequests().catch(() => undefined);
         void refreshCalls().catch(() => undefined);
+        void refreshServers().catch(() => undefined);
+        void refreshOpenChannel().catch(() => undefined);
         setFriendRequestVersion((current) => current + 1);
         setMessageVersion((current) => current + 1);
       }, (data) => {
@@ -433,8 +473,22 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             void refreshConversations().catch(() => undefined);
             return;
           }
+          if (payload.type === "server") {
+            void refreshServers().catch(() => undefined);
+            setMessageVersion((current) => current + 1);
+            return;
+          }
           if (payload.type === "friend_request") {
             void refreshRequests().catch(() => undefined);
+            setFriendRequestVersion((current) => current + 1);
+            return;
+          }
+          if (payload.type === "profile") {
+            void refreshConversations().catch(() => undefined);
+            void refreshRequests().catch(() => undefined);
+            void refreshCalls().catch(() => undefined);
+            void refreshOpenChannel().catch(() => undefined);
+            void api.me().then(onUserChange).catch(() => undefined);
             setFriendRequestVersion((current) => current + 1);
             return;
           }
@@ -498,7 +552,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       window.clearTimeout(reconnectTimer);
       disconnect?.();
     };
-  }, [refreshConversations, refreshCalls, refreshPresence, refreshRequests, showNotification, user.id]);
+  }, [refreshConversations, refreshCalls, refreshPresence, refreshRequests, refreshServers, refreshOpenChannel, showNotification, user.id]);
 
   const setActiveRoom = useCallback((room: Room | null) => {
     roomRef.current = room;
@@ -743,7 +797,11 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }
 
   async function startConversation(userId: string) {
+    const load = ++channelLoad.current;
+    setSelectedServerId(null);
+    setChannelConversation(null);
     const conversation = await api.openConversation(userId);
+    if (load !== channelLoad.current) return;
     setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
     setActiveConversationId(conversation.id);
     setShowWelcome(false);
@@ -753,18 +811,31 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
   }
 
   function openHome() {
+    channelLoad.current += 1;
+    setSelectedServerId(null);
+    setChannelConversation(null);
+    setMobileNavigationOpen(false);
     setSection("messages");
     setShowWelcome(true);
     setPopover(null);
   }
 
   function openFriends(tab: FriendsTab = "search") {
+    channelLoad.current += 1;
+    setSelectedServerId(null);
+    setChannelConversation(null);
+    setMobileNavigationOpen(false);
     setFriendsInitialTab(tab);
     setSection("friends");
     setPopover(null);
   }
 
   function openMessages() {
+    channelLoad.current += 1;
+    setSelectedServerId(null);
+    setChannelConversation(null);
+    if (channelConversationRef.current?.id === activeConversationId) setActiveConversationId(conversations[0]?.id ?? null);
+    setMobileNavigationOpen(false);
     setSection("messages");
     setShowWelcome(false);
     setPopover(null);
@@ -776,6 +847,44 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
     setCallSettingsOpen(false);
     setClientSettingsSection(section);
     setClientSettingsOpen(true);
+  }
+
+  async function openChannel(server: CommunityServer, channelId: string) {
+    const load = ++channelLoad.current;
+    setSelectedServerId(server.id);
+    setChannelConversation(null);
+    setActiveConversationId(null);
+    setSection("messages");
+    setShowWelcome(false);
+    setMobileNavigationOpen(false);
+    setConversationError("");
+    try {
+      const conversation = await api.serverConversation(server.id, channelId);
+      if (load !== channelLoad.current) return;
+      setChannelConversation(conversation);
+      setActiveConversationId(conversation.id);
+      setMessageVersion((value) => value + 1);
+    } catch (reason) {
+      if (load === channelLoad.current) setConversationError(reason instanceof Error ? reason.message : "Не удалось открыть канал");
+    }
+  }
+
+  function openServer(server: CommunityServer) {
+    setSelectedServerId(server.id);
+    if (server.channels[0]) void openChannel(server, server.channels[0].id);
+  }
+
+  function navigateConversation(conversationId: string) {
+    const server = serversRef.current.find((item) => item.channels.some((channel) => channel.conversation_id === conversationId));
+    const channel = server?.channels.find((item) => item.conversation_id === conversationId);
+    if (server && channel) { void openChannel(server, channel.id); return; }
+    channelLoad.current += 1;
+    setSelectedServerId(null);
+    setChannelConversation(null);
+    setActiveConversationId(conversationId);
+    setSection("messages");
+    setShowWelcome(false);
+    setMobileNavigationOpen(false);
   }
 
   function togglePopover(next: Exclude<ShellPopover, null>) {
@@ -820,10 +929,15 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
 
   return (
     <main className="app-shell" ref={shellRef}>
+      {mobileNavigationOpen && <button className="mobile-drawer-backdrop" aria-label="Закрыть меню бесед" onClick={() => setMobileNavigationOpen(false)} />}
+      <div className={`workspace-navigation ${mobileNavigationOpen ? "is-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileNavigationOpen(false); }}>
       <aside className="server-rail">
         <button className="rail-home active" aria-label="Главная Coherent" title="Главная" onClick={openHome}>
           <span className="brand-mark"><span /><span /><span /></span>
         </button>
+        <div className="rail-separator" />
+        {servers.map((server) => <button key={server.id} className={`rail-item community-rail-item ${selectedServerId === server.id ? "selected" : ""}`} title={server.name} aria-label={`Открыть сервер ${server.name}`} onClick={() => openServer(server)}>{server.name.slice(0, 2).toUpperCase()}</button>)}
+        <button className="rail-item" title="Создать сервер или присоединиться" aria-label="Добавить сервер" onClick={() => { setServerDialogManage(false); setServerDialogOpen(true); }}><Plus size={22} /></button>
         <div className="rail-separator" />
         <button
           className={`rail-item ${section === "messages" ? "selected" : ""}`}
@@ -858,14 +972,15 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       </aside>
 
       <aside className="channel-sidebar">
-        <button className="workspace-picker" onClick={() => togglePopover("workspace")} aria-expanded={popover === "workspace"} aria-label="Меню Coherent">
+        <button className="workspace-picker" onClick={() => { if (selectedServer) { setServerDialogManage(true); setServerDialogOpen(true); } else togglePopover("workspace"); }} aria-expanded={popover === "workspace"} aria-label={selectedServer ? "Управление сервером" : "Меню Coherent"}>
           <span className="workspace-symbol">
             <span className="brand-mark"><span /><span /><span /></span>
           </span>
-          <span className="workspace-name">Когерент</span>
+          <span className="workspace-name">{selectedServer?.name || "Когерент"}</span>
           <ChevronDown size={16} />
         </button>
 
+        {selectedServer ? <div className="community-channel-list"><div className="community-server-caption">{selectedServer.member_count} участников<button onClick={() => { setServerDialogManage(true); setServerDialogOpen(true); }} aria-label="Настройки сервера"><Settings size={16} /></button></div>{[...new Set(selectedServer.channels.map((channel) => channel.category))].map((category) => <section key={category}><h3>{category}</h3>{selectedServer.channels.filter((channel) => channel.category === category).map((channel) => <button key={channel.id} className={`community-channel ${activeConversationId === channel.conversation_id ? "active" : ""}`} onClick={() => void openChannel(selectedServer, channel.id)}><Hash size={17} /><span>{channel.name}</span></button>)}</section>)}{conversationError && <p className="conversation-error" role="alert">{conversationError}</p>}</div> : <>
         <label className="sidebar-search">
           <Search size={15} />
           <input
@@ -905,9 +1020,13 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
                 key={conversation.id}
                 className={`conversation-item ${section === "messages" && activeConversationId === conversation.id ? "active" : ""}`}
                 onClick={() => {
+                  channelLoad.current += 1;
                   setActiveConversationId(conversation.id);
                   setSection("messages");
                   setShowWelcome(false);
+                  setMobileNavigationOpen(false);
+                  setSelectedServerId(null);
+                  setChannelConversation(null);
                 }}
               >
                 <span className="conversation-avatar-wrap"><span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={18} /> : conversationTitle(conversation)[0]?.toUpperCase()}</span>
@@ -936,15 +1055,18 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <small>Мы создаём место для общения</small>
           </div>
         </div>
+        </>}
       </aside>
+      </div>
 
       <section className="content-area">
         <header className="content-header">
+          <button className="mobile-menu-toggle header-icon" onClick={() => setMobileNavigationOpen(true)} aria-label="Открыть меню бесед и серверов" aria-expanded={mobileNavigationOpen}><Menu size={22} /></button>
           <div className="header-location">
             <MessageCircle size={19} />
             <span>{section === "messages" ? selectedConversation ? conversationTitle(selectedConversation) : (currentCall?.status === "active" ? "Групповой звонок" : "Сообщения") : "Друзья"}</span>
             <span className="header-divider" />
-            <span className="header-subtle">Личное пространство</span>
+            <span className="header-subtle">{selectedServer?.name || "Личное пространство"}</span>
           </div>
           <div className="mobile-nav" aria-label="Разделы">
             <button className={section === "messages" ? "active" : ""} onClick={openMessages} aria-label="Сообщения"><MessageCircle size={18} /></button>
@@ -952,7 +1074,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           </div>
           <div className="header-actions">
             <button className="header-icon mobile-settings-button" aria-label="Настройки клиента" title="Настройки" onClick={() => openClientSettings()}><Settings size={18} /></button>
-            {section === "messages" && selectedConversation && (
+            {section === "messages" && selectedConversation && !selectedConversation.server_id && (
               <button
                 className="header-icon header-call-button"
                 onClick={() => void startCall().catch(() => undefined)}
@@ -981,7 +1103,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             <button className="header-icon" aria-label="Помощь" title="Помощь" aria-expanded={popover === "help"} onClick={() => togglePopover("help")}>
               <CircleHelp size={18} />
             </button>
-            <span className="header-user">{user.username}</span>
+            <span className="header-user">{displayName(user)}</span>
           </div>
         </header>
 
@@ -1041,6 +1163,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
             peerOnline={selectedConversation.other_user ? onlineIds.has(selectedConversation.other_user.id) : undefined}
             onRename={renameGroup}
             incomingFiles={pendingFiles}
+            onFilesConsumed={(nonce) => setPendingFiles((current) => current?.nonce === nonce ? null : current)}
           />
         ) : (
         <div className={`welcome-content ${section === "friends" ? "friends-content" : ""}`}>
@@ -1114,12 +1237,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
           {recentNotifications.filter((notice) => !notice.id.startsWith("friend-")).map((notice) => <button className="notification-event" key={notice.id} onClick={() => {
             setPopover(null);
             setSection(notice.conversationId ? "messages" : "friends");
-            if (notice.conversationId) setActiveConversationId(notice.conversationId);
+            if (notice.conversationId) navigateConversation(notice.conversationId);
             else setFriendsInitialTab("requests");
             setShowWelcome(false);
           }}><MessageCircle size={16} /> {notice.title}</button>)}
           {!notificationLoading && notificationRequests.filter((request) => !dismissedNotificationIds.has(`friend-${request.request_id}`)).slice(0, 4).map((request) => (
-            <button key={request.request_id} onClick={() => openFriends("requests")}><UserPlus size={16} /> Заявка от {request.username}</button>
+            <button key={request.request_id} onClick={() => openFriends("requests")}><UserPlus size={16} /> Заявка от {displayName(request)}</button>
           ))}
         </div>
       )}
@@ -1137,7 +1260,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <div className="profile-menu">
           <div className="profile-menu-user">
             <span className="avatar avatar-user">{initial}</span>
-            <div><strong>{user.username}</strong><span>В сети</span></div>
+            <div><strong>{displayName(user)}</strong><span>В сети</span></div>
             <MoreHorizontal size={18} />
           </div>
           <button onClick={() => { setShowProfile(false); setProfileSettingsOpen(true); }}><Settings size={16} /> Настройки профиля</button>
@@ -1146,7 +1269,8 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         </div>
       )}
 
-      {profileSettingsOpen && <ProfileSettingsDialog user={user} onClose={() => setProfileSettingsOpen(false)} />}
+      {profileSettingsOpen && <ProfileSettingsDialog user={user} onUpdated={onUserChange} onClose={() => setProfileSettingsOpen(false)} />}
+      {serverDialogOpen && <ServerDialog server={serverDialogManage ? selectedServer : undefined} currentUserId={user.id} onClose={() => setServerDialogOpen(false)} onSaved={(server) => { setServers((current) => [...current.filter((item) => item.id !== server.id), server]); openServer(server); }} />}
       {adminPanelOpen && <AdminPanel onClose={() => setAdminPanelOpen(false)} />}
       {clientSettingsOpen && <ClientSettingsDialog
         section={clientSettingsSection}
@@ -1160,7 +1284,7 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
       {draggingFiles && <div className="file-drop-overlay" aria-hidden="true">Перетащи файл сюда, чтобы прикрепить к беседе</div>}
 
       {!isTauri() && incomingCallId && currentCall && <div className="incoming-call-backdrop" role="dialog" aria-modal="true" aria-label="Входящий звонок">
-        <IncomingCallCard caller={currentCall.caller_username} error={callError} busy={callPending} onDecline={() => void endCall()} onAccept={() => void acceptCall()} />
+        <IncomingCallCard caller={(currentCall.caller_display_name || currentCall.caller_username)} error={callError} busy={callPending} onDecline={() => void endCall()} onAccept={() => void acceptCall()} />
       </div>}
 
       <audio ref={ringtoneRef} loop preload="auto" aria-hidden="true">
@@ -1172,12 +1296,12 @@ export default function ChatShell({ user, onLogout }: ChatShellProps) {
         <button className="account-profile" onClick={() => { setPopover(null); setShowProfile((visible) => !visible); }} aria-expanded={showProfile} aria-label="Открыть профиль">
           <span className="avatar avatar-user"
             role="img"
-            aria-label={user.username}
+            aria-label={displayName(user)}
           >
             {initial}
           </span>
           <span className="account-name">
-            <strong>{user.username}</strong>
+            <strong>{displayName(user)}</strong>
             <small className="account-online"><i /> В сети</small>
           </span>
         </button>

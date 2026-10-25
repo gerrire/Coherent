@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Search, UserPlus, UsersRound, X } from "lucide-react";
-import { api, type Friend } from "../lib/api";
+import { api, displayName, type Friend } from "../lib/api";
 
 interface ParticipantPickerProps {
   title: string;
@@ -43,8 +43,8 @@ export default function ParticipantPicker({
 
   const users = new Map<string, string>();
   for (const friend of friends) {
-    if (friend.username.toLowerCase().includes(query.trim().toLowerCase())) {
-      users.set(friend.id, friend.username);
+    if ((displayName(friend) + " " + friend.username).toLowerCase().includes(query.trim().toLowerCase())) {
+      users.set(friend.id, displayName(friend));
     }
   }
   for (const id of excludedIds) users.delete(id);

@@ -34,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import { AudioPresets, ConnectionQuality, ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type Participant } from "livekit-client";
-import { api, type Call, type CallJoin } from "../lib/api";
+import { api, displayName, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
   cameraPublish,
@@ -143,7 +143,7 @@ export default function CallPanel({
   const incoming = self?.state === "invited";
   const reconnectable = call.status === "active" && self?.state === "left";
   const group = isGroupConversation || call.participants.length > 2;
-  const peer = call.caller_id === currentUserId ? call.callee_username : call.caller_username;
+  const peer = call.caller_id === currentUserId ? (call.callee_display_name || call.callee_username) : (call.caller_display_name || call.caller_username);
   const title = group ? conversationTitle || "Групповой звонок" : peer;
   const occupied = call.participants.filter((participant) =>
     participant.state === "invited" || participant.state === "joined"
@@ -195,7 +195,7 @@ export default function CallPanel({
         <div className="call-invite-avatar">{peer.slice(0, 1).toUpperCase()}</div>
         <div className="call-invite-copy">
           <span>{reconnectable ? "ЗВОНОК ПРОДОЛЖАЕТСЯ" : incoming ? (group ? "ПРИГЛАШЕНИЕ В ГРУППУ" : "ВХОДЯЩИЙ ЗВОНОК") : "ИСХОДЯЩИЙ ЗВОНОК"}</span>
-          <strong>{incoming ? call.caller_username : title}</strong>
+          <strong>{incoming ? (call.caller_display_name || call.caller_username) : title}</strong>
           <small>{reconnectable ? call.participants.some((participant) => participant.state === "joined")
             ? `${call.participants.filter((participant) => participant.state === "joined").length} в звонке · можно вернуться`
             : `Можно вернуться до ${new Date(call.expires_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`
@@ -914,8 +914,8 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
   function invitedTile(member: Call["participants"][number]) {
     return (
       <div className="call-tile call-tile-waiting" key={member.user_id}>
-        <span className="call-tile-avatar">{member.username.slice(0, 1).toUpperCase()}</span>
-        <span className="call-tile-name">{member.username}</span>
+        <span className="call-tile-avatar">{displayName(member).slice(0, 1).toUpperCase()}</span>
+        <span className="call-tile-name">{displayName(member)}</span>
         <span className="call-waiting-label">Приглашён</span>
       </div>
     );
@@ -937,7 +937,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
       </div>}
       <strong className="call-sidebar-heading">Участники</strong>
       {participants.map((participant) => <SidebarParticipant key={participant.identity} participant={participant} camera={cameraFor(participant)} volume={volumes[participant.identity] ?? 100} onVolumeChange={onVolumeChange} media={media} />)}
-      {invited.map((member) => <div className="call-sidebar-invited" key={member.user_id}>{member.username} · приглашён</div>)}
+      {invited.map((member) => <div className="call-sidebar-invited" key={member.user_id}>{displayName(member)} · приглашён</div>)}
     </div>
   );
 

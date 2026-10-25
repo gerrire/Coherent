@@ -58,6 +58,7 @@ class MessageResponse(BaseModel):
 class ConversationUser(BaseModel):
     id: UUID
     username: str
+    display_name: str | None = None
 
 
 class ConversationResponse(BaseModel):
@@ -70,6 +71,8 @@ class ConversationResponse(BaseModel):
     updated_at: datetime
     last_message: MessageResponse | None = None
     unread: bool = False
+    server_id: UUID | None = None
+    channel_id: UUID | None = None
 
 
 class ConversationsResponse(BaseModel):

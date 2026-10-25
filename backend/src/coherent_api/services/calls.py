@@ -22,6 +22,7 @@ from coherent_api.services.conversation_access import (
     add_group_members,
     conversation_member_ids,
     get_conversation,
+    get_server_channel,
     other_user_id,
     validate_friends,
 )
@@ -31,6 +32,8 @@ RING_SECONDS = 60
 MAX_CALL_HOURS = 4
 MAX_CALL_MEMBERS = 10
 LAST_PARTICIPANT_MINUTES = 3
+
+
 class CallNotFoundError(Exception):
     pass
 
@@ -58,28 +61,36 @@ class CallInviteError(Exception):
 async def call_response(session: AsyncSession, call: Call) -> CallResponse:
     rows = (
         await session.execute(
-            select(CallMember, User.username)
+            select(CallMember, User)
             .join(User, User.id == CallMember.user_id)
             .where(CallMember.call_id == call.id)
             .order_by(CallMember.invited_at, User.username)
         )
     ).all()
-    names = {member.user_id: username for member, username in rows}
+    names = {member.user_id: person.username for member, person in rows}
+    display_names = {member.user_id: person.public_name for member, person in rows}
     return CallResponse(
         id=call.id,
         conversation_id=call.conversation_id,
         caller_id=call.caller_id,
         caller_username=names.get(call.caller_id, "Удалённый пользователь"),
+        caller_display_name=display_names.get(call.caller_id),
         callee_id=call.callee_id,
         callee_username=names.get(call.callee_id, "Удалённый пользователь"),
+        callee_display_name=display_names.get(call.callee_id),
         status=call.status,
         created_at=call.created_at,
         expires_at=call.expires_at,
         answered_at=call.answered_at,
         ended_at=call.ended_at,
         participants=[
-            CallParticipant(user_id=member.user_id, username=username, state=member.state)
-            for member, username in rows
+            CallParticipant(
+                user_id=member.user_id,
+                username=person.username,
+                display_name=person.display_name,
+                state=member.state,
+            )
+            for member, person in rows
         ],
     )
 
@@ -151,6 +162,8 @@ async def start_call(
     session: AsyncSession, user: User, conversation_id: UUID, invitee_ids: list[UUID] | None = None
 ) -> CallResponse:
     conversation = await get_conversation(session, user, conversation_id)
+    if await get_server_channel(session, conversation_id) is not None:
+        raise CallInviteError("Этот канал предназначен для текстовых сообщений")
     extras = set(invitee_ids or ())
     if conversation.kind == "group":
         if extras:
@@ -245,11 +258,14 @@ async def accept_call(session: AsyncSession, user: User, call_id: UUID) -> CallR
     now = datetime.now(UTC)
     if await busy_call(session, (user.id,)) not in (None, call.id):
         raise CallBusyError
-    joined_before = await session.scalar(
-        select(func.count()).select_from(CallMember).where(
-            CallMember.call_id == call_id, CallMember.state == "joined"
+    joined_before = (
+        await session.scalar(
+            select(func.count())
+            .select_from(CallMember)
+            .where(CallMember.call_id == call_id, CallMember.state == "joined")
         )
-    ) or 0
+        or 0
+    )
     member.state = "joined"
     member.joined_at = now
     member.left_at = None
@@ -365,7 +381,7 @@ async def join_call(
     if call.status != "active" or is_expired(call) or member is None or member.state != "joined":
         raise CallStateError
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
-    token = issue_join_token(settings, call.id, user.id, user.username)
+    token = issue_join_token(settings, call.id, user.id, user.public_name)
     key = hmac.new(
         settings.secret_key.get_secret_value().encode(),
         b"coherent-call-e2ee-v1:" + call.id.bytes,

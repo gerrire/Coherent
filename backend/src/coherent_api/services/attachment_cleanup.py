@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -51,7 +52,7 @@ async def expire_batch(
             )
         )
         for message in messages:
-            if not message.body.strip():
+            if not message.body.strip() and message.body_ciphertext is None:
                 message.body = EXPIRED_MESSAGE
             message.attachment_count = 0
             message.attachments_expired = True
@@ -112,8 +113,19 @@ async def attachment_cleanup_loop(
                 if count < BATCH_SIZE:
                     break
             await remove_orphans(session_factory, directory, cutoff)
+            await asyncio.to_thread(remove_stale_previews)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Could not remove expired chat attachments")
         await asyncio.sleep(SWEEP_SECONDS)
+
+
+def remove_stale_previews() -> None:
+    cutoff = datetime.now(UTC) - timedelta(minutes=30)
+    for path in Path(tempfile.gettempdir()).glob("coherent-view-*"):
+        try:
+            if path.is_file() and datetime.fromtimestamp(path.stat().st_mtime, UTC) < cutoff:
+                path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            continue

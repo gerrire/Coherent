@@ -113,7 +113,7 @@ async def send_friend_request(
             (friend_request.recipient_id,),
             {
                 "title": "Заявка в друзья",
-                "body": f"{user.username} хочет добавить тебя в друзья",
+                "body": f"{user.public_name} хочет добавить тебя в друзья",
                 "url": "/?friends=requests",
                 "tag": f"friend-{friend_request.id}",
             },

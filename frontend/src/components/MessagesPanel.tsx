@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
-import { api, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
+import { api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
@@ -11,7 +11,8 @@ interface MessagesPanelProps {
   callError: string;
   onRename: (conversationId: string, name: string) => Promise<void>;
   peerOnline?: boolean;
-  incomingFiles?: { nonce: number; files: File[] } | null;
+  incomingFiles?: { nonce: number; conversationId: string; files: File[] } | null;
+  onFilesConsumed: (nonce: number) => void;
 }
 
 function mergeMessages(first: Message[], second: Message[]): Message[] {
@@ -24,6 +25,19 @@ function mergeMessages(first: Message[], second: Message[]): Message[] {
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" })
     .format(new Date(value));
+}
+
+function dayKey(value: string | number): string {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayLabel(value: string, now: number): string {
+  if (dayKey(value) === dayKey(now)) return "Сегодня";
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dayKey(value) === dayKey(yesterday.getTime())) return "Вчера";
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" }).format(new Date(value));
 }
 
 function filesFromClipboard(clipboard: DataTransfer): File[] {
@@ -59,7 +73,9 @@ export default function MessagesPanel({
   onRename,
   peerOnline,
   incomingFiles,
+  onFilesConsumed,
 }: MessagesPanelProps) {
+  const consumedDrop = useRef<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -226,7 +242,12 @@ export default function MessagesPanel({
   }, [preview]);
 
   useEffect(() => {
-    if (incomingFiles?.files.length) addFiles(incomingFiles.files);
+    if (incomingFiles?.files.length && incomingFiles.conversationId === conversation.id
+      && consumedDrop.current !== incomingFiles.nonce) {
+      consumedDrop.current = incomingFiles.nonce;
+      addFiles(incomingFiles.files);
+      onFilesConsumed(incomingFiles.nonce);
+    }
     // A new drop is identified by its nonce; local selections are handled separately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingFiles?.nonce]);
@@ -317,7 +338,7 @@ export default function MessagesPanel({
         <div className="messages-intro-copy">
           <div className="messages-intro-heading">
             <h1>{title}</h1>
-            {conversation.kind === "group" && (
+            {conversation.kind === "group" && !conversation.server_id && (
               <button className="chat-friend-button" onClick={() => { setGroupName(title); setRenaming(true); }} title="Изменить название группы" aria-label="Изменить название группы"><Pencil size={14} /> Изменить</button>
             )}
             {peer && relationship && (
@@ -338,8 +359,8 @@ export default function MessagesPanel({
               </button>
             )}
           </div>
-          <p>{conversation.kind === "group"
-            ? `Общий чат · ${conversation.members.map((member) => member.username).join(", ")} · Файлы хранятся только 3 дня.`
+          <p>{conversation.server_id ? `Текстовый канал · ${conversation.members.length} участников · Файлы хранятся 3 дня.` : conversation.kind === "group"
+            ? `Общий чат · ${conversation.members.map(displayName).join(", ")} · Файлы хранятся только 3 дня.`
             : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent. Файлы хранятся только 3 дня.`}</p>
         </div>
       </div>
@@ -373,11 +394,13 @@ export default function MessagesPanel({
             <span>{conversation.kind === "group" ? "Напиши первое сообщение участникам группы." : `Напиши первое сообщение для ${title}.`}</span>
           </div>
         )}
-        {messages.map((message) => {
+        {messages.map((message, index) => {
           const own = message.sender_id === currentUserId;
-          const author = own ? "Ты" : conversation.members.find((member) => member.id === message.sender_id)?.username ?? "Участник";
+          const author = own ? "Ты" : (conversation.members.find((member) => member.id === message.sender_id) ? displayName(conversation.members.find((member) => member.id === message.sender_id)!) : "Участник");
           const attachmentsExpired = message.attachments_expired || (message.attachment_count > 0 && now >= Date.parse(message.created_at) + 3 * 24 * 60 * 60 * 1000);
           return (
+            <Fragment key={message.id}>
+            {(index === 0 || dayKey(messages[index - 1].created_at) !== dayKey(message.created_at)) && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>}
             <div className={`message-row ${own ? "message-own" : ""}`} key={message.id}>
               <span className="avatar avatar-user message-avatar">
                 {own ? "Я" : author[0]?.toUpperCase()}
@@ -397,6 +420,7 @@ export default function MessagesPanel({
                 />)}
               </div>
             </div>
+            </Fragment>
           );
         })}
       </div>

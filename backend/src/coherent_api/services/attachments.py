@@ -8,6 +8,7 @@ from fastapi import UploadFile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from coherent_api.core.chat_crypto import FILE_OVERHEAD, cloud_message, session_cipher
 from coherent_api.core.config import Settings
 from coherent_api.models.message import Message
 from coherent_api.models.message_attachment import MessageAttachment
@@ -15,6 +16,7 @@ from coherent_api.models.user import User
 from coherent_api.schemas.messages import AttachmentResponse, MessageResponse
 from coherent_api.services.attachment_cleanup import is_expired
 from coherent_api.services.conversation_access import conversation_member_ids, get_conversation
+from coherent_api.services.messages import visible_message
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
 MAX_TOTAL_SIZE = 50 * 1024 * 1024
@@ -95,14 +97,27 @@ async def save_message_files(
     stored: list[Path] = []
     attachments: list[MessageAttachment] = []
     total = 0
+    storage_overhead = 0
+    cipher = session_cipher(session)
     try:
         for upload in files:
             attachment_id = uuid4()
             path = directory / str(attachment_id)
             size = 0
+            if cipher.enabled:
+                storage_overhead += FILE_OVERHEAD
+                if (
+                    storage_used + total + storage_overhead > storage_limit
+                    or shutil.disk_usage(directory).free - FILE_OVERHEAD < free_reserve
+                ):
+                    raise AttachmentQuotaError("Хранилище файлов заполнено. Попробуй позже.")
             descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, "wb") as target:
                 stored.append(path)
+                encryptor = None
+                if cipher.enabled:
+                    header, encryptor = cipher.attachment_encryptor(conversation_id, attachment_id)
+                    target.write(header)
                 while chunk := await upload.read(1024 * 1024):
                     size += len(chunk)
                     total += len(chunk)
@@ -111,13 +126,16 @@ async def save_message_files(
                             "Файл слишком большой: до 25 МБ на файл и 50 МБ на сообщение"
                         )
                     if (
-                        storage_used + total > storage_limit
+                        storage_used + total + storage_overhead > storage_limit
                         or shutil.disk_usage(directory).free - len(chunk) < free_reserve
                     ):
                         raise AttachmentQuotaError(
                             "Хранилище файлов заполнено. Попробуй отправить файл позже."
                         )
-                    target.write(chunk)
+                    target.write(encryptor.update(chunk) if encryptor is not None else chunk)
+                if encryptor is not None:
+                    target.write(encryptor.finalize())
+                    target.write(encryptor.tag)
             if not size:
                 raise AttachmentError("Пустой файл нельзя отправить")
             filename = safe_name(upload.filename)
@@ -127,9 +145,11 @@ async def save_message_files(
                     filename=filename,
                     media_type=content_type(filename, upload.content_type),
                     byte_size=size,
+                    encrypted=cipher.enabled,
                 )
             )
-        message = Message(
+        message = cloud_message(
+            session,
             conversation_id=conversation_id,
             sender_id=user.id,
             body=clean_body,
@@ -145,7 +165,7 @@ async def save_message_files(
             session.add(attachment)
         await session.commit()
         await session.refresh(message)
-        result = MessageResponse.model_validate(message).model_copy(
+        result = visible_message(session, message).model_copy(
             update={
                 "attachments": [AttachmentResponse.model_validate(item) for item in attachments]
             }

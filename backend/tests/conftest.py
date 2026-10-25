@@ -31,6 +31,10 @@ def client(tmp_path) -> Iterator[TestClient]:
         database_url=f"sqlite+aiosqlite:///{database_path}",
         secret_key="test-secret-key-that-is-long-enough-for-tests",
         cors_origins=["http://localhost:5173"],
+        attachment_dir=str(tmp_path / "attachments"),
+        chat_master_key_path=None,
+        cloud_encryption_required=False,
+        smtp_host=None,
     )
     application = create_app(settings=settings, session_factory=session_factory)
     with TestClient(application) as test_client:

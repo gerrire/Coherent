@@ -10,6 +10,7 @@ CallStatus = Literal["ringing", "active", "declined", "cancelled", "ended", "mis
 class CallParticipant(BaseModel):
     user_id: UUID
     username: str
+    display_name: str | None = None
     state: Literal["invited", "joined", "declined", "left"]
 
 
@@ -18,8 +19,10 @@ class CallResponse(BaseModel):
     conversation_id: UUID
     caller_id: UUID
     caller_username: str
+    caller_display_name: str | None = None
     callee_id: UUID
     callee_username: str
+    callee_display_name: str | None = None
     status: CallStatus
     created_at: datetime
     expires_at: datetime

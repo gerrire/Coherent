@@ -10,6 +10,7 @@ RelationshipStatus = Literal["none", "outgoing_pending", "incoming_pending", "fr
 class UserSearchItem(BaseModel):
     id: UUID
     username: str
+    display_name: str | None = None
     relationship: RelationshipStatus
     request_id: UUID | None = None
 
@@ -17,6 +18,7 @@ class UserSearchItem(BaseModel):
 class FriendItem(BaseModel):
     id: UUID
     username: str
+    display_name: str | None = None
     since: datetime
 
 
@@ -24,6 +26,7 @@ class FriendRequestItem(BaseModel):
     request_id: UUID
     user_id: UUID
     username: str
+    display_name: str | None = None
     created_at: datetime
 
 

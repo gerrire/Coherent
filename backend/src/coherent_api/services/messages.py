@@ -5,11 +5,13 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from coherent_api.core.chat_crypto import cloud_message, message_text
 from coherent_api.models.conversation import Conversation
 from coherent_api.models.conversation_member import ConversationMember
 from coherent_api.models.conversation_read import ConversationRead
 from coherent_api.models.message import Message
 from coherent_api.models.message_attachment import MessageAttachment
+from coherent_api.models.server import ServerChannel
 from coherent_api.models.user import User
 from coherent_api.schemas.messages import (
     AttachmentResponse,
@@ -24,6 +26,7 @@ from coherent_api.services.conversation_access import (
     GroupMembershipError,
     conversation_member_ids,
     get_conversation,
+    get_server_channel,
     validate_friends,
 )
 
@@ -45,13 +48,14 @@ class ReadMessageNotFoundError(Exception):
 
 
 def visible_message(
-    message: Message, attachments: list[AttachmentResponse] | None = None
+    session: AsyncSession, message: Message, attachments: list[AttachmentResponse] | None = None
 ) -> MessageResponse:
-    result = MessageResponse.model_validate(message)
-    if message.attachment_count and is_expired(message.created_at):
+    body = message_text(session, message)
+    result = MessageResponse.model_validate(message).model_copy(update={"body": body})
+    if message.attachments_expired or (message.attachment_count and is_expired(message.created_at)):
         return result.model_copy(
             update={
-                "body": message.body or EXPIRED_MESSAGE,
+                "body": body or EXPIRED_MESSAGE,
                 "attachment_count": 0,
                 "attachments_expired": True,
                 "attachments": [],
@@ -71,7 +75,9 @@ async def conversation_response(
     users = list(await session.scalars(select(User).where(User.id.in_(member_ids))))
     by_id = {user.id: user for user in users}
     members = [
-        ConversationUser(id=by_id[uid].id, username=by_id[uid].username)
+        ConversationUser(
+            id=by_id[uid].id, username=by_id[uid].username, display_name=by_id[uid].display_name
+        )
         for uid in member_ids
         if uid in by_id
     ]
@@ -84,7 +90,7 @@ async def conversation_response(
         other_user=other if conversation.kind == "direct" else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
-        last_message=visible_message(last_message) if last_message else None,
+        last_message=visible_message(session, last_message) if last_message else None,
         unread=bool(
             last_message
             and last_message.sender_id != current_user_id
@@ -108,7 +114,7 @@ async def create_group(
     if len(users) != len(targets):
         raise ConversationUserNotFoundError
     display_name = (name or "").strip() or "Группа: " + ", ".join(
-        user.username for user in sorted(users, key=lambda item: item.username)
+        user.public_name for user in sorted(users, key=lambda item: item.username)
     )
     conversation = Conversation(kind="group", name=display_name[:64])
     session.add(conversation)
@@ -124,6 +130,8 @@ async def rename_group(
     session: AsyncSession, current_user: User, conversation_id: UUID, name: str
 ) -> ConversationResponse:
     conversation = await get_conversation(session, current_user, conversation_id)
+    if await get_server_channel(session, conversation_id) is not None:
+        raise GroupMembershipError("Каналом управляет владелец сервера")
     clean_name = name.strip()
     if conversation.kind != "group" or not clean_name:
         raise GroupMembershipError("Укажи название группы")
@@ -192,11 +200,14 @@ async def list_conversations(session: AsyncSession, current_user: User) -> Conve
             select(Conversation, Message)
             .outerjoin(Message, Message.id == last_message_id)
             .where(
+                ~exists(
+                    select(ServerChannel.id).where(ServerChannel.conversation_id == Conversation.id)
+                ),
                 or_(
                     Conversation.user_low_id == current_user.id,
                     Conversation.user_high_id == current_user.id,
                     group_member,
-                )
+                ),
             )
             .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
             .limit(100)
@@ -304,8 +315,7 @@ async def list_messages(
         )
     return MessagesResponse(
         messages=[
-            visible_message(message, by_message.get(message.id, []))
-            for message in page
+            visible_message(session, message, by_message.get(message.id, [])) for message in page
         ],
         has_more=len(messages) > 50,
     )
@@ -315,7 +325,9 @@ async def send_message(
     session: AsyncSession, current_user: User, conversation_id: UUID, body: str
 ) -> tuple[Message, Conversation]:
     conversation = await get_conversation(session, current_user, conversation_id)
-    message = Message(conversation_id=conversation_id, sender_id=current_user.id, body=body)
+    message = cloud_message(
+        session, conversation_id=conversation_id, sender_id=current_user.id, body=body
+    )
     conversation.updated_at = datetime.now(UTC)
     session.add(message)
     await session.commit()

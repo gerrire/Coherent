@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import "./themes.css";
+import "./upgrade.css";
 import { applyTheme, loadTheme } from "./lib/theme";
 import { isTauri } from "@tauri-apps/api/core";
 import { installDesktopMediaConsent } from "./lib/desktopPermissions";

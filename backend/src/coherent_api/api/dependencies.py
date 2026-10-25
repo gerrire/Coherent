@@ -40,3 +40,15 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_admin_user(request: Request, user: CurrentUser) -> User:
+    if (
+        not request.app.state.settings.admin_username
+        or user.username != request.app.state.settings.admin_username
+    ):
+        raise HTTPException(status_code=403, detail="Доступ только для администратора")
+    return user
+
+
+AdminUser = Annotated[User, Depends(get_admin_user)]

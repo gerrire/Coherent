@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     livekit_api_key: str | None = None
     livekit_api_secret: SecretStr | None = None
     attachment_dir: str = "/tmp/coherent-attachments"
+    chat_master_key_path: str | None = None
+    cloud_encryption_required: bool = False
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_starttls: bool = True
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from: str = "noreply@coherent-web.ru"
     attachment_storage_limit_mb: int = Field(default=15360, ge=100)
     attachment_min_free_mb: int = Field(default=2048, ge=100)
     admin_username: str | None = None

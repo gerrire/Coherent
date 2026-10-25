@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -13,6 +14,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.schemas.messages import (
@@ -50,6 +52,7 @@ from coherent_api.services.messages import (
     open_conversation,
     rename_group,
     send_message,
+    visible_message,
 )
 from coherent_api.services.push import send_to_users
 
@@ -132,7 +135,7 @@ async def post_message_attachments(
         request.app.state.settings,
         tuple(uid for uid in member_ids if uid != user.id),
         {
-            "title": user.username,
+            "title": user.public_name,
             "body": result.body or "Новое вложение",
             "url": f"/?conversation={conversation_id}",
             "tag": f"message-{result.id}",
@@ -157,12 +160,19 @@ async def download_attachment(
     if attachment is None or not path.is_file():
         raise HTTPException(status_code=404, detail="Файл не найден")
     inline = attachment.media_type in INLINE_TYPES
+    background = None
+    if attachment.encrypted:
+        path = await asyncio.to_thread(
+            request.app.state.chat_cipher.attachment_preview, path, conversation_id, attachment_id
+        )
+        background = BackgroundTask(path.unlink, missing_ok=True)
     return FileResponse(
         path,
         media_type=attachment.media_type,
         filename=attachment.filename,
         content_disposition_type="inline" if inline else "attachment",
         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        background=background,
     )
 
 
@@ -234,7 +244,7 @@ async def post_message(
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
 
-    result = MessageResponse.model_validate(message)
+    result = visible_message(session, message)
     await request.app.state.message_events.publish(
         await conversation_member_ids(session, conversation),
         {
@@ -250,7 +260,7 @@ async def post_message(
         request.app.state.settings,
         tuple(uid for uid in member_ids if uid != user.id),
         {
-            "title": user.username,
+            "title": user.public_name,
             "body": result.body[:150],
             "url": f"/?conversation={conversation_id}",
             "tag": f"message-{result.id}",

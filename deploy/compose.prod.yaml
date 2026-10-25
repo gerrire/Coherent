@@ -32,6 +32,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.api
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
     environment:
@@ -44,6 +46,14 @@ services:
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in deploy/.env}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in deploy/.env}
       ATTACHMENT_DIR: /data/attachments
+      CHAT_MASTER_KEY_PATH: ${CHAT_MASTER_KEY_PATH:-}
+      CLOUD_ENCRYPTION_REQUIRED: ${CLOUD_ENCRYPTION_REQUIRED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@coherent-web.ru}
       ATTACHMENT_STORAGE_LIMIT_MB: ${ATTACHMENT_STORAGE_LIMIT_MB:-15360}
       ATTACHMENT_MIN_FREE_MB: ${ATTACHMENT_MIN_FREE_MB:-2048}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in deploy/.env}
@@ -57,6 +67,7 @@ services:
     volumes:
       - ../data/attachments:/data/attachments
       - ../data/vapid:/data/vapid
+      - /etc/coherent/keys:/run/coherent-keys:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"]
       interval: 10s

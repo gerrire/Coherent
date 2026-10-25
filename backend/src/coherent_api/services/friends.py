@@ -52,7 +52,12 @@ async def get_relationship(
         )
     )
     if relation is None:
-        return UserSearchItem(id=target.id, username=target.username, relationship="none")
+        return UserSearchItem(
+            id=target.id,
+            username=target.username,
+            display_name=target.display_name,
+            relationship="none",
+        )
     if relation.status == "accepted":
         status = "friends"
     elif relation.sender_id == current_user.id:
@@ -62,6 +67,7 @@ async def get_relationship(
     return UserSearchItem(
         id=target.id,
         username=target.username,
+        display_name=target.display_name,
         relationship=status,
         request_id=relation.id,
     )
@@ -78,7 +84,10 @@ async def search_users(
             select(User)
             .where(
                 User.id != current_user.id,
-                User.username.ilike(f"%{escaped_query}%", escape="\\"),
+                or_(
+                    User.username.ilike(f"%{escaped_query}%", escape="\\"),
+                    User.display_name.ilike(f"%{escaped_query}%", escape="\\"),
+                ),
             )
             .order_by(User.username)
             .limit(20)
@@ -104,9 +113,7 @@ async def search_users(
     relation_by_user: dict[UUID, FriendRequest] = {}
     for relation in relations:
         other_user_id = (
-            relation.recipient_id
-            if relation.sender_id == current_user.id
-            else relation.sender_id
+            relation.recipient_id if relation.sender_id == current_user.id else relation.sender_id
         )
         relation_by_user[other_user_id] = relation
 
@@ -114,12 +121,20 @@ async def search_users(
     for user in users:
         relation = relation_by_user.get(user.id)
         if relation is None:
-            results.append(UserSearchItem(id=user.id, username=user.username, relationship="none"))
+            results.append(
+                UserSearchItem(
+                    id=user.id,
+                    username=user.username,
+                    display_name=user.display_name,
+                    relationship="none",
+                )
+            )
         elif relation.status == "accepted":
             results.append(
                 UserSearchItem(
                     id=user.id,
                     username=user.username,
+                    display_name=user.display_name,
                     relationship="friends",
                     request_id=relation.id,
                 )
@@ -129,6 +144,7 @@ async def search_users(
                 UserSearchItem(
                     id=user.id,
                     username=user.username,
+                    display_name=user.display_name,
                     relationship="outgoing_pending",
                     request_id=relation.id,
                 )
@@ -138,6 +154,7 @@ async def search_users(
                 UserSearchItem(
                     id=user.id,
                     username=user.username,
+                    display_name=user.display_name,
                     relationship="incoming_pending",
                     request_id=relation.id,
                 )
@@ -206,9 +223,7 @@ async def get_friends(session: AsyncSession, current_user: User) -> FriendsRespo
         return FriendsResponse()
 
     other_ids = [
-        relation.recipient_id
-        if relation.sender_id == current_user.id
-        else relation.sender_id
+        relation.recipient_id if relation.sender_id == current_user.id else relation.sender_id
         for relation in relations
     ]
     users = await session.scalars(select(User).where(User.id.in_(other_ids)))
@@ -218,6 +233,7 @@ async def get_friends(session: AsyncSession, current_user: User) -> FriendsRespo
             FriendItem(
                 id=user_by_id[other_id].id,
                 username=user_by_id[other_id].username,
+                display_name=user_by_id[other_id].display_name,
                 since=relation.created_at,
             )
             for relation, other_id in zip(relations, other_ids, strict=True)
@@ -247,9 +263,7 @@ async def get_friend_requests(
         return FriendRequestsResponse()
 
     other_ids = [
-        relation.sender_id
-        if relation.recipient_id == current_user.id
-        else relation.recipient_id
+        relation.sender_id if relation.recipient_id == current_user.id else relation.recipient_id
         for relation in relations
     ]
     users = await session.scalars(select(User).where(User.id.in_(other_ids)))
@@ -265,6 +279,7 @@ async def get_friend_requests(
             request_id=relation.id,
             user_id=user.id,
             username=user.username,
+            display_name=user.display_name,
             created_at=relation.created_at,
         )
         if relation.recipient_id == current_user.id:

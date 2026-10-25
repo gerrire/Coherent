@@ -87,7 +87,7 @@ async def create_call(
         invited,
         {
             "title": "Входящий звонок",
-            "body": f"{user.username} звонит тебе",
+            "body": f"{user.public_name} звонит тебе",
             "url": f"/?conversation={conversation_id}",
             "tag": f"call-{call.id}",
         },
@@ -167,7 +167,7 @@ async def invite_call_participants(
         invited,
         {
             "title": "Приглашение в звонок",
-            "body": f"{user.username} приглашает тебя",
+            "body": f"{user.public_name} приглашает тебя",
             "url": f"/?conversation={call.conversation_id}",
             "tag": f"call-{call.id}",
         },

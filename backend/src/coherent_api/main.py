@@ -6,14 +6,18 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from coherent_api.api.v1.router import api_router
+from coherent_api.core.chat_crypto import ChatCipher
 from coherent_api.core.config import Settings, get_settings
+from coherent_api.models.message import Message
 from coherent_api.services.attachment_cleanup import attachment_cleanup_loop
 from coherent_api.services.call_cleanup import call_cleanup_loop
 from coherent_api.services.events import MessageEvents
 from coherent_api.services.livekit_media import livekit_ready
+from coherent_api.services.server_metrics import ServerMetrics
 
 
 def create_app(
@@ -21,6 +25,9 @@ def create_app(
     session_factory: async_sessionmaker | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
+    chat_cipher = ChatCipher.from_file(app_settings.chat_master_key_path)
+    if app_settings.cloud_encryption_required and not chat_cipher.enabled:
+        raise ValueError("Cloud encryption requires a master key file outside the database")
     engine = None
     if session_factory is None:
         engine = create_async_engine(app_settings.database_url, pool_pre_ping=True)
@@ -28,6 +35,16 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        async with session_factory() as session:
+            encrypted = await session.scalar(
+                select(Message).where(Message.body_ciphertext.is_not(None)).limit(1)
+            )
+            if encrypted is not None:
+                # A missing or wrong key stops startup instead of serving unreadable history.
+                chat_cipher.decrypt(
+                    encrypted.body_ciphertext, encrypted.conversation_id, encrypted.id
+                )
+        metrics = asyncio.create_task(application.state.server_metrics.run())
         attachments_cleanup = asyncio.create_task(
             attachment_cleanup_loop(session_factory, app_settings.attachment_dir)
         )
@@ -39,6 +56,9 @@ def create_app(
         try:
             yield
         finally:
+            metrics.cancel()
+            with suppress(asyncio.CancelledError):
+                await metrics
             attachments_cleanup.cancel()
             with suppress(asyncio.CancelledError):
                 await attachments_cleanup
@@ -58,8 +78,10 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = app_settings
+    app.state.chat_cipher = chat_cipher
     app.state.session_factory = session_factory
     app.state.message_events = MessageEvents()
+    app.state.server_metrics = ServerMetrics()
 
     app.add_middleware(
         CORSMiddleware,
@@ -90,4 +112,6 @@ def create_app(
 
     app.include_router(api_router, prefix=app_settings.api_prefix)
     return app
+
+
 app = create_app()

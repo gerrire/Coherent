@@ -72,7 +72,7 @@ export default function IncomingCallWindow() {
   }
 
   return <main className="desktop-incoming-overlay" role="dialog" aria-modal="true" aria-label="Входящий звонок">
-    <IncomingCallCard caller={call?.caller_username ?? (error ? "Звонок недоступен" : "Подключаемся…")}
+    <IncomingCallCard caller={(call?.caller_display_name || call?.caller_username) ?? (error ? "Звонок недоступен" : "Подключаемся…")}
       error={error} busy={!call || busy} onRetry={() => { void refresh().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Не удалось обновить звонок.")); }} onDecline={() => void finish(false)} onAccept={() => void finish(true)} />
   </main>;
 }
