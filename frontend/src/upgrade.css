@@ -76,7 +76,8 @@
   .call-surface-controls { overflow-x: auto; justify-content: flex-start; padding: 8px; }
   .call-control { flex-shrink: 0; }
   .friends-panel { padding-left: 12px; padding-right: 12px; }
-  .profile-settings-dialog, .client-settings-dialog, .admin-panel { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .profile-settings-dialog { width: calc(100vw - 16px); height: calc(var(--coherent-visible-height, 100dvh) - 16px); max-height: calc(var(--coherent-visible-height, 100dvh) - 16px); }
+  .client-settings-dialog, .admin-panel { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .profile-password-actions { flex-wrap: wrap; gap: 12px; }
   .profile-password-actions button { min-height: 42px; }
   .admin-metrics-grid { grid-template-columns: minmax(0, 1fr); }
