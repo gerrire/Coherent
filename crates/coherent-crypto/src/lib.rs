@@ -22,6 +22,8 @@ pub enum CryptoError {
     Authentication,
     #[error("MLS rejected this operation")]
     Mls,
+    #[error("MLS_WELCOME_TREE_MISSING")]
+    WelcomeTreeMissing,
     #[error("The device identity is not pinned for this conversation")]
     UntrustedDevice,
     #[error("Local cryptographic state is unavailable")]

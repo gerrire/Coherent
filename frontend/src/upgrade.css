@@ -84,3 +84,57 @@
   .admin-body { padding: 12px; }
   .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Profile fields share one baseline and remain reachable on narrow screens. */
+.profile-settings-sidebar, .profile-settings-person, .profile-settings-header > div { min-width: 0; }
+.profile-settings-brand .brand-mark { flex: 0 0 30px; width: 30px; height: 30px; transform: none; border-radius: 9px; }
+.profile-settings-header { position: sticky; top: -1px; z-index: 2; align-items: center; padding-block: 10px 16px; background: var(--theme-panel); }
+.profile-settings-header h2 { overflow-wrap: anywhere; }
+.profile-settings-card { min-width: 0; padding: clamp(16px, 2.4vw, 22px); }
+.profile-settings-section-heading { align-items: center; }
+.profile-settings-section-heading h3 { line-height: 1.4; }
+.profile-settings-section-heading > svg, .profile-settings-success > svg, .profile-password-field > svg { flex-shrink: 0; }
+.profile-settings-dialog .profile-password-form { gap: 9px; }
+.profile-settings-dialog .profile-password-field { min-height: 46px; }
+.profile-settings-dialog .profile-password-field input { font-size: 14px; padding-block: 10px; }
+.profile-settings-dialog .profile-password-form > label { margin-top: 4px; line-height: 1.5; }
+.profile-settings-dialog .profile-password-actions { align-items: center; gap: 16px; }
+.profile-settings-dialog .profile-password-actions > span { flex: 1; max-width: none; font-size: 11px; }
+.profile-settings-error, .profile-settings-success { overflow-wrap: anywhere; line-height: 1.6; }
+.account-safety-code code { word-break: break-word; font-size: 12px; }
+.security-recovery-card .recovery-private-note { margin-top: 10px; }
+.device-approval-backdrop { z-index: 1100; }
+.device-approval-banner { z-index: 1050; }
+
+@media (max-width: 680px) {
+  .profile-settings-backdrop { padding: 0; }
+  .profile-settings-dialog { width: 100%; height: var(--coherent-visible-height, 100dvh); max-height: var(--coherent-visible-height, 100dvh); }
+  .profile-settings-sidebar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 12px; padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
+  .profile-settings-brand { gap: 9px; font-size: 13px; }
+  .profile-settings-person { max-width: 130px; gap: 7px; }
+  .profile-settings-person > strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .profile-settings-person .avatar { flex-shrink: 0; }
+  .profile-settings-content { padding: 0 12px max(20px, env(safe-area-inset-bottom)); }
+  .profile-settings-header { padding: 18px 4px 14px; margin-bottom: 14px; gap: 12px; }
+  .profile-settings-header h2 { font-size: 23px; }
+  .profile-settings-close { width: 40px; height: 40px; flex-basis: 40px; }
+  .profile-settings-card { margin-top: 12px; border-radius: 12px; }
+  .profile-settings-details { grid-template-columns: 1fr; gap: 10px; }
+  .profile-settings-details > div { padding: 12px; }
+  .profile-settings-dialog .profile-password-field input { font-size: 16px; }
+  .profile-settings-dialog .profile-password-actions { align-items: stretch; flex-direction: column; gap: 12px; }
+  .profile-settings-dialog .profile-password-actions > button { width: 100%; }
+  .new-device-link { padding: 12px; }
+  .new-device-link h4 { align-items: flex-start; line-height: 1.5; }
+  .new-device-link h4 svg { flex-shrink: 0; margin-top: 2px; }
+  .recovery-actions { display: grid; grid-template-columns: 1fr; }
+  .chat-security-notice { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; }
+  .chat-security-notice > span { min-width: 0; overflow-wrap: anywhere; }
+  .chat-security-notice > button { grid-column: 2; justify-self: start; min-height: 38px; }
+  .message-list { min-height: 0; }
+  .device-approval-banner { bottom: max(82px, env(safe-area-inset-bottom)); max-width: calc(100vw - 24px); box-sizing: border-box; }
+  .device-approval-banner > div { min-width: 0; }
+  .device-approval-banner strong, .device-approval-banner span { overflow-wrap: anywhere; }
+  .device-approval-actions { flex-wrap: wrap; }
+  .device-approval-actions button { flex: 1; min-height: 42px; }
+}

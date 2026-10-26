@@ -152,6 +152,9 @@ pub enum Command {
     Members {
         conversation_id: String,
     },
+    GroupStatus {
+        conversation_id: String,
+    },
     AddMembers {
         conversation_id: String,
         key_packages: Vec<String>,
@@ -826,6 +829,9 @@ impl CryptoEngine {
             Command::Members { conversation_id } => Ok(
                 json!({ "epoch": self.mls.epoch(&conversation_id)?, "members": self.mls.members(&conversation_id)? }),
             ),
+            Command::GroupStatus { conversation_id } => {
+                Ok(json!({"exists":self.mls.has_group(&conversation_id)?}))
+            }
             Command::AddMembers {
                 conversation_id,
                 key_packages,

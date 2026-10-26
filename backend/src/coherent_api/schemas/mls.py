@@ -65,6 +65,10 @@ class LeaseRequest(StrictModel):
     device_id: UUID
     request_id: UUID
     operation: Literal["init", "add", "message", "reset"]
+    recover: bool = False
+    recovery_group_id: UUID | None = None
+    challenge_id: UUID | None = None
+    proof: str | None = Field(default=None, min_length=88, max_length=88)
 
 
 class TransportPayload(StrictModel):

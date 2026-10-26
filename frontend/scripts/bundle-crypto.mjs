@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 // Compile the shared bridge and browser Worker independently for CI.
 await build({
+  define: { __COHERENT_CRYPTO_VERSION__: JSON.stringify("standalone-ci") },
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
   publicDir: false,

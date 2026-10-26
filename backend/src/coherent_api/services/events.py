@@ -1,7 +1,8 @@
+import asyncio
 from collections.abc import Iterable
 from uuid import UUID
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 
 class MessageEvents:
@@ -31,16 +32,25 @@ class MessageEvents:
     async def disconnect(self, user_id: UUID, code: int = 1008) -> None:
         for websocket in tuple(self.connections.get(user_id, ())):
             try:
-                await websocket.close(code=code)
-            except (OSError, RuntimeError):
+                async with asyncio.timeout(2):
+                    await websocket.close(code=code)
+            except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError):
                 pass
             self.remove(user_id, websocket)
         await self.publish_all({"type": "presence"})
 
     async def publish(self, user_ids: Iterable[UUID], payload: dict) -> None:
-        for user_id in set(user_ids):
-            for websocket in tuple(self.connections.get(user_id, ())):
-                try:
+        async def deliver(user_id, websocket):
+            try:
+                async with asyncio.timeout(2):
                     await websocket.send_json(payload)
-                except (OSError, RuntimeError):
-                    self.remove(user_id, websocket)
+            except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError):
+                self.remove(user_id, websocket)
+
+        await asyncio.gather(
+            *(
+                deliver(user_id, websocket)
+                for user_id in set(user_ids)
+                for websocket in tuple(self.connections.get(user_id, ()))
+            )
+        )

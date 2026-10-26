@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { attachmentObjectUrl, api, apiRequest, ApiError, type Conversation, type Message } from "../api";
 import { CryptoClient } from "./client";
 import { enrollCurrentDevice } from "./access";
+import { CryptoOperationError } from "./errors";
 import { cachedCipher, forgetCipher, openCipherFile, sealFiles, type PublicCipherFile, type SecureFile } from "./files";
 import type { ContactPin, CryptoCommand, DeliveryItem, DeviceBinding, Envelope, HistoryBackup, MessageContext, SignedRoster } from "./types";
 
@@ -43,6 +44,7 @@ export class MlsMessaging {
   private migrations = new Map<string, Promise<void>>();
   private migrated = new Set<string>();
   private decoded = new Map<string, { signature: string; message: Message }>();
+  private savedPins = new Map<string, string>();
   constructor(readonly account: string) { this.crypto = new CryptoClient(account); }
   close() { this.crypto.close(); this.decoded.clear(); }
   private async lock<T>(work: () => Promise<T>): Promise<T> {
@@ -78,6 +80,7 @@ export class MlsMessaging {
       await enrollCurrentDevice(this.crypto, "");
       const saved = await apiRequest<{ pins: ContactPin[] }>("/api/v1/security/contacts");
       await this.crypto.execute({ operation: "import_contact_pins", pins: saved.pins });
+      this.savedPins = new Map(saved.pins.map(pin => [pin.account_id, pin.public_key]));
       await this.packages();
     })().catch(error => { this.initialization = null; throw error; });
     return this.initialization;
@@ -119,8 +122,11 @@ export class MlsMessaging {
       }
     }
     const exported = await this.crypto.execute({ operation: "export_contact_pins" });
-    const saved = await apiRequest<{ pins: ContactPin[] }>("/api/v1/security/contacts"); const pins = exported.result.pins as ContactPin[];
-    if (pins.some(pin => !saved.pins.some(old => old.account_id === pin.account_id && old.public_key === pin.public_key))) await apiRequest("/api/v1/security/contacts", { method: "POST", body: JSON.stringify({ device_id: this.device!.device_id, pins }) });
+    const pins = exported.result.pins as ContactPin[];
+    if (pins.some(pin => this.savedPins.get(pin.account_id) !== pin.public_key)) {
+      await apiRequest("/api/v1/security/contacts", { method: "POST", body: JSON.stringify({ device_id: this.device!.device_id, pins }) });
+      this.savedPins = new Map(pins.map(pin => [pin.account_id, pin.public_key]));
+    }
     if (waiting) throw new MessagingAccessError("waiting", "Не все участники настроили ключи. Старую историю можно читать; новые сообщения будут защищёнными");
     return directory;
   }
@@ -190,19 +196,27 @@ export class MlsMessaging {
     return result;
   }
   private async pull(conversation: Conversation, directory: Directory): Promise<void> {
-    const verified = this.devices(directory);
+    let verified = this.devices(directory);
     for (;;) {
       const cursor = Number((await this.crypto.execute({ operation: "stream_cursor", stream: conversation.id })).result.sequence);
       const page = await apiRequest<{ events: SecureEvent[]; has_more: boolean }>(`/api/v1/conversations/${conversation.id}/secure/events?device_id=${this.device!.device_id}&after=${cursor}`);
       for (const event of page.events) {
-        await this.crypto.execute({ operation: "verify_action", device: event.sender, nonce: event.nonce, payload: event.payload, proof: event.proof });
         const packet = JSON.parse(event.payload) as Operation;
+        if (!verified.has(event.sender.device_id) || packet.roster.some(id => !verified.has(id)) ||
+          ((packet.operation === "init" || packet.operation === "reset") && packet.group_id !== directory.state.group_id)) {
+          Object.assign(directory, await this.checkDirectory(conversation));
+          verified = this.devices(directory);
+        }
+        await this.crypto.execute({ operation: "verify_action", device: event.sender, nonce: event.nonce, payload: event.payload, proof: event.proof });
         if (packet.version !== 1 || packet.conversation_id !== conversation.id || packet.request_id !== event.id || packet.expected_sequence + 1 !== event.sequence || new Set(packet.roster).size !== packet.roster.length || packet.roster.some(id => !verified.has(id)) || !packet.roster.includes(event.sender.device_id)) throw new MessagingAccessError("changed", "Нарушена последовательность защищённой беседы");
-        const ours = packet.roster.includes(this.device!.device_id);
+        const pending = (await this.crypto.pendingDeliveries()).find(item => hint(item)?.lease.request_id === event.id);
+        // Old generations use the account's authenticated history archive. Do
+        // not replay their live ratchets on a newly joined/recovered device.
+        const ours = packet.roster.includes(this.device!.device_id) &&
+          (packet.group_id === directory.state.group_id || (!!pending && event.sender.device_id === this.device!.device_id));
         let inner: CryptoCommand | null = null; let delivered: string | undefined;
         if (ours) {
           await this.crypto.execute({ operation: "authorize_conversation", conversation_id: packet.group_id, device_ids: packet.roster });
-          const pending = (await this.crypto.pendingDeliveries()).find(item => hint(item)?.lease.request_id === event.id);
           if (event.sender.device_id === this.device!.device_id) {
             if (!pending || this.payload(pending) !== event.payload) throw new Error("Подтверждение не совпадает с локальной очередью");
             delivered = pending.id;
@@ -222,33 +236,52 @@ export class MlsMessaging {
       if (!page.has_more) return;
     }
   }
-  private async acquire(conversation: Conversation, operation: Lease["operation"]): Promise<Lease> {
+  private async acquire(conversation: Conversation, operation: Lease["operation"], recoveryGroup: string | null = null): Promise<Lease> {
     for (let attempt = 0; ; attempt++) {
       try {
-        const lease = await apiRequest<Lease>(`/api/v1/conversations/${conversation.id}/secure/lease`, { method: "POST", body: JSON.stringify({ device_id: this.device!.device_id, request_id: crypto.randomUUID(), operation }) });
+        const requestId = crypto.randomUUID();
+        let authorization = {};
+        if (recoveryGroup) {
+          const challenge = await this.challenge();
+          const payload = canonical({operation:"recover_session", conversation_id:conversation.id, device_id:this.device!.device_id, request_id:requestId, group_id:recoveryGroup});
+          const signed = await this.crypto.execute({operation:"sign_action", nonce:challenge.nonce, payload});
+          authorization = {challenge_id:challenge.challenge_id, proof:signed.result.proof, recovery_group_id:recoveryGroup};
+        }
+        const lease = await apiRequest<Lease>(`/api/v1/conversations/${conversation.id}/secure/lease`, { method: "POST", body: JSON.stringify({ device_id: this.device!.device_id, request_id: requestId, operation, recover:!!recoveryGroup, ...authorization }) });
         this.acquired.set(lease.lease_id, { conversation, lease }); return lease;
       }
       catch (error) { if (!(error instanceof ApiError) || error.status !== 409 || !error.message.includes("Другая отправка") || attempt >= 3) throw error; await pause(1100); }
     }
   }
-  private async ensureGroup(conversation: Conversation, directory: Directory): Promise<void> {
+  private async ensureGroup(conversation: Conversation, directory: Directory, repair = false): Promise<void> {
     const desired = directory.eligible_devices; const state = directory.state;
-    if (state.group_id && state.roster.includes(this.device!.device_id) && same(state.roster, desired)) return;
-    const operation = !state.group_id ? "init" : !state.roster.includes(this.device!.device_id) ? "reset" : "add";
-    const lease = await this.acquire(conversation, operation);
+    const local = state.group_id ? await this.crypto.execute({ operation: "group_status", conversation_id: state.group_id }) : null;
+    const recover = !!state.group_id && state.roster.includes(this.device!.device_id) && (repair || !local?.result.exists);
+    if (!recover && state.group_id && state.roster.includes(this.device!.device_id) && same(state.roster, desired)) return;
+    const operation = !state.group_id ? "init" : recover || !state.roster.includes(this.device!.device_id) ? "reset" : "add";
+    const lease = await this.acquire(conversation, operation, recover ? state.group_id : null);
+    const fresh = await this.checkDirectory(conversation);
+    directory.accounts = fresh.accounts;
+    directory.eligible_devices = fresh.eligible_devices;
     await this.crypto.execute({ operation: "authorize_conversation", conversation_id: lease.group_id, device_ids: lease.roster });
     if (operation === "init" || operation === "reset") await this.crypto.execute({ operation: "create_group", conversation_id: lease.group_id });
     const result = await this.crypto.execute({ operation: "add_members", conversation_id: lease.group_id, key_packages: lease.packages.map(p => p.wire) }, undefined, { conversation_id: conversation.id, lease, files: [] });
     const item = (await this.crypto.pendingDeliveries()).find(p => p.id === result.delivery_id)!;
     await this.post(item);
-    await this.pull(conversation, directory);
     directory.state = (await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`)).state;
+    await this.pull(conversation, directory);
   }
   private async prepare(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     await this.ready();
     const directory = await this.checkDirectory(conversation, confirmed);
     await this.resolveCandidates(conversation);
-    await this.pull(conversation, directory);
+    try { await this.pull(conversation, directory); }
+    catch (error) {
+      // Only the known, authenticated legacy Welcome defect may trigger repair.
+      // Signature, trust and ciphertext-authentication failures remain blocking.
+      if (!(error instanceof CryptoOperationError) || error.code !== "WELCOME_TREE_MISSING") throw error;
+      await this.ensureGroup(conversation, directory, true);
+    }
     directory.state = (await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`)).state;
     await this.ensureGroup(conversation, directory);
     for (const old of await this.crypto.pendingDeliveries()) {

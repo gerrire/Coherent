@@ -345,9 +345,28 @@ impl MlsClient {
     }
 
     fn load_group(&self, conversation: &str) -> Result<MlsGroup, CryptoError> {
-        MlsGroup::load(self.provider.storage(), &Self::group_id(conversation)?)
+        let mut group = MlsGroup::load(self.provider.storage(), &Self::group_id(conversation)?)
             .map_err(|_| CryptoError::State)?
-            .ok_or(CryptoError::State)
+            .ok_or(CryptoError::State)?;
+        // Migrate joiners saved by older clients as well as newly joined groups.
+        // Every member must include the public tree when inviting another device.
+        let config = MlsGroupJoinConfig::builder()
+            .use_ratchet_tree_extension(true)
+            .build();
+        if group.configuration() != &config {
+            group
+                .set_configuration(self.provider.storage(), &config)
+                .map_err(|_| CryptoError::State)?;
+        }
+        Ok(group)
+    }
+
+    pub fn has_group(&self, conversation: &str) -> Result<bool, CryptoError> {
+        Ok(
+            MlsGroup::load(self.provider.storage(), &Self::group_id(conversation)?)
+                .map_err(|_| CryptoError::State)?
+                .is_some(),
+        )
     }
 
     pub fn members(&self, conversation: &str) -> Result<Vec<DeviceBinding>, CryptoError> {
@@ -520,11 +539,16 @@ impl MlsClient {
         };
         let staged = StagedWelcome::new_from_welcome(
             &self.provider,
-            &MlsGroupJoinConfig::builder().build(),
+            &MlsGroupJoinConfig::builder()
+                .use_ratchet_tree_extension(true)
+                .build(),
             welcome,
             None,
         )
-        .map_err(|_| CryptoError::Mls)?;
+        .map_err(|error| match error {
+            WelcomeError::MissingRatchetTree => CryptoError::WelcomeTreeMissing,
+            _ => CryptoError::Mls,
+        })?;
         let members: Vec<_> = staged.members().collect();
         if members.len() > MAX_MEMBERS {
             return Err(CryptoError::InvalidInput);
@@ -738,5 +762,58 @@ impl Drop for MlsClient {
                 value.zeroize();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_restored_joiner_can_invite_another_device() {
+        let room = "20000000-0000-4000-8000-000000000001";
+        let mut a = MlsClient::new(
+            "10000000-0000-4000-8000-000000000001",
+            "30000000-0000-4000-8000-000000000001",
+        )
+        .unwrap();
+        let mut b = MlsClient::new(
+            "10000000-0000-4000-8000-000000000002",
+            "30000000-0000-4000-8000-000000000002",
+        )
+        .unwrap();
+        let mut c = MlsClient::new(
+            "10000000-0000-4000-8000-000000000002",
+            "30000000-0000-4000-8000-000000000003",
+        )
+        .unwrap();
+        let bindings = [a.device.clone(), b.device.clone(), c.device.clone()];
+        let ids: Vec<_> = bindings.iter().map(|d| d.device_id.clone()).collect();
+        for client in [&mut a, &mut b, &mut c] {
+            for binding in &bindings {
+                client.pin_device(binding.clone()).unwrap();
+            }
+            client.authorize_conversation(room, &ids).unwrap();
+        }
+        a.create_group(room).unwrap();
+        let initial = a.add_members(room, &[b.key_package().unwrap()]).unwrap();
+        a.acknowledge_commit(room, &initial.commit).unwrap();
+        b.join(room, initial.welcome.as_ref().unwrap()).unwrap();
+        // Simulate a persisted group from the old client, which omitted the tree.
+        b.load_group(room)
+            .unwrap()
+            .set_configuration(b.provider.storage(), &MlsGroupJoinConfig::builder().build())
+            .unwrap();
+        let mut b = MlsClient::restore_local(&b.snapshot_local().unwrap()).unwrap();
+        let added = b.add_members(room, &[c.key_package().unwrap()]).unwrap();
+        b.acknowledge_commit(room, &added.commit).unwrap();
+        c.join(room, added.welcome.as_ref().unwrap()).unwrap();
+        a.receive(room, &added.commit).unwrap();
+        assert_eq!(c.members(room).unwrap().len(), 3);
+        let message = b.send_application(room, b"joined-member-message").unwrap();
+        let Received::Application { payload, .. } = c.receive(room, &message).unwrap() else {
+            panic!("expected an application");
+        };
+        assert_eq!(payload.as_slice(), b"joined-member-message");
     }
 }

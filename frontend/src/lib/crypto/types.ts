@@ -27,6 +27,7 @@ export type CryptoCommand =
   | { operation: "pin_device"; device: DeviceBinding }
   | { operation: "authorize_conversation"; conversation_id: string; device_ids: string[] }
   | { operation: "create_group" | "members"; conversation_id: string }
+  | { operation: "group_status"; conversation_id: string }
   | { operation: "add_members"; conversation_id: string; key_packages: string[] }
   | { operation: "remove_members"; conversation_id: string; device_ids: string[] }
   | { operation: "acknowledge_commit"; conversation_id: string; commit: string }
@@ -77,3 +78,8 @@ export interface HistoryBackup { version: 1; recipient: string; encapsulated: st
 export interface ContactPin { account_id: string; public_key: string; proof: string }
 
 export type ApproveLinkRequest = { type: "approve_link"; current_password: string; csrf_token: string; command: Extract<CryptoCommand, { operation: "link_send" }> };
+
+/** These commands do not change keys, trust, ratchets or archive-use markers. */
+export function readOnlyCommand(command: CryptoCommand): boolean {
+  return ["identity", "group_status", "members", "own_fingerprint", "inspect_roster", "stream_cursor", "verify_action", "sign_action", "export_contact_pins", "link_info"].includes(command.operation);
+}

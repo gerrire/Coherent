@@ -26,6 +26,7 @@ jobs:
         run: |
           cargo fmt --manifest-path crates/coherent-crypto/Cargo.toml --check
           cargo check --locked --manifest-path crates/coherent-crypto/Cargo.toml --features native-vault
+          cargo test --locked --manifest-path crates/coherent-crypto/Cargo.toml --lib
       - name: Check browser core
         run: cargo check --locked --manifest-path crates/coherent-crypto/Cargo.toml --target wasm32-unknown-unknown --features wasm
       - uses: actions/setup-node@v4

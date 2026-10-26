@@ -195,6 +195,10 @@ async def eligible_devices(session, conversation, requester=None, reset=False):
 
 
 async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dict:
+    if body.recover and body.operation != "reset":
+        raise HTTPException(
+            status_code=400, detail="Восстановление требует новой защищённой сессии"
+        )
     await active_device(session, user, body.device_id)
     conversation = await secure_conversation(session, user, conversation_id, lock=True)
     accepted = await session.get(MlsEvent, body.request_id)
@@ -202,7 +206,15 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
         if accepted.conversation_id != conversation_id or accepted.device_id != body.device_id:
             raise HTTPException(status_code=409, detail="Идентификатор запроса уже использован")
         return {"accepted": True, "event": await event_view(session, accepted)}
-    state = await session.get(MlsState, conversation_id)
+    state = await session.scalar(
+        select(MlsState)
+        .where(MlsState.conversation_id == conversation_id)
+        .execution_options(populate_existing=True)
+    )
+    if body.recover and (state is None or state.group_id != body.recovery_group_id):
+        raise HTTPException(
+            status_code=409, detail="Защищённая сессия уже обновилась. Повтори подключение"
+        )
     if state is None:
         state = MlsState(
             conversation_id=conversation_id, sequence=0, epoch=0, generation=0, roster="[]"
@@ -232,7 +244,7 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
     if body.device_id not in desired:
         raise HTTPException(status_code=403, detail="Устройство не входит в беседу")
     current = [UUID(x) for x in json.loads(state.roster)]
-    if body.operation == "reset" and body.device_id in current:
+    if body.operation == "reset" and body.device_id in current and not body.recover:
         raise HTTPException(
             status_code=409, detail="Это устройство уже участвует в защищённой сессии"
         )

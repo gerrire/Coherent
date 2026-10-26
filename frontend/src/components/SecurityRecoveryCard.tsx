@@ -131,6 +131,7 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
     <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>{status?.configured && !trusted ? "Подтверждение устройства" : "Ключ восстановления"}</h3></div>
     {(!status?.configured || trusted) && <p>12 случайных слов для доступа к защищённой истории при потере устройств. Храни их отдельно от пароля. Сервер и почта этих слов не получают.</p>}
     {status?.setup_available && <p className="recovery-rollout-note">{status.chat_encryption === "mls" ? "Новые личные и групповые сообщения используют сквозное шифрование. Каналы серверов остаются облачными." : "Подготавливаем защищённую переписку. Текущие чаты пока используют облачное шифрование."}</p>}
+    {!isTauri() && <p className="recovery-private-note">В инкогнито ключи действуют до закрытия всех приватных окон. При следующем входе подтверди новое устройство с доверенного устройства или Recovery Key.</p>}
     {trusted && fingerprint && <div className="account-safety-code"><span>Сверочный код аккаунта</span><code>{fingerprint.match(/.{1,4}/g)?.join(" ")}</code><p>Этот код можно сравнить с собеседником. Он публичный и не заменяет секретные 12 слов.</p><button type="button" className="recovery-action" onClick={() => void navigator.clipboard.writeText(fingerprint)}>Скопировать код</button></div>}
     {!status && !error && <p role="status">Открываем хранилище…</p>}
     {status && !status.setup_available && <p>Настройка ключей появится в следующем этапе перехода.</p>}

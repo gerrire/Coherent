@@ -128,13 +128,45 @@ async def acquire_lease(
     session: SessionDep,
 ) -> dict:
     if not request.app.state.settings.e2ee_messaging_enabled:
-        from coherent_api.models.mls import MlsState
-
         state = await session.get(MlsState, conversation_id)
         if state is None or state.group_id is None:
             raise HTTPException(
                 status_code=409, detail="Новая защищённая переписка ещё не включена"
             )
+    if body.recover:
+        device = await mls.active_device(session, user, body.device_id)
+        state = await session.get(MlsState, conversation_id)
+        if not body.challenge_id or not body.proof or not body.recovery_group_id:
+            raise HTTPException(
+                status_code=403, detail="Подтверди восстановление ключом устройства"
+            )
+        if state is None or state.group_id != body.recovery_group_id:
+            raise HTTPException(
+                status_code=409, detail="Защищённая сессия уже обновилась. Повтори подключение"
+            )
+        payload = json.dumps(
+            {
+                "operation": "recover_session",
+                "conversation_id": str(conversation_id),
+                "device_id": str(body.device_id),
+                "request_id": str(body.request_id),
+                "group_id": str(body.recovery_group_id),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        await verify_device_request(
+            session,
+            user,
+            body.challenge_id,
+            device.id,
+            device.signature_key,
+            body.proof,
+            "",
+            "action",
+            hashlib.sha256(payload.encode()).digest(),
+            require_password=False,
+        )
     return await mls.lease(session, user, conversation_id, body)
 
 

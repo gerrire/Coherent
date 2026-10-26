@@ -1,6 +1,7 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest, type RevealRequest, type ApproveLinkRequest } from "./types";
 import { currentCsrfToken } from "../api";
+import { CryptoOperationError, publicCryptoError } from "./errors";
 
 /** Shared bridge to the device-local Rust core, in a Worker or native vault. */
 export class CryptoClient {
@@ -11,11 +12,11 @@ export class CryptoClient {
     if (!UUID_PATTERN.test(account)) throw new Error("Неверный аккаунт");
     if (!isTauri()) {
       this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "coherent-crypto" });
-      this.worker.onmessage = (event: MessageEvent<{ id: string; result?: unknown; error?: string }>) => {
+      this.worker.onmessage = (event: MessageEvent<{ id: string; result?: unknown; error?: string; code?: string }>) => {
         const request = this.pending.get(event.data.id);
         if (!request) return;
         this.pending.delete(event.data.id);
-        if (event.data.error) request.reject(new Error(event.data.error));
+        if (event.data.error) request.reject(new CryptoOperationError(event.data.code ?? "CRYPTO_UNAVAILABLE", event.data.error));
         else request.resolve(event.data.result);
       };
       this.worker.onerror = () => this.close();
@@ -25,7 +26,10 @@ export class CryptoClient {
   private call<T>(request: VaultRequest | RevealRequest | ApproveLinkRequest): Promise<T> {
     if (isTauri() && request.type === "approve_link") return invoke<T>("desktop_crypto_approve_link", { accountId: this.account, currentPassword: request.current_password, command: request.command });
     if (isTauri() && request.type === "reveal_recovery") return invoke<T>("desktop_crypto_reveal", { accountId: this.account, currentPassword: request.current_password });
-    if (isTauri()) return invoke<T>("desktop_crypto_request", { accountId: this.account, request });
+    if (isTauri()) return invoke<T>("desktop_crypto_request", { accountId: this.account, request }).catch(reason => {
+      const safe = publicCryptoError(new Error(reason === "MLS_WELCOME_TREE_MISSING" ? reason : ""));
+      throw new CryptoOperationError(safe.code, safe.message);
+    });
     const worker = this.worker;
     if (!worker) return Promise.reject(new Error("Защищённое хранилище закрыто"));
     const id = crypto.randomUUID();
