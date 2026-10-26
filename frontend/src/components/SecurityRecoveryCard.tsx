@@ -146,7 +146,7 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
     </>}
     {notice && <p className="profile-settings-success" role="status">{notice}</p>}
     {error && <p className="profile-settings-error" role="alert">{error}</p>}
-    {status?.recovery_confirmed && !words.length && <p className="profile-settings-success"><Check size={16} /> Сохранение ключа подтверждено.</p>}
-    {onComplete && <button className="recovery-action recovery-continue" type="button" disabled={busy} onClick={() => { hide(); onComplete(); }}>{status?.recovery_confirmed ? "Начать общаться" : "Продолжить, настроить позже"}</button>}
+    {trusted && status?.recovery_confirmed && !words.length && <p className="profile-settings-success"><Check size={16} /> Сохранение ключа подтверждено.</p>}
+    {onComplete && <button className="recovery-action recovery-continue" type="button" disabled={busy} onClick={() => { hide(); onComplete(); }}>{trusted && status?.recovery_confirmed ? "Начать общаться" : "Продолжить без личной переписки"}</button>}
   </section>;
 }
