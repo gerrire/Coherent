@@ -1381,7 +1381,25 @@ a {
 .call-connect-error button.call-connect-retry { background: #6b42a1; }
 .call-connect-error button.call-connect-retry:hover { background: #8154bb; }
 .call-surface-error { margin: 0; padding: 7px 18px; background: #4a2032; color: #ffb8cc; font-size: 11px; }
-.call-network-notice { flex: 0 0 auto; margin: 0; padding: 7px 18px; background: #453526; color: #f5d9a6; font-size: 11px; }
+.call-network-notice {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px solid rgba(245, 217, 166, .2);
+  border-radius: 6px;
+  background: #453526;
+  color: #f5d9a6;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+.call-network-notice svg { flex: 0 0 auto; }
 
 .call-stage {
   display: grid;
@@ -1577,6 +1595,7 @@ a {
 .call-sidebar-invited { padding: 9px; border: 1px dashed #51485f; border-radius: 8px; color: #a99db8; font-size: 10px; }
 
 .call-surface-controls {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -1584,6 +1603,11 @@ a {
   min-height: 66px;
   padding: 8px 16px;
   background: #211d30;
+}
+.call-surface-expanded .call-surface-controls { container-type: inline-size; }
+@container (max-width: 650px) {
+  .call-network-notice { left: 8px; padding: 4px; }
+  .call-network-notice-text { display: none; }
 }
 
 .call-control-group { display: flex; align-items: center; justify-content: center; gap: 10px; }
@@ -1608,9 +1632,11 @@ a {
 .call-surface-compact .call-surface-controls {
   flex: 0 0 auto;
   min-height: 68px;
-  padding: 0 12px 0 0;
+  padding: 0 12px 0 32px;
   background: transparent;
 }
+.call-surface-compact .call-network-notice { left: 4px; padding: 4px; }
+.call-surface-compact .call-network-notice-text { display: none; }
 .call-surface-compact .call-control-camera, .call-surface-compact .call-control-screen { display: none; }
 .call-surface-compact .call-control-group { gap: 7px; }
 .call-surface-compact .call-control { width: 34px; height: 34px; border-radius: 10px; }
@@ -1657,6 +1683,8 @@ a {
   .call-sidebar-preview { height: 68px; aspect-ratio: auto; }
   .call-waiting-label { display: none; }
   .call-surface-controls { min-height: 58px; }
+  .call-network-notice { left: 8px; padding: 4px; }
+  .call-network-notice-text { display: none; }
   .call-control { width: 38px; height: 38px; }
   .call-control-group { gap: 7px; }
 }

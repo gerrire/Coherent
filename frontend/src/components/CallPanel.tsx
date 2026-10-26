@@ -31,6 +31,7 @@ import {
   UserPlus,
   Volume2,
   VolumeX,
+  WifiOff,
   X,
 } from "lucide-react";
 import { AudioPresets, ConnectionQuality, ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type Participant } from "livekit-client";
@@ -455,9 +456,9 @@ function CallRoom({
       <CallMediaBridge connected={connected} media={media} onRoomReady={onRoomReady} onError={setMediaError} />
       <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
       {header}
-      <CallConnectionNotice />
       <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
       <div className="call-surface-controls">
+        <CallConnectionNotice />
         <StartAudio className="call-start-audio" label="Включить звук" />
         <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
       </div>
@@ -684,7 +685,10 @@ function CallConnectionNotice() {
   }, [room]);
 
   if (!weakConnection) return null;
-  return <p className="call-network-notice">Связь нестабильна: звук может прерываться. Если идёт демонстрация, попробуй режим 720p в настройках видео.</p>;
+  return <p className="call-network-notice" role="status" aria-label="Нестабильная связь. Звук может прерываться." title="Связь нестабильна: звук может прерываться. Для демонстрации можно снизить качество в настройках видео.">
+    <WifiOff size={14} aria-hidden="true" />
+    <span className="call-network-notice-text" aria-hidden="true">Нестабильная связь</span>
+  </p>;
 }
 
 function CallAudioRenderer({ muted, volumes, screenVolumes }: { muted: boolean; volumes: Record<string, number>; screenVolumes: Record<string, number> }) {
@@ -838,8 +842,7 @@ function FocusedScreen({ trackRef, style, label, volumeButton, onAspectRatioChan
   volumeButton: ReactNode;
   onAspectRatioChange: (ratio: number) => void;
 }) {
-  const isSpeaking = useFastSpeaking(trackRef.participant);
-  return <div className={`call-tile call-tile-screen ${isSpeaking ? "call-tile-speaking" : ""}`} style={style}>
+  return <div className="call-tile call-tile-screen" style={style}>
     <VideoWithResolution trackRef={trackRef} onAspectRatioChange={onAspectRatioChange} />
     <span className="call-tile-name">{label}</span>
     {volumeButton}
