@@ -6,11 +6,13 @@ import json
 import os
 import re
 import subprocess
+import stat
 import sys
 import time
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 
 ROOT = Path("/opt/coherent")
@@ -42,14 +44,41 @@ def git(*args: str) -> str:
     return run("git", *args, timeout=120, env=GIT_ENV)
 
 
+def github_headers() -> dict[str, str]:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "coherent-vps-deploy"}
+    token_path = Path("/etc/coherent/github-token")
+    try:
+        descriptor = os.open(token_path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return headers
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != 0:
+            raise RuntimeError("GitHub token must be a root-owned private regular file")
+        raw = os.read(descriptor, 4097)
+    finally:
+        os.close(descriptor)
+    token = raw.decode("ascii").strip()
+    if not token or len(raw) > 4096 or any(char.isspace() for char in token):
+        raise RuntimeError("GitHub token file has invalid format")
+    headers["Authorization"] = "Bearer " + token
+    return headers
+
+
 def successful_build(sha: str) -> bool:
     query = urlencode({"branch": "main", "event": "push", "head_sha": sha, "per_page": 1})
     request = Request(
         f"{WORKFLOW_URL}?{query}",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "coherent-vps-deploy"},
+        headers=github_headers(),
     )
-    with urlopen(request, timeout=15) as response:
-        runs = json.load(response).get("workflow_runs", [])
+    try:
+        with urlopen(request, timeout=15) as response:
+            runs = json.load(response).get("workflow_runs", [])
+    except HTTPError as error:
+        if error.code in (401, 403, 404):
+            raise RuntimeError("Cannot read GitHub build status; check /etc/coherent/github-token and repository Actions: read permission") from None
+        raise
+
     if not runs:
         print(f"Build for {sha[:12]} has not appeared yet", flush=True)
         return False
