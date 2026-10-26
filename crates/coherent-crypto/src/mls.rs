@@ -192,13 +192,67 @@ impl MlsClient {
         &self.device
     }
 
+    pub fn history_signature(&self, record: &[u8]) -> Result<String, CryptoError> {
+        let mut bytes = b"coherent/history-record/v1\0".to_vec();
+        bytes.extend_from_slice(record);
+        Ok(BASE64_STANDARD.encode(self.signer.sign(&bytes).map_err(|_| CryptoError::Mls)?))
+    }
+
+    pub fn verify_action(
+        &self,
+        device: &DeviceBinding,
+        nonce: &str,
+        payload: &str,
+        proof: &str,
+    ) -> Result<(), CryptoError> {
+        if self.pins.get(&device.device_id) != Some(device) || payload.len() > 2 * 1024 * 1024 {
+            return Err(CryptoError::UntrustedDevice);
+        }
+        let mut bytes = b"coherent/device-proof/v1\0action\0".to_vec();
+        bytes.extend_from_slice(&uuid_bytes(&device.account_id)?);
+        bytes.extend_from_slice(&uuid_bytes(&device.device_id)?);
+        bytes.extend_from_slice(&crate::trust::decode(&device.signature_key, 32)?);
+        bytes.extend_from_slice(&crate::trust::decode(nonce, 32)?);
+        bytes.extend_from_slice(&Sha256::digest(payload.as_bytes()));
+        crate::trust::verify(&device.signature_key, &bytes, proof)
+    }
+
+    pub fn verify_history(
+        &self,
+        author: &DeviceBinding,
+        record: &[u8],
+        signature: &str,
+    ) -> Result<(), CryptoError> {
+        if self.pins.get(&author.device_id) != Some(author) {
+            return Err(CryptoError::UntrustedDevice);
+        }
+        let mut bytes = b"coherent/history-record/v1\0".to_vec();
+        bytes.extend_from_slice(record);
+        crate::trust::verify(&author.signature_key, &bytes, signature)
+    }
+
+    pub fn discard_pending(&mut self, conversation: &str, commit: &str) -> Result<(), CryptoError> {
+        if self.pending_commits.get(conversation).map(String::as_str) != Some(commit) {
+            return Err(CryptoError::State);
+        }
+        let mut group = self.load_group(conversation)?;
+        group
+            .clear_pending_commit(self.provider.storage())
+            .map_err(|_| CryptoError::State)?;
+        self.pending_commits.remove(conversation);
+        Ok(())
+    }
+
     pub fn sign_device_proof(
         &self,
         purpose: &str,
         nonce: &str,
         payload_hash: &[u8; 32],
     ) -> Result<String, CryptoError> {
-        if !matches!(purpose, "bootstrap" | "recovery_view" | "confirm_recovery") {
+        if !matches!(
+            purpose,
+            "bootstrap" | "recovery_view" | "confirm_recovery" | "action"
+        ) {
             return Err(CryptoError::InvalidInput);
         }
         let nonce = BASE64_STANDARD

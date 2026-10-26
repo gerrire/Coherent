@@ -10,7 +10,9 @@ use crate::{
     CryptoError,
     envelope::{self, Envelope},
     mls::{DeviceBinding, MlsClient, Received},
-    recovery, uuid_bytes,
+    recovery,
+    trust::{self, SignedRoster, TrustStore},
+    uuid_bytes,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -24,6 +26,10 @@ struct LocalEngine {
     recovery_phrase: Option<String>,
     #[serde(default)]
     recovery_backup: Option<Envelope>,
+    #[serde(default)]
+    trust: TrustStore,
+    #[serde(default)]
+    cursors: std::collections::BTreeMap<String, u64>,
 }
 
 impl Drop for LocalEngine {
@@ -67,6 +73,23 @@ struct ContentKey {
     context: MessageContext,
     key: String,
     body_hash: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignedContentKey {
+    record: ContentKey,
+    author: DeviceBinding,
+    signature: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryBackup {
+    pub version: u8,
+    pub recipient: String,
+    pub encapsulated: String,
+    pub ciphertext: String,
 }
 
 impl Drop for ContentKey {
@@ -113,6 +136,8 @@ pub enum Command {
         conversation_id: String,
         message_id: String,
         content: String,
+        #[serde(default)]
+        archive_accounts: Option<Vec<String>>,
     },
     Receive {
         conversation_id: String,
@@ -137,6 +162,68 @@ pub enum Command {
         phrase: String,
         backup: Envelope,
     },
+    OwnFingerprint,
+    ExportContactPins,
+    ImportContactPins {
+        pins: Vec<trust::ContactPin>,
+    },
+    PrepareRoster {
+        previous: Option<SignedRoster>,
+    },
+    InspectRoster {
+        public_key: String,
+        roster: SignedRoster,
+    },
+    AcceptRoster {
+        public_key: String,
+        roster: SignedRoster,
+        fingerprint: Option<String>,
+    },
+    SignAction {
+        nonce: String,
+        payload: String,
+    },
+    OpenBackup {
+        context: MessageContext,
+        body: Envelope,
+        backup: HistoryBackup,
+    },
+    VerifyAction {
+        device: DeviceBinding,
+        nonce: String,
+        payload: String,
+        proof: String,
+    },
+    StreamCursor {
+        stream: String,
+    },
+    ApplyEvent {
+        stream: String,
+        sequence: u64,
+        command: Option<Box<Command>>,
+        expected_members: Option<Vec<String>>,
+        group_id: Option<String>,
+    },
+    DiscardCommit {
+        conversation_id: String,
+        commit: String,
+    },
+    SealChunk {
+        context: MessageContext,
+        file_id: String,
+        index: u32,
+        count: u32,
+        key: Option<String>,
+        data: String,
+    },
+    OpenChunk {
+        context: MessageContext,
+        file_id: String,
+        index: u32,
+        count: u32,
+        key: String,
+        envelope: Envelope,
+    },
 }
 
 pub struct CryptoEngine {
@@ -145,6 +232,8 @@ pub struct CryptoEngine {
     archive_in_use: bool,
     recovery_phrase: Option<Zeroizing<String>>,
     recovery_backup: Option<Envelope>,
+    trust: TrustStore,
+    cursors: std::collections::BTreeMap<String, u64>,
 }
 
 impl CryptoEngine {
@@ -155,6 +244,8 @@ impl CryptoEngine {
             archive_in_use: false,
             recovery_phrase: None,
             recovery_backup: None,
+            trust: TrustStore::default(),
+            cursors: std::collections::BTreeMap::new(),
         })
     }
 
@@ -220,6 +311,322 @@ impl CryptoEngine {
             Command::Identity => Ok(
                 json!({ "device": self.mls.device(), "fingerprint": self.mls.device().fingerprint()? }),
             ),
+            Command::StreamCursor { stream } => {
+                uuid_bytes(&stream)?;
+                Ok(json!({"sequence":self.cursors.get(&stream).copied().unwrap_or(0)}))
+            }
+            Command::ApplyEvent {
+                stream,
+                sequence,
+                command,
+                expected_members,
+                group_id,
+            } => {
+                uuid_bytes(&stream)?;
+                let current = self.cursors.get(&stream).copied().unwrap_or(0);
+                if sequence <= current {
+                    return Ok(json!({"duplicate":true}));
+                }
+                if sequence != current + 1 || self.cursors.len() > 1000 {
+                    return Err(CryptoError::State);
+                }
+                let result = if let Some(command) = command {
+                    if !matches!(
+                        *command,
+                        Command::Join { .. }
+                            | Command::Receive { .. }
+                            | Command::AcknowledgeCommit { .. }
+                    ) {
+                        return Err(CryptoError::InvalidInput);
+                    }
+                    self.execute(*command)?
+                } else {
+                    json!({})
+                };
+                if let Some(expected) = expected_members {
+                    let group_id = group_id.as_ref().ok_or(CryptoError::State)?;
+                    let actual: std::collections::BTreeSet<_> = self
+                        .mls
+                        .members(group_id)?
+                        .into_iter()
+                        .map(|d| d.device_id)
+                        .collect();
+                    let desired: std::collections::BTreeSet<_> = expected.iter().cloned().collect();
+                    if actual != desired || desired.len() != expected.len() {
+                        return Err(CryptoError::UntrustedDevice);
+                    }
+                }
+                self.cursors.insert(stream, sequence);
+                Ok(result)
+            }
+            Command::ExportContactPins => {
+                use ed25519_dalek::Signer;
+                let account = &self.mls.device().account_id;
+                let signer = recovery::authorization_signer(
+                    account,
+                    self.recovery_phrase.as_ref().ok_or(CryptoError::State)?,
+                )?;
+                let mut anchors = self.trust.anchors.clone();
+                for (id, pin) in &self.trust.accounts {
+                    anchors.entry(id.clone()).or_insert(pin.public_key.clone());
+                }
+                let mut pins = Vec::new();
+                for (id, public) in anchors {
+                    if id != *account {
+                        pins.push(trust::ContactPin {
+                            account_id: id.clone(),
+                            public_key: public.clone(),
+                            proof: BASE64_STANDARD.encode(
+                                signer
+                                    .sign(&trust::contact_bytes(account, &id, &public)?)
+                                    .to_bytes(),
+                            ),
+                        });
+                    }
+                }
+                Ok(json!({"pins":pins}))
+            }
+            Command::ImportContactPins { pins } => {
+                if pins.len() > 1000 {
+                    return Err(CryptoError::InvalidInput);
+                }
+                let account = &self.mls.device().account_id;
+                let public = BASE64_STANDARD.encode(recovery::authorization_public(
+                    account,
+                    self.recovery_phrase.as_ref().ok_or(CryptoError::State)?,
+                )?);
+                for pin in pins {
+                    if pin.account_id == *account {
+                        return Err(CryptoError::InvalidInput);
+                    }
+                    trust::verify(
+                        &public,
+                        &trust::contact_bytes(account, &pin.account_id, &pin.public_key)?,
+                        &pin.proof,
+                    )?;
+                    if self
+                        .trust
+                        .anchors
+                        .get(&pin.account_id)
+                        .is_some_and(|old| old != &pin.public_key)
+                        || self
+                            .trust
+                            .accounts
+                            .get(&pin.account_id)
+                            .is_some_and(|old| old.public_key != pin.public_key)
+                    {
+                        return Err(CryptoError::UntrustedDevice);
+                    }
+                    self.trust.anchors.insert(pin.account_id, pin.public_key);
+                }
+                Ok(json!({}))
+            }
+            Command::OwnFingerprint => {
+                let account = &self.mls.device().account_id;
+                let public = BASE64_STANDARD.encode(recovery::authorization_public(
+                    account,
+                    self.recovery_phrase.as_ref().ok_or(CryptoError::State)?,
+                )?);
+                let known = self
+                    .trust
+                    .accounts
+                    .get(account)
+                    .map(|p| trust::verify_roster(&p.public_key, &p.roster))
+                    .transpose()?
+                    .map(|r| r.revision)
+                    .unwrap_or(0);
+                Ok(
+                    json!({"public_key":public,"fingerprint":trust::fingerprint(account,&public)?,"known_revision":known}),
+                )
+            }
+            Command::PrepareRoster { previous } => {
+                let roster = self.trust.own_roster(
+                    self.mls.device(),
+                    self.recovery_phrase.as_ref().ok_or(CryptoError::State)?,
+                    &self.archive_key,
+                    previous,
+                )?;
+                Ok(
+                    json!({"roster":roster,"public_key":BASE64_STANDARD.encode(recovery::authorization_public(&self.mls.device().account_id,self.recovery_phrase.as_ref().ok_or(CryptoError::State)?)?)}),
+                )
+            }
+            Command::InspectRoster { public_key, roster } => {
+                let parsed = trust::verify_roster(&public_key, &roster)?;
+                let pinned = self
+                    .trust
+                    .accounts
+                    .get(&parsed.account_id)
+                    .map(|p| p.public_key == public_key)
+                    .or_else(|| {
+                        self.trust
+                            .anchors
+                            .get(&parsed.account_id)
+                            .map(|p| p == &public_key)
+                    })
+                    .unwrap_or(false);
+                let known = self
+                    .trust
+                    .accounts
+                    .get(&parsed.account_id)
+                    .map(|p| trust::verify_roster(&p.public_key, &p.roster))
+                    .transpose()?
+                    .map(|r| r.revision)
+                    .unwrap_or(0);
+                let changed = self
+                    .trust
+                    .accounts
+                    .get(&parsed.account_id)
+                    .map(|p| p.public_key != public_key)
+                    .or_else(|| {
+                        self.trust
+                            .anchors
+                            .get(&parsed.account_id)
+                            .map(|p| p != &public_key)
+                    })
+                    .unwrap_or(false);
+                Ok(
+                    json!({"account_id":parsed.account_id,"revision":parsed.revision,"fingerprint":trust::fingerprint(&parsed.account_id,&public_key)?,"pinned":pinned,"known_revision":known,"changed":changed,"devices":parsed.devices}),
+                )
+            }
+            Command::AcceptRoster {
+                public_key,
+                roster,
+                fingerprint,
+            } => {
+                let parsed = self
+                    .trust
+                    .accept(&public_key, roster, fingerprint.as_deref())?;
+                for device in &parsed.devices {
+                    self.mls.pin_device(device.clone())?;
+                }
+                Ok(json!({"account_id":parsed.account_id,"devices":parsed.devices}))
+            }
+            Command::SignAction { nonce, payload } => {
+                if payload.len() > 2 * 1024 * 1024 {
+                    return Err(CryptoError::InvalidInput);
+                }
+                Ok(
+                    json!({"device":self.mls.device(),"proof":self.mls.sign_device_proof("action",&nonce,&Sha256::digest(payload.as_bytes()).into())?}),
+                )
+            }
+            Command::DiscardCommit {
+                conversation_id,
+                commit,
+            } => {
+                self.mls.discard_pending(&conversation_id, &commit)?;
+                Ok(json!({}))
+            }
+            Command::VerifyAction {
+                device,
+                nonce,
+                payload,
+                proof,
+            } => {
+                self.mls.verify_action(&device, &nonce, &payload, &proof)?;
+                Ok(json!({"verified":true}))
+            }
+            Command::SealChunk {
+                context,
+                file_id,
+                index,
+                count,
+                key,
+                data,
+            } => {
+                let bytes = Zeroizing::new(
+                    BASE64_STANDARD
+                        .decode(data)
+                        .map_err(|_| CryptoError::InvalidInput)?,
+                );
+                if bytes.len() > 1024 * 1024 || bytes.is_empty() {
+                    return Err(CryptoError::InvalidInput);
+                }
+                let key = if let Some(key) = key {
+                    Zeroizing::new(
+                        trust::decode(&key, 32)?
+                            .try_into()
+                            .map_err(|_| CryptoError::InvalidInput)?,
+                    )
+                } else {
+                    envelope::random_key()
+                };
+                let encrypted = envelope::seal(
+                    &key,
+                    &bytes,
+                    &Self::chunk_aad(&context, &file_id, index, count)?,
+                )?;
+                Ok(json!({"key":BASE64_STANDARD.encode(key.as_ref()),"envelope":encrypted}))
+            }
+            Command::OpenChunk {
+                context,
+                file_id,
+                index,
+                count,
+                key,
+                envelope,
+            } => {
+                let key = Zeroizing::new(trust::decode(&key, 32)?);
+                let key: &[u8; 32] = key
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| CryptoError::InvalidInput)?;
+                let bytes = envelope::open(
+                    key,
+                    &envelope,
+                    &Self::chunk_aad(&context, &file_id, index, count)?,
+                )?;
+                if bytes.len() > 1024 * 1024 {
+                    return Err(CryptoError::InvalidInput);
+                }
+                Ok(json!({"data":BASE64_STANDARD.encode(bytes.as_slice())}))
+            }
+            Command::OpenBackup {
+                context,
+                body,
+                backup,
+            } => {
+                if backup.version != 1
+                    || backup.recipient != self.mls.device().account_id
+                    || backup.ciphertext.len() > 16384
+                {
+                    return Err(CryptoError::InvalidInput);
+                }
+                let pair = trust::archive_pair(&backup.recipient, &self.archive_key)?;
+                let aad = Self::history_aad(&context, &backup.recipient)?;
+                let bytes = Zeroizing::new(
+                    trust::hpke()
+                        .open(
+                            &trust::decode(&backup.encapsulated, 32)?,
+                            pair.private_key(),
+                            b"coherent/history-hpke/v1",
+                            &aad,
+                            &BASE64_STANDARD
+                                .decode(backup.ciphertext)
+                                .map_err(|_| CryptoError::InvalidInput)?,
+                            None,
+                            None,
+                            None,
+                        )
+                        .map_err(|_| CryptoError::Authentication)?,
+                );
+                let signed: SignedContentKey =
+                    serde_json::from_slice(&bytes).map_err(|_| CryptoError::InvalidInput)?;
+                if signed.author.account_id != context.sender_account_id
+                    || signed.author.device_id != context.sender_device_id
+                    || serde_json::to_vec(&signed.record.context).map_err(|_| CryptoError::State)?
+                        != serde_json::to_vec(&context).map_err(|_| CryptoError::State)?
+                {
+                    return Err(CryptoError::Authentication);
+                }
+                self.mls.verify_history(
+                    &signed.author,
+                    &serde_json::to_vec(&signed.record).map_err(|_| CryptoError::State)?,
+                    &signed.signature,
+                )?;
+                let content = self.decrypt_content(&signed.record, &body)?;
+                self.archive_in_use = true;
+                Ok(json!({"content":content,"context":context}))
+            }
             Command::PinDevice { device } => {
                 self.mls.pin_device(device)?;
                 Ok(json!({}))
@@ -268,6 +675,7 @@ impl CryptoEngine {
                 conversation_id,
                 message_id,
                 content,
+                archive_accounts,
             } => {
                 if content.is_empty() || content.len() > 64 * 1024 {
                     return Err(CryptoError::InvalidInput);
@@ -298,6 +706,86 @@ impl CryptoEngine {
                 let wire = self
                     .mls
                     .send_application(&context.conversation_id, &bytes)?;
+                let mut backups = std::collections::BTreeMap::new();
+                if let Some(accounts) = archive_accounts {
+                    let members: std::collections::BTreeSet<_> = self
+                        .mls
+                        .members(&context.conversation_id)?
+                        .into_iter()
+                        .map(|d| d.account_id)
+                        .collect();
+                    let requested: std::collections::BTreeSet<_> =
+                        accounts.iter().cloned().collect();
+                    if requested != members
+                        || requested.len() != accounts.len()
+                        || requested.len() > 10
+                    {
+                        return Err(CryptoError::UntrustedDevice);
+                    }
+                    let signed = SignedContentKey {
+                        signature: self.mls.history_signature(&bytes)?,
+                        author: self.mls.device().clone(),
+                        record,
+                    };
+                    let plain = Zeroizing::new(
+                        serde_json::to_vec(&signed).map_err(|_| CryptoError::State)?,
+                    );
+                    for account in accounts {
+                        let pin = self
+                            .trust
+                            .accounts
+                            .get(&account)
+                            .ok_or(CryptoError::UntrustedDevice)?;
+                        let roster = trust::verify_roster(&pin.public_key, &pin.roster)?;
+                        let (enc, ciphertext) = trust::hpke()
+                            .seal(
+                                &hpke_rs::HpkePublicKey::new(trust::decode(
+                                    &roster.archive_public_key,
+                                    32,
+                                )?),
+                                b"coherent/history-hpke/v1",
+                                &Self::history_aad(&context, &account)?,
+                                &plain,
+                                None,
+                                None,
+                                None,
+                            )
+                            .map_err(|_| CryptoError::Authentication)?;
+                        if account == self.mls.device().account_id {
+                            let pair = trust::archive_pair(&account, &self.archive_key)?;
+                            let opened = Zeroizing::new(
+                                trust::hpke()
+                                    .open(
+                                        &enc,
+                                        pair.private_key(),
+                                        b"coherent/history-hpke/v1",
+                                        &Self::history_aad(&context, &account)?,
+                                        &ciphertext,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .map_err(|_| CryptoError::Authentication)?,
+                            );
+                            if opened.as_slice() != plain.as_slice() {
+                                return Err(CryptoError::Authentication);
+                            }
+                        }
+                        backups.insert(
+                            account.clone(),
+                            HistoryBackup {
+                                version: 1,
+                                recipient: account,
+                                encapsulated: BASE64_STANDARD.encode(enc),
+                                ciphertext: BASE64_STANDARD.encode(ciphertext),
+                            },
+                        );
+                    }
+                    self.archive_in_use = true;
+                    return Ok(
+                        json!({"context":context,"epoch":epoch,"wire":wire,"body":body,"backups":backups}),
+                    );
+                }
                 self.archive_in_use = true;
                 Ok(
                     json!({ "context": context, "epoch": epoch, "wire": wire, "body": body, "archive": self.archive(&record)? }),
@@ -446,6 +934,27 @@ impl CryptoEngine {
         }
     }
 
+    fn history_aad(context: &MessageContext, account: &str) -> Result<Vec<u8>, CryptoError> {
+        let mut aad = context.aad(b"coherent/history-hpke/v1\0")?;
+        aad.extend_from_slice(&uuid_bytes(account)?);
+        Ok(aad)
+    }
+    fn chunk_aad(
+        context: &MessageContext,
+        file: &str,
+        index: u32,
+        count: u32,
+    ) -> Result<Vec<u8>, CryptoError> {
+        if count == 0 || count > 25 || index >= count {
+            return Err(CryptoError::InvalidInput);
+        }
+        let mut aad = context.aad(b"coherent/attachment-chunk/v1\0")?;
+        aad.extend_from_slice(&uuid_bytes(file)?);
+        aad.extend_from_slice(&index.to_be_bytes());
+        aad.extend_from_slice(&count.to_be_bytes());
+        Ok(aad)
+    }
+
     pub fn snapshot_local(&self) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
         let snapshot = LocalEngine {
             version: 1,
@@ -457,6 +966,8 @@ impl CryptoEngine {
                 .as_ref()
                 .map(|phrase| phrase.to_string()),
             recovery_backup: self.recovery_backup.clone(),
+            trust: self.trust.clone(),
+            cursors: self.cursors.clone(),
         };
         Ok(Zeroizing::new(
             serde_json::to_vec(&snapshot).map_err(|_| CryptoError::State)?,
@@ -493,6 +1004,8 @@ impl CryptoEngine {
                 .as_ref()
                 .map(|phrase| Zeroizing::new(phrase.clone())),
             recovery_backup: snapshot.recovery_backup.clone(),
+            trust: snapshot.trust.clone(),
+            cursors: snapshot.cursors.clone(),
         })
     }
 }

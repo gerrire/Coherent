@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_from: str = "noreply@coherent-web.ru"
     e2ee_setup_enabled: bool = True
+    e2ee_messaging_enabled: bool = False
+    e2ee_storage_limit_mb: int = Field(default=2048, ge=100, le=10240)
     attachment_storage_limit_mb: int = Field(default=15360, ge=100)
     attachment_min_free_mb: int = Field(default=2048, ge=100)
     admin_username: str | None = None

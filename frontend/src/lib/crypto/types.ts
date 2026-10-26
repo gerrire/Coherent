@@ -14,8 +14,9 @@ export interface MessageContext {
   sender_account_id: string;
   sender_device_id: string;
 }
+export interface SignedRoster { payload: string; signature: string }
 export type CryptoCommand =
-  | { operation: "identity" | "key_package" | "recovery_backup" }
+  | { operation: "identity" | "key_package" | "recovery_backup" | "own_fingerprint" | "export_contact_pins" }
   | { operation: "sign_device_proof"; purpose: "bootstrap" | "recovery_view" | "confirm_recovery"; nonce: string; backup: Envelope | null }
   | { operation: "pin_device"; device: DeviceBinding }
   | { operation: "authorize_conversation"; conversation_id: string; device_ids: string[] }
@@ -24,10 +25,22 @@ export type CryptoCommand =
   | { operation: "remove_members"; conversation_id: string; device_ids: string[] }
   | { operation: "acknowledge_commit"; conversation_id: string; commit: string }
   | { operation: "join"; conversation_id: string; welcome: string }
-  | { operation: "send"; conversation_id: string; message_id: string; content: string }
+  | { operation: "send"; conversation_id: string; message_id: string; content: string; archive_accounts?: string[] }
   | { operation: "receive"; conversation_id: string; message_id: string | null; wire: string; body: Envelope | null }
   | { operation: "open_history"; context: MessageContext; body: Envelope; archive: Envelope }
-  | { operation: "recover_archive"; phrase: string; backup: Envelope };
+  | { operation: "recover_archive"; phrase: string; backup: Envelope }
+  | { operation: "import_contact_pins"; pins: ContactPin[] }
+  | { operation: "prepare_roster"; previous: SignedRoster | null }
+  | { operation: "inspect_roster"; public_key: string; roster: SignedRoster }
+  | { operation: "accept_roster"; public_key: string; roster: SignedRoster; fingerprint: string | null }
+  | { operation: "sign_action"; nonce: string; payload: string }
+  | { operation: "verify_action"; device: DeviceBinding; nonce: string; payload: string; proof: string }
+  | { operation: "stream_cursor"; stream: string }
+  | { operation: "apply_event"; stream: string; sequence: number; command: CryptoCommand | null; expected_members?: string[] | null; group_id?: string | null }
+  | { operation: "discard_commit"; conversation_id: string; commit: string }
+  | { operation: "seal_chunk"; context: MessageContext; file_id: string; index: number; count: number; key: string | null; data: string }
+  | { operation: "open_chunk"; context: MessageContext; file_id: string; index: number; count: number; key: string; envelope: Envelope }
+  | { operation: "open_backup"; context: MessageContext; body: Envelope; backup: HistoryBackup };
 
 export interface CryptoReply {
   result: Record<string, unknown>;
@@ -39,7 +52,7 @@ export interface DeliveryItem {
   payload: Record<string, unknown>;
 }
 export type VaultRequest =
-  | { type: "execute"; command: CryptoCommand; delivered_id?: string }
+  | { type: "execute"; command: CryptoCommand; delivered_id?: string; transport?: Record<string, unknown> }
   | { type: "pending" }
   | { type: "delivered"; delivery_id: string };
 export type RevealRequest = { type: "reveal_recovery"; current_password: string; csrf_token: string };
@@ -52,3 +65,7 @@ export function deliveryPayload(operation: string, result: Record<string, unknow
   if (operation === "receive") return result.kind === "application" ? { context: result.context, archive: result.archive } : null;
   return needsOutbox(operation) ? result : null;
 }
+
+export interface HistoryBackup { version: 1; recipient: string; encapsulated: string; ciphertext: string }
+
+export interface ContactPin { account_id: string; public_key: string; proof: string }

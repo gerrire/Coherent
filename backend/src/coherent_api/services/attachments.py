@@ -16,6 +16,7 @@ from coherent_api.models.user import User
 from coherent_api.schemas.messages import AttachmentResponse, MessageResponse
 from coherent_api.services.attachment_cleanup import is_expired
 from coherent_api.services.conversation_access import conversation_member_ids, get_conversation
+from coherent_api.services.crypto_policy import require_cloud_write
 from coherent_api.services.messages import visible_message
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
@@ -82,6 +83,7 @@ async def save_message_files(
     settings: Settings,
 ) -> tuple[MessageResponse, tuple[UUID, ...]]:
     conversation = await get_conversation(session, user, conversation_id)
+    await require_cloud_write(session, conversation_id)
     clean_body = body.strip()
     if len(clean_body) > 4000 or not files or len(files) > MAX_FILES:
         raise AttachmentError("Можно отправить до четырёх файлов и 4000 символов текста")

@@ -16,6 +16,7 @@ class E2eeAccount(Base):
     recovery_backup: Mapped[str] = mapped_column(Text)
     recovery_public_key: Mapped[str] = mapped_column(String(44))
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    roster_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -47,3 +48,29 @@ class DeviceChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AccountRoster(Base):
+    __tablename__ = "e2ee_account_rosters"
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)
+    signature: Mapped[str] = mapped_column(String(88))
+    digest: Mapped[str] = mapped_column(String(44))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class ContactPin(Base):
+    __tablename__ = "e2ee_contact_pins"
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    public_key: Mapped[str] = mapped_column(String(44))
+    proof: Mapped[str] = mapped_column(String(88))

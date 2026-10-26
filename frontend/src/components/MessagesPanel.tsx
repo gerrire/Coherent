@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
-import { api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
+import ChatSecurityNotice from "./ChatSecurityNotice";
+import { messagingFor, MessagingAccessError, type KeyReview } from "../lib/crypto/messaging";
+import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
@@ -76,6 +78,43 @@ export default function MessagesPanel({
   onFilesConsumed,
 }: MessagesPanelProps) {
   const consumedDrop = useRef<number | null>(null);
+  const secure = conversation.encryption === "mls";
+  const [securityReady, setSecurityReady] = useState(false);
+  const [securityProblem, setSecurityProblem] = useState<MessagingAccessError | null>(null);
+  const [migration, setMigration] = useState<{ done: number; total: number } | null>(null);
+  const [migrationError, setMigrationError] = useState("");
+  const [securityBusy, setSecurityBusy] = useState(false);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const pendingRef = useRef<string | null>(null);
+
+  async function decodePage(page: Message[]): Promise<Message[]> {
+    if (!secure) return page;
+    const result: Message[] = [];
+    for (const message of page) {
+      try { result.push(await messagingFor(currentUserId).decrypt(message)); }
+      catch { result.push({ ...message, body: "Подтверди ключи, чтобы прочитать защищённое сообщение", attachments: [], locked: true }); }
+    }
+    return result;
+  }
+
+  async function verifyKeys(keys: KeyReview[]) {
+    setSecurityBusy(true);
+    try { await messagingFor(currentUserId).synchronize(conversation, keys); setSecurityReady(true); setSecurityProblem(null); setRetry(n => n + 1); }
+    catch (reason) { setSecurityProblem(reason instanceof MessagingAccessError ? reason : new MessagingAccessError("waiting", reason instanceof Error ? reason.message : "Не удалось подключить защищённую беседу")); throw reason; }
+    finally { setSecurityBusy(false); }
+  }
+
+  async function cancelPending() {
+    const id = pendingRef.current; if (!id) return;
+    setSending(true);
+    try {
+      await messagingFor(currentUserId).cancelPending(conversation);
+      try { const message = await messagingFor(currentUserId).decrypt(await apiRequest<Message>(`/api/v1/conversations/${conversation.id}/messages/${id}`)); setMessages(current => mergeMessages(current, [message])); setDraft(""); setFiles([]); onSent(); }
+      catch { /* An unaccepted message stays in the composer for editing. */ }
+      pendingRef.current = null; setPendingId(null); setError(""); setRetry(n => n + 1);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось отменить отправку"); }
+    finally { setSending(false); }
+  }
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -116,6 +155,7 @@ export default function MessagesPanel({
   }, [draft, conversation.id]);
 
   function addFiles(next: File[]) {
+    if (sending || pendingRef.current) { setError("Сначала заверши или отмени текущую отправку"); return; }
     setFiles((current) => [...current, ...next].slice(0, 4));
     if (next.length + files.length > 4) setError("В одно сообщение можно добавить до 4 файлов");
   }
@@ -199,7 +239,7 @@ export default function MessagesPanel({
       conversationRef.current = conversation.id;
       hasLoadedPage.current = false;
       nearBottom.current = true;
-      setMessages([]);
+      setMessages([]); setSecurityReady(false); setSecurityProblem(null); setMigration(null); setMigrationError(""); pendingRef.current = null; setPendingId(null);
       setHasMore(false);
       setDraft("");
       setFiles([]);
@@ -210,9 +250,14 @@ export default function MessagesPanel({
     }
 
     let active = true;
-    api.messages(conversation.id).then((page) => {
+    api.messages(conversation.id).then(async (page) => {
+      if (secure) {
+        try { await messagingFor(currentUserId).synchronize(conversation); if (active) { setSecurityReady(true); setSecurityProblem(null); } }
+        catch (reason) { if (active) { setSecurityReady(false); setSecurityProblem(reason instanceof MessagingAccessError ? reason : new MessagingAccessError("waiting", reason instanceof Error ? reason.message : "Не удалось синхронизировать ключи")); } }
+      }
+      const decoded = await decodePage(page.messages);
       if (!active) return;
-      setMessages((current) => changed ? page.messages : mergeMessages(current, page.messages));
+      setMessages((current) => changed ? decoded : mergeMessages(current, decoded));
       if (!hasLoadedPage.current) {
         setHasMore(page.has_more);
         hasLoadedPage.current = true;
@@ -225,7 +270,15 @@ export default function MessagesPanel({
       setError(requestError instanceof Error ? requestError.message : "Не удалось загрузить сообщения.");
     });
     return () => { active = false; };
-  }, [conversation.id, version, retry]);
+  }, [conversation.id, conversation.encryption, version, retry]);
+
+  useEffect(() => {
+    if (!secure || !securityReady) return;
+    let active = true;
+    setMigrationError("");
+    void messagingFor(currentUserId).migrateOwnHistory(conversation, (done, total) => { if (active) setMigration(total ? { done, total } : null); }).then(() => { if (active) { setMigration(null); setRetry(n => n + 1); } }).catch(reason => { if (active) { setMigration(null); setMigrationError(reason instanceof Error ? reason.message : "Перенос истории будет продолжен позже"); } });
+    return () => { active = false; };
+  }, [conversation.id, secure, securityReady]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -260,7 +313,7 @@ export default function MessagesPanel({
 
   useEffect(() => {
     function markVisibleMessages() {
-      if (document.hidden || !latestId || loading) return;
+      if (document.hidden || !latestId || loading || messages.at(-1)?.locked) return;
       const key = `${conversation.id}:${latestId}`;
       if (lastReadRef.current === key) return;
       lastReadRef.current = key;
@@ -285,7 +338,8 @@ export default function MessagesPanel({
       const page = await api.messages(conversation.id, first.id);
       if (conversationRef.current !== conversation.id) return;
       nearBottom.current = false;
-      setMessages((current) => mergeMessages(page.messages, current));
+      const decoded = await decodePage(page.messages);
+      setMessages((current) => mergeMessages(decoded, current));
       setHasMore(page.has_more);
       requestAnimationFrame(() => {
         if (list) list.scrollTop = oldTop + list.scrollHeight - oldHeight;
@@ -308,9 +362,11 @@ export default function MessagesPanel({
     setSending(true);
     setError("");
     try {
-      const message = files.length
-        ? await api.sendAttachments(conversation.id, body, files)
-        : await api.sendMessage(conversation.id, body);
+      if (secure && !pendingRef.current) { pendingRef.current = crypto.randomUUID(); setPendingId(pendingRef.current); }
+      const message = secure
+        ? await messagingFor(currentUserId).send(conversation, body, files, pendingRef.current!)
+        : files.length ? await api.sendAttachments(conversation.id, body, files) : await api.sendMessage(conversation.id, body);
+      pendingRef.current = null; setPendingId(null);
       if (conversationRef.current !== conversation.id) return;
       nearBottom.current = true;
       setMessages((current) => mergeMessages(current, [message]));
@@ -318,6 +374,8 @@ export default function MessagesPanel({
       setFiles([]);
       onSent();
     } catch (requestError) {
+      if (secure && pendingRef.current && !await messagingFor(currentUserId).hasPending(pendingRef.current).catch(() => true)) { pendingRef.current = null; setPendingId(null); }
+      if (requestError instanceof MessagingAccessError) { setSecurityProblem(requestError); setSecurityReady(false); }
       setError(requestError instanceof Error ? requestError.message : "Не удалось отправить сообщение.");
     } finally {
       setSending(false);
@@ -369,6 +427,9 @@ export default function MessagesPanel({
         <button type="submit" disabled={renameBusy || !groupName.trim()}>Сохранить</button>
         <button type="button" onClick={() => setRenaming(false)}>Отмена</button>
       </form>}
+      {secure && <ChatSecurityNotice conversation={conversation} ready={securityReady} problem={securityProblem} busy={securityBusy} onVerify={verifyKeys} onRetry={() => setRetry(n => n + 1)} />}
+      {migration && <div className="chat-security-notice">Переводим твою старую историю в E2EE: {migration.done} из {migration.total}. Сообщения остаются на месте.</div>}
+      {migrationError && <div className="chat-security-notice">{migrationError} Облачная копия сохранена.</div>}
       {friendError && <p className="call-inline-error" role="alert">{friendError}</p>}
       {callError && <p className="call-inline-error" role="alert">{callError}</p>}
 
@@ -409,6 +470,7 @@ export default function MessagesPanel({
                 <div className="message-meta">
                   <strong>{author}</strong>
                   <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+                  {secure && <span className="message-encryption-label">{message.crypto ? "E2EE" : "Облачная история"}</span>}
                 </div>
                 {message.body && (!attachmentsExpired || message.body !== "Вложение удалено") && <p>{message.body}</p>}
                 {attachmentsExpired && <span className="message-attachment-expired">Вложение удалено</span>}
@@ -416,6 +478,7 @@ export default function MessagesPanel({
                   key={attachment.id}
                   path={`/api/v1/conversations/${conversation.id}/attachments/${attachment.id}`}
                   attachment={attachment}
+                  accountId={currentUserId}
                   onPreview={(url) => setPreview({ url, name: attachment.filename })}
                 />)}
               </div>
@@ -425,6 +488,7 @@ export default function MessagesPanel({
         })}
       </div>
 
+      {pendingId && !sending && <div className="pending-secure-message">Сообщение сохранено в защищённой очереди. Повторная отправка не создаст копию.<button type="button" onClick={() => void sendMessage()}>Повторить</button><button type="button" onClick={() => void cancelPending()}>Отменить отправку</button></div>}
       <form className="message-composer" onSubmit={(event) => void sendMessage(event)}>
         {error && (
           <div className="message-error" role="alert">
@@ -434,9 +498,10 @@ export default function MessagesPanel({
         {files.length > 0 && <div className="composer-files">{files.map((file, index) => <span key={`${file.name}-${index}`}>{file.name}<button type="button" onClick={() => setFiles((current) => current.filter((_, position) => position !== index))} aria-label={`Убрать ${file.name}`}><X size={13} /></button></span>)}</div>}
         <div className="composer-field">
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-          <button type="button" className="composer-attach" onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файлы" title="Прикрепить файлы"><FilePlus2 size={19} /></button>
+          <button type="button" className="composer-attach" disabled={sending || !!pendingId} onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файлы" title="Прикрепить файлы"><FilePlus2 size={19} /></button>
           <textarea
             ref={draftRef}
+            readOnly={sending || !!pendingId}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
@@ -449,7 +514,7 @@ export default function MessagesPanel({
             type="submit"
             aria-label="Отправить сообщение"
             title="Отправить сообщение"
-            disabled={(!draft.trim() && files.length === 0) || sending}
+            disabled={(!draft.trim() && files.length === 0) || sending || (secure && !securityReady && !pendingId)}
           >
             <Send size={18} />
           </button>
@@ -468,8 +533,9 @@ export default function MessagesPanel({
   );
 }
 
-function AttachmentView({ path, attachment, onPreview }: {
+function AttachmentView({ path, attachment, accountId, onPreview }: {
   path: string;
+  accountId: string;
   attachment: Message["attachments"][number];
   onPreview: (url: string) => void;
 }) {
@@ -497,7 +563,7 @@ function AttachmentView({ path, attachment, onPreview }: {
     setError("");
     let active = true;
     let loadedUrl = "";
-    void attachmentObjectUrl(path).then((value) => {
+    void (attachment.secure ? messagingFor(accountId).openAttachment(path, attachment.secure) : attachmentObjectUrl(path)).then((value) => {
       loadedUrl = value;
       if (active) setUrl(value);
       else if (value.startsWith("blob:")) URL.revokeObjectURL(value);

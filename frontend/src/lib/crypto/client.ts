@@ -2,9 +2,7 @@ import { isTauri, invoke } from "@tauri-apps/api/core";
 import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest, type RevealRequest } from "./types";
 import { currentCsrfToken } from "../api";
 
-/** The chat integration remains disabled until authenticated device approval,
- * delivery sequencing and history migration are complete. This is the shared
- * platform bridge, not an automatic upgrade of existing cloud conversations. */
+/** Shared bridge to the device-local Rust core, in a Worker or native vault. */
 export class CryptoClient {
   private worker: Worker | null = null;
   private pending = new Map<string, { resolve(value: unknown): void; reject(reason: Error): void }>();
@@ -36,12 +34,12 @@ export class CryptoClient {
     });
   }
 
-  execute(command: CryptoCommand, deliveredId?: string): Promise<CryptoReply> {
-    return this.call({ type: "execute", command, delivered_id: deliveredId });
+  execute(command: CryptoCommand, deliveredId?: string, transport?: Record<string, unknown>): Promise<CryptoReply> {
+    return this.call({ type: "execute", command, delivered_id: deliveredId, transport });
   }
   pendingDeliveries(): Promise<DeliveryItem[]> { return this.call({ type: "pending" }); }
   async revealRecovery(currentPassword: string): Promise<CryptoReply> {
-    return this.call({ type: "reveal_recovery", current_password: currentPassword, csrf_token: await currentCsrfToken() });
+    return this.call({ type: "reveal_recovery", current_password: currentPassword, csrf_token: isTauri() ? "" : await currentCsrfToken() });
   }
   delivered(deliveryId: string): Promise<CryptoReply> { return this.call({ type: "delivered", delivery_id: deliveryId }); }
   close(): void {

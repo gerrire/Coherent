@@ -44,6 +44,7 @@ import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
 import IncomingCallCard from "./IncomingCallCard";
+import { messagingFor, closeMessaging } from "../lib/crypto/messaging";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
@@ -126,6 +127,15 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  useEffect(() => {
+    const refresh = () => { void messagingFor(user.id).initialize().then(() => setMessageVersion(n => n + 1)).catch(() => {}); };
+    const profile = () => setProfileSettingsOpen(true);
+    refresh();
+    const timer = window.setInterval(() => { void messagingFor(user.id).refreshKeys().catch(() => {}); }, 60000);
+    window.addEventListener("coherent-security-changed", refresh);
+    window.addEventListener("coherent-open-profile", profile);
+    return () => { window.clearInterval(timer); window.removeEventListener("coherent-security-changed", refresh); window.removeEventListener("coherent-open-profile", profile); closeMessaging(user.id); };
+  }, [user.id]);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<{ nonce: number; conversationId: string; files: File[] } | null>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
@@ -481,6 +491,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           if (payload.type === "friend_request") {
             void refreshRequests().catch(() => undefined);
             setFriendRequestVersion((current) => current + 1);
+            return;
+          }
+          if (payload.type === "security") {
+            window.dispatchEvent(new Event("coherent-security-changed"));
+            setMessageVersion(current => current + 1);
             return;
           }
           if (payload.type === "profile") {

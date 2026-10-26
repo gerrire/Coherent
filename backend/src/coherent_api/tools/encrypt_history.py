@@ -28,7 +28,9 @@ async def run(apply: bool) -> None:
             if existing is not None:
                 cipher.decrypt(existing.body_ciphertext, existing.conversation_id, existing.id)
             count = await session.scalar(
-                select(func.count()).select_from(Message).where(Message.body_ciphertext.is_(None))
+                select(func.count())
+                .select_from(Message)
+                .where(Message.body_ciphertext.is_(None), Message.mls_payload.is_(None))
             )
             print(f"Legacy messages: {count}")
         if not apply:
@@ -40,7 +42,7 @@ async def run(apply: bool) -> None:
                 batch = list(
                     await session.scalars(
                         select(Message)
-                        .where(Message.body_ciphertext.is_(None))
+                        .where(Message.body_ciphertext.is_(None), Message.mls_payload.is_(None))
                         .order_by(Message.id)
                         .limit(100)
                         .with_for_update(skip_locked=True)

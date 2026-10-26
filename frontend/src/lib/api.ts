@@ -78,14 +78,17 @@ export interface Message {
   id: string;
   conversation_id: string;
   sender_id: string;
+  crypto?: Record<string, unknown> | null;
+  locked?: boolean;
   body: string;
   attachment_count: number;
   attachments_expired: boolean;
-  attachments: Array<{ id: string; filename: string; media_type: string; byte_size: number }>;
+  attachments: Array<{ id: string; filename: string; media_type: string; byte_size: number; secure?: import("./crypto/files").SecureFile }>;
   created_at: string;
 }
 
 export interface Conversation {
+  encryption?: "mls" | "cloud";
   server_id?: string | null;
   channel_id?: string | null;
   id: string;
@@ -186,13 +189,14 @@ export async function initializeCsrf(): Promise<void> {
   csrfToken = result.csrf_token;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   if (isTauri()) {
     const reply = init.body instanceof FormData
       ? await invoke<{ status: number; body: unknown }>("api_upload", {
         path,
         body: String(init.body.get("body") ?? ""),
+        secureData: init.body.has("data") ? String(init.body.get("data")) : null,
         files: await Promise.all(init.body.getAll("files").filter((value): value is File => value instanceof File).map(async (file) => ({
           name: file.name,
           mediaType: file.type || "application/octet-stream",
@@ -240,6 +244,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return result as T;
 }
 
+const request = apiRequest;
+
 export async function attachmentObjectUrl(path: string): Promise<string> {
   if (!isTauri()) return path;
   const result = await invoke<{ media_type: string; data: string }>("api_attachment", { path });
@@ -250,8 +256,10 @@ export async function attachmentObjectUrl(path: string): Promise<string> {
 export const api = {
   registrationCode: (email: string) => request<{ verification_id: string; expires_in_seconds: number; retry_after_seconds: number }>("/api/v1/auth/registration/code", { method: "POST", body: JSON.stringify({ email }) }),
   registrationDelivery: (id: string) => request<{ delivery: "pending" | "sent" | "failed" }>(`/api/v1/auth/registration/${id}`),
-  securityStatus: () => request<{ setup_available: boolean; configured: boolean; recovery_confirmed: boolean; chat_encryption: string; devices: Array<{ id: string; label: string; platform: string; approved_at: string }> }>("/api/v1/security/status"),
-  deviceChallenge: (purpose: "bootstrap" | "confirm_recovery") => request<{ challenge_id: string; nonce: string }>("/api/v1/security/challenges", { method: "POST", body: JSON.stringify({ purpose }) }),
+  securityStatus: () => request<{ setup_available: boolean; configured: boolean; recovery_confirmed: boolean; chat_encryption: string; roster_revision: number; devices: Array<{ id: string; label: string; platform: string; approved_at: string }> }>("/api/v1/security/status"),
+  deviceChallenge: (purpose: "bootstrap" | "confirm_recovery" | "action") => request<{ challenge_id: string; nonce: string }>("/api/v1/security/challenges", { method: "POST", body: JSON.stringify({ purpose }) }),
+  recoveryMaterial: () => request<{ public_key: string; backup: import("./crypto/types").Envelope; rosters: import("./crypto/types").SignedRoster[] }>("/api/v1/security/recovery/material"),
+  enrollDevice: (body: unknown) => request<{ approved: boolean; device_id: string; revision: number }>("/api/v1/security/devices/enroll", { method: "POST", body: JSON.stringify(body) }),
   bootstrapSecurity: (body: unknown) => request<{ configured: boolean }>("/api/v1/security/bootstrap", { method: "POST", body: JSON.stringify(body) }),
   confirmRecoverySaved: (body: unknown) => request<{ confirmed: boolean }>("/api/v1/security/recovery/confirm", { method: "POST", body: JSON.stringify(body) }),
   servers: () => request<CommunityServer[]>("/api/v1/servers"),

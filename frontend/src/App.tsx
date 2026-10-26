@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import SecurityRecoveryCard from "./components/SecurityRecoveryCard";
+import { CryptoClient } from "./lib/crypto/client";
+import { closeMessaging } from "./lib/crypto/messaging";
 import AuthPanel from "./components/AuthPanel";
 import ChatShell from "./components/ChatShell";
 import IncomingCallWindow from "./components/IncomingCallWindow";
@@ -13,6 +16,8 @@ import { DesktopUpdateNotice } from "./components/DesktopUpdates";
 
 function MainApp() {
   const [user, setUser] = useState<User | null>(null);
+  const [unlockUser, setUnlockUser] = useState<User | null>(null);
+  const [unlockPassword, setUnlockPassword] = useState("");
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
   const [offlineSection, setOfflineSection] = useState<ClientSettingsSection | null>(null);
@@ -56,9 +61,26 @@ function MainApp() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const client = new CryptoClient(user.id);
+    void api.securityStatus().then(async status => {
+      if (!status.configured || !status.setup_available) { if (active) setUnlockPassword(""); return; }
+      const identity = await client.execute({ operation: "identity" });
+      const device = identity.result.device as { device_id: string };
+      if (active && !status.devices.some(item => item.id === device.device_id)) setUnlockUser(user);
+      else if (active) setUnlockPassword("");
+    }).catch(() => { if (active) setUnlockPassword(""); }).finally(() => client.close());
+    return () => { active = false; client.close(); };
+  }, [user?.id]);
+
+  function authenticated(next: User, password = "") { setUnlockPassword(password); setUser(next); }
+
   async function logout() {
     await api.logout().catch(() => undefined);
-    setUser(null);
+    if (user) closeMessaging(user.id);
+    setUnlockUser(null); setUnlockPassword(""); setUser(null);
   }
 
   if (loading) {
@@ -89,7 +111,9 @@ function MainApp() {
 
   return <>{user
     ? <ChatShell user={user} onLogout={logout} onUserChange={setUser} />
-    : <AuthPanel onAuthenticated={setUser} />}</>;
+    : <AuthPanel onAuthenticated={authenticated} />}
+    {unlockUser && <div className="device-unlock-backdrop"><div className="device-unlock-dialog" role="dialog" aria-modal="true" aria-label="Подтверждение устройства"><h2>Новое устройство</h2><p>Вход в аккаунт выполнен. Для доступа к личной переписке подтверди это устройство.</p><SecurityRecoveryCard user={unlockUser} initialPassword={unlockPassword} onComplete={() => { setUnlockUser(null); setUnlockPassword(""); window.dispatchEvent(new Event("coherent-security-changed")); }} /></div></div>}
+  </>;
 }
 
 export default function App() {

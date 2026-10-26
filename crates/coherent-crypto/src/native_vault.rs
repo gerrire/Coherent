@@ -90,6 +90,7 @@ enum VaultRequest {
     Execute {
         command: Command,
         delivered_id: Option<String>,
+        transport: Option<Value>,
     },
     Pending,
     Delivered {
@@ -234,10 +235,25 @@ impl<K: VaultKeyStore> NativeVault<K> {
             let item = &stored.outbox[index];
             if matches!(item.operation.as_str(), "add_members" | "remove_members") {
                 match &request {
-                    VaultRequest::Execute {
-                        command: Command::AcknowledgeCommit { commit, .. },
-                        ..
-                    } if item.payload.get("commit").and_then(Value::as_str) == Some(commit) => (),
+                    VaultRequest::Execute { command, .. } => {
+                        let inner = match command {
+                            Command::ApplyEvent {
+                                command: Some(inner),
+                                ..
+                            } => inner.as_ref(),
+                            _ => command,
+                        };
+                        match inner {
+                            Command::AcknowledgeCommit { commit, .. }
+                            | Command::DiscardCommit { commit, .. }
+                                if item.payload.get("commit").and_then(Value::as_str)
+                                    == Some(commit) =>
+                            {
+                                ()
+                            }
+                            _ => return Err(CryptoError::State),
+                        }
+                    }
                     _ => return Err(CryptoError::State),
                 }
             }
@@ -246,6 +262,7 @@ impl<K: VaultKeyStore> NativeVault<K> {
         if let VaultRequest::Execute {
             command,
             delivered_id,
+            transport,
         } = request
         {
             if matches!(command, Command::AcknowledgeCommit { .. }) && delivered_id.is_none() {
@@ -266,12 +283,18 @@ impl<K: VaultKeyStore> NativeVault<K> {
             }
             let result: Value = serde_json::from_str(&engine.execute_json(&command_json)?)
                 .map_err(|_| CryptoError::State)?;
-            let payload = if operation == "receive" {
+            let mut payload = if operation == "receive" {
                 (result.get("kind").and_then(Value::as_str) == Some("application"))
                     .then(|| json!({ "context": result["context"], "archive": result["archive"] }))
             } else {
                 (!operation.is_empty()).then(|| result.clone())
             };
+            if let (Some(payload), Some(transport)) = (&mut payload, transport) {
+                payload
+                    .as_object_mut()
+                    .ok_or(CryptoError::State)?
+                    .insert("transport".into(), transport);
+            }
             let mut delivery_id = None;
             if let Some(payload) = payload {
                 let id = random_uuid()?;

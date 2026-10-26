@@ -70,13 +70,18 @@ async def overview(request: Request, user: AdminUser, session: SessionDep) -> Ad
         online_users=len(request.app.state.message_events.connections),
         cloud_encryption_enabled=request.app.state.chat_cipher.enabled,
         legacy_plaintext_messages=await session.scalar(
-            select(func.count()).select_from(Message).where(Message.body_ciphertext.is_(None))
+            select(func.count())
+            .select_from(Message)
+            .where(Message.body_ciphertext.is_(None), Message.mls_payload.is_(None))
         )
         or 0,
         legacy_plaintext_attachments=await session.scalar(
             select(func.count())
             .select_from(MessageAttachment)
-            .where(MessageAttachment.encrypted.is_(False))
+            .where(
+                MessageAttachment.encrypted.is_(False),
+                MessageAttachment.client_encrypted.is_(False),
+            )
         )
         or 0,
     )

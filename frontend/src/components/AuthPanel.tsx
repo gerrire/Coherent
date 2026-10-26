@@ -12,7 +12,7 @@ import { api, type User } from "../lib/api";
 import SecurityRecoveryCard from "./SecurityRecoveryCard";
 
 interface AuthPanelProps {
-  onAuthenticated: (user: User) => void;
+  onAuthenticated: (user: User, password?: string) => void;
 }
 
 export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
@@ -66,7 +66,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
         ? await api.register({ username, password, email: email.trim(), verification_id: verificationId!, code })
         : await api.login({ username, password });
       if (mode === "register") setCreatedUser(result.user);
-      else { setPassword(""); onAuthenticated(result.user); }
+      else { onAuthenticated(result.user, password); setPassword(""); }
     } catch (requestError) {
       setError(
         requestError instanceof Error

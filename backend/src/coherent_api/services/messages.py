@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from coherent_api.services.conversation_access import (
     get_server_channel,
     validate_friends,
 )
+from coherent_api.services.crypto_policy import is_mls_conversation, require_cloud_write
 
 
 class ConversationUserNotFoundError(Exception):
@@ -50,8 +52,10 @@ class ReadMessageNotFoundError(Exception):
 def visible_message(
     session: AsyncSession, message: Message, attachments: list[AttachmentResponse] | None = None
 ) -> MessageResponse:
-    body = message_text(session, message)
+    body = "Зашифрованное сообщение" if message.mls_payload else message_text(session, message)
     result = MessageResponse.model_validate(message).model_copy(update={"body": body})
+    if message.mls_payload:
+        result = result.model_copy(update={"crypto": json.loads(message.mls_payload)})
     if message.attachments_expired or (message.attachment_count and is_expired(message.created_at)):
         return result.model_copy(
             update={
@@ -85,6 +89,7 @@ async def conversation_response(
     return ConversationResponse(
         id=conversation.id,
         kind=conversation.kind,
+        encryption="mls" if await is_mls_conversation(session, conversation.id) else "cloud",
         name=conversation.name,
         members=members,
         other_user=other if conversation.kind == "direct" else None,
@@ -325,6 +330,7 @@ async def send_message(
     session: AsyncSession, current_user: User, conversation_id: UUID, body: str
 ) -> tuple[Message, Conversation]:
     conversation = await get_conversation(session, current_user, conversation_id)
+    await require_cloud_write(session, conversation_id)
     message = cloud_message(
         session, conversation_id=conversation_id, sender_id=current_user.id, body=body
     )

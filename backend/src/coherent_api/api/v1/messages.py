@@ -267,3 +267,32 @@ async def post_message(
         },
     )
     return result
+
+
+@router.get("/{conversation_id}/messages/{message_id}", response_model=MessageResponse)
+async def get_single_message(
+    conversation_id: UUID, message_id: UUID, user: CurrentUser, session: SessionDep
+) -> MessageResponse:
+    from coherent_api.models.message import Message
+    from coherent_api.services.conversation_access import get_conversation
+
+    try:
+        await get_conversation(session, user, conversation_id)
+    except ConversationNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    message = await session.get(Message, message_id)
+    if message is None or message.conversation_id != conversation_id:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+    from sqlalchemy import select
+
+    from coherent_api.models.message_attachment import MessageAttachment
+    from coherent_api.schemas.messages import AttachmentResponse
+
+    attachments = list(
+        await session.scalars(
+            select(MessageAttachment).where(MessageAttachment.message_id == message.id)
+        )
+    )
+    return visible_message(
+        session, message, [AttachmentResponse.model_validate(a) for a in attachments]
+    )

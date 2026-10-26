@@ -58,7 +58,8 @@ async function perform(account: string, request: VaultRequest | RevealRequest): 
         if (index < 0) throw new Error("Отправленный пакет не найден в локальной очереди");
         // Merge the pending Commit and remove its exact outbox entry together.
         if (["add_members", "remove_members"].includes(outbox[index].operation)) {
-          if (request.type !== "execute" || request.command.operation !== "acknowledge_commit" || request.command.commit !== outbox[index].payload.commit) throw new Error("Нужно подтвердить точный пакет изменения группы");
+          const inner = request.type === "execute" && request.command.operation === "apply_event" ? request.command.command : request.type === "execute" ? request.command : null;
+          if (!inner || !["acknowledge_commit", "discard_commit"].includes(inner.operation) || !("commit" in inner) || inner.commit !== outbox[index].payload.commit) throw new Error("Нужно подтвердить точный пакет изменения группы");
         }
         outbox.splice(index, 1);
       }
@@ -71,7 +72,7 @@ async function perform(account: string, request: VaultRequest | RevealRequest): 
         const payload = deliveryPayload(request.command.operation, result);
         if (payload) {
           id = crypto.randomUUID();
-          outbox.push({ id, operation: request.command.operation, payload });
+          outbox.push({ id, operation: request.command.operation, payload: request.transport ? { ...payload, transport: request.transport } : payload });
         }
         reply = { result, delivery_id: id };
       }

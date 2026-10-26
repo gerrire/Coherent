@@ -42,7 +42,7 @@ class DeviceBinding(StrictModel):
 
 
 class ChallengeRequest(StrictModel):
-    purpose: Literal["bootstrap", "recovery_view", "confirm_recovery"]
+    purpose: Literal["bootstrap", "recovery_view", "confirm_recovery", "action"]
 
 
 class BootstrapRequest(StrictModel):
@@ -77,3 +77,43 @@ class DeviceProofRequest(StrictModel):
     device_id: UUID
     proof: str = Field(min_length=88, max_length=88)
     current_password: SecretStr = Field(min_length=1, max_length=128)
+
+
+class SignedRoster(StrictModel):
+    payload: str = Field(min_length=1, max_length=32768)
+    signature: str = Field(min_length=88, max_length=88)
+
+
+class RosterPayload(StrictModel):
+    version: Literal[1]
+    account_id: UUID
+    revision: int = Field(ge=1, le=1024)
+    previous_hash: str = Field(min_length=44, max_length=44)
+    archive_public_key: str = Field(min_length=44, max_length=44)
+    devices: list[DeviceBinding] = Field(min_length=1, max_length=16)
+
+
+class EnrollPayload(StrictModel):
+    operation: Literal["enroll"]
+    roster: SignedRoster
+    label: str = Field(min_length=1, max_length=64)
+    platform: Literal["browser", "windows", "macos", "linux", "android", "ios"]
+
+
+class EnrollRequest(StrictModel):
+    challenge_id: UUID
+    device: DeviceBinding
+    proof: str = Field(min_length=88, max_length=88)
+    payload: str = Field(min_length=1, max_length=49152)
+    current_password: SecretStr = Field(default=SecretStr(""), max_length=128)
+
+
+class ContactPinPayload(StrictModel):
+    account_id: UUID
+    public_key: str = Field(min_length=44, max_length=44)
+    proof: str = Field(min_length=88, max_length=88)
+
+
+class ContactPinsRequest(StrictModel):
+    device_id: UUID
+    pins: list[ContactPinPayload] = Field(max_length=1000)

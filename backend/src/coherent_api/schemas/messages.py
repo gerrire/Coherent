@@ -48,6 +48,7 @@ class MessageResponse(BaseModel):
     id: UUID
     conversation_id: UUID
     sender_id: UUID
+    crypto: dict | None = None
     body: str
     attachment_count: int = 0
     attachments_expired: bool = False
@@ -64,6 +65,7 @@ class ConversationUser(BaseModel):
 class ConversationResponse(BaseModel):
     id: UUID
     kind: str
+    encryption: str = "cloud"
     name: str | None = None
     members: list[ConversationUser] = Field(default_factory=list)
     other_user: ConversationUser | None = None

@@ -5,6 +5,7 @@ pub mod engine;
 pub mod envelope;
 pub mod mls;
 pub mod recovery;
+pub mod trust;
 
 #[cfg(all(feature = "native-vault", not(target_arch = "wasm32")))]
 pub mod native_vault;

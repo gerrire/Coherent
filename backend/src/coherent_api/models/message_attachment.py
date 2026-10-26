@@ -16,4 +16,7 @@ class MessageAttachment(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    client_encrypted: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default="false"
+    )
     encrypted: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")

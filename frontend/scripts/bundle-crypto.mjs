@@ -1,8 +1,7 @@
 import { build } from "vite";
 import { fileURLToPath } from "node:url";
 
-// Compile the currently isolated bridge and Worker as well as the ordinary
-// application. It stays separate until E2EE chat integration is complete.
+// Compile the shared bridge and browser Worker independently for CI.
 await build({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),

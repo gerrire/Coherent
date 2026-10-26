@@ -26,6 +26,7 @@ class Message(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    mls_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     attachment_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"

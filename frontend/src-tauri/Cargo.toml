@@ -6,7 +6,7 @@ authors = ["Coherent"]
 license = ""
 repository = "https://github.com/gerrire/Coherent"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.99"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,9 +15,8 @@ name = "coherent_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = []
-# No production activation until delivery/authenticated device linking and
-# migration have been reviewed. This only enables the local Rust adapter.
+default = ["mls-preview"]
+# Shared Rust MLS core and protected native device vault.
 mls-preview = ["dep:coherent-crypto"]
 
 [build-dependencies]

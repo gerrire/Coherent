@@ -7,5 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
+        session.info["settings"] = request.app.state.settings
         session.info["chat_cipher"] = request.app.state.chat_cipher
         yield session

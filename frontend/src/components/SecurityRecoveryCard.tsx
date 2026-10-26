@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { Check, Copy, Download, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { api, type User } from "../lib/api";
 import { CryptoClient } from "../lib/crypto/client";
+import { enrollCurrentDevice } from "../lib/crypto/access";
 import type { DeviceBinding, Envelope } from "../lib/crypto/types";
 import "./security-recovery.css";
 
@@ -20,9 +21,11 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [fingerprint, setFingerprint] = useState("");
+  const [recoveryInput, setRecoveryInput] = useState("");
   const trusted = !!device && !!status?.devices.some(item => item.id === device.device_id);
 
-  function hide() { setWords([]); setAnswers(["", ""]); setPassword(""); }
+  function hide() { setWords([]); setAnswers(["", ""]); setPassword(""); setRecoveryInput(""); }
 
   useEffect(() => {
     let active = true;
@@ -34,10 +37,18 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
         local = new CryptoClient(user.id); client.current = local;
         const identity = await local.execute({ operation: "identity" });
         if (active) setDevice(identity.result.device as DeviceBinding);
+        const own = await local.execute({ operation: "own_fingerprint" }).catch(() => null);
+        if (active && own) setFingerprint(own.result.fingerprint as string);
       }
     }).catch(() => { if (active) setError("Не удалось открыть защищённое хранилище. Обнови клиент и попробуй снова."); });
     return () => { active = false; client.current = null; local?.close(); };
   }, [user.id]);
+
+  useEffect(() => {
+    const clear = () => { if (document.hidden) { setRecoveryInput(""); setPassword(""); } };
+    document.addEventListener("visibilitychange", clear);
+    return () => document.removeEventListener("visibilitychange", clear);
+  }, []);
 
   useEffect(() => {
     if (!words.length) return;
@@ -58,8 +69,11 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
         const challenge = await api.deviceChallenge("bootstrap");
         const signed = await local.execute({ operation: "sign_device_proof", purpose: "bootstrap", nonce: challenge.nonce, backup });
         await api.bootstrapSecurity({ challenge_id: challenge.challenge_id, device: signed.result.device, proof: signed.result.proof, backup, recovery_public_key: prepared.result.recovery_public_key, current_password: password, label: isTauri() ? "Приложение Когерента" : "Браузер", platform: isTauri() ? "windows" : "browser" });
+        await enrollCurrentDevice(local, password);
         setStatus(await api.securityStatus());
       }
+      const own = await local.execute({ operation: "own_fingerprint" });
+      setFingerprint(own.result.fingerprint as string);
       const result = await local.revealRecovery(password);
       const phrase = result.result.phrase;
       if (typeof phrase !== "string" || ![12, 24].includes(phrase.split(" ").length)) throw new Error("Ключ устройства недоступен");
@@ -75,6 +89,20 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
     } finally { setBusy(false); }
   }
 
+  async function recoverDevice() {
+    if (!client.current || busy || !password || !recoveryInput.trim()) return;
+    setBusy(true); setError("");
+    try {
+      await enrollCurrentDevice(client.current, password, recoveryInput);
+      const own = await client.current.execute({ operation: "own_fingerprint" });
+      setFingerprint(own.result.fingerprint as string);
+      setRecoveryInput(""); hide(); setStatus(await api.securityStatus());
+      setNotice("Устройство подтверждено. Приватные ключи созданы заново; ключ истории восстановлен локально.");
+      onComplete?.();
+    } catch { setError("Не удалось подтвердить устройство. Проверь пароль и все слова ключа восстановления."); }
+    finally { setBusy(false); }
+  }
+
   async function confirmSaved() {
     const local = client.current;
     if (!local || !device || busy || !password) return;
@@ -84,7 +112,7 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
       const challenge = await api.deviceChallenge("confirm_recovery");
       const signed = await local.execute({ operation: "sign_device_proof", purpose: "confirm_recovery", nonce: challenge.nonce, backup: null });
       await api.confirmRecoverySaved({ challenge_id: challenge.challenge_id, device_id: device.device_id, proof: signed.result.proof, current_password: password });
-      setStatus(await api.securityStatus()); hide(); setNotice("Ключ сохранён. Письмо с подтверждением придёт без самих слов.");
+      setStatus(await api.securityStatus()); window.dispatchEvent(new Event("coherent-security-changed")); hide(); setNotice("Ключ сохранён. Письмо с подтверждением придёт без самих слов.");
       onComplete?.();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось подтвердить сохранение ключа"); }
     finally { setBusy(false); }
@@ -101,11 +129,12 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
   return <section className="profile-settings-card security-recovery-card" aria-label="Ключ восстановления">
     <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>Ключ восстановления</h3></div>
     <p>12 случайных слов для доступа к защищённой истории при потере устройств. Храни их отдельно от пароля. Сервер и почта этих слов не получают.</p>
-    {status?.setup_available && <p className="recovery-rollout-note">Подготавливаем защищённую переписку. Текущие чаты пока используют облачное шифрование.</p>}
+    {status?.setup_available && <p className="recovery-rollout-note">{status.chat_encryption === "mls" ? "Новые личные и групповые сообщения используют сквозное шифрование. Каналы серверов остаются облачными." : "Подготавливаем защищённую переписку. Текущие чаты пока используют облачное шифрование."}</p>}
+    {trusted && fingerprint && <div className="account-safety-code"><span>Сверочный код аккаунта</span><code>{fingerprint.match(/.{1,4}/g)?.join(" ")}</code><p>Этот код можно сравнить с собеседником. Он публичный и не заменяет секретные 12 слов.</p><button type="button" className="recovery-action" onClick={() => void navigator.clipboard.writeText(fingerprint)}>Скопировать код</button></div>}
     {!status && !error && <p role="status">Открываем хранилище…</p>}
     {status && !status.setup_available && <p>Настройка ключей появится в следующем этапе перехода.</p>}
     {status?.setup_available && !user.email_verified && <p>Сначала подтверди почту в настройках выше.</p>}
-    {status?.configured && device && !trusted && <p>Этот вход ещё не является доверенным устройством. Обычный вход по паролю не открывает ключ восстановления.</p>}
+    {status?.configured && device && !trusted && <div className="recovery-device-unlock"><p>Подтверди это устройство ключом восстановления, если нет доступа к другому устройству. Слова проверяются только здесь и не отправляются серверу.</p><label>Пароль аккаунта<input type="password" value={password} autoComplete="current-password" maxLength={128} onChange={event => setPassword(event.target.value)} /></label><label>12 слов ключа восстановления<textarea value={recoveryInput} onChange={event => setRecoveryInput(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={400} rows={3} placeholder="Введи слова в сохранённом порядке" /></label><button type="button" className="recovery-action" disabled={busy || !password || !recoveryInput.trim()} onClick={() => void recoverDevice()}>{busy ? "Подтверждаем…" : "Подтвердить устройство"}</button></div>}
     {status?.setup_available && user.email_verified && device && (!status.configured || trusted) && <>
       {!words.length && <div className="profile-password-form"><label htmlFor={`recovery-password-${user.id}`}>Текущий пароль для подтверждения доступа</label><div className="profile-password-field"><input id={`recovery-password-${user.id}`} type="password" value={password} maxLength={128} autoComplete="current-password" onChange={event => setPassword(event.target.value)} placeholder="Твой пароль" /></div><button className="recovery-action" type="button" disabled={busy || !password} onClick={() => void show(!status.configured)}><Eye size={16} />{busy ? "Открываем…" : status.configured ? "Показать ключ" : "Создать и сохранить ключ"}</button></div>}
       {!!words.length && <div className="recovery-visible">

@@ -267,10 +267,11 @@ pub async fn api_upload(
     state: State<'_, Arc<NetworkState>>,
     path: String,
     body: String,
+    secure_data: Option<String>,
     files: Vec<UploadFile>,
 ) -> Result<ApiReply, String> {
     if !path.starts_with("/api/v1/conversations/")
-        || !path.ends_with("/messages/attachments")
+        || !(path.ends_with("/messages/attachments") || path.ends_with("/secure/files"))
         || path.contains("..")
         || path.contains('#')
         || path.contains('\\')
@@ -281,10 +282,15 @@ pub async fn api_upload(
     if files.is_empty() || files.len() > 10 {
         return Err("Invalid number of attachments".into());
     }
-    let mut form = reqwest::multipart::Form::new().text("body", body);
+    let secure = path.ends_with("/secure/files");
+    let mut form = if secure {
+        let data = secure_data.ok_or("Missing encrypted request")?;
+        if data.len() > 2*1024*1024 {return Err("Encrypted request too large".into());}
+        reqwest::multipart::Form::new().text("data",data)
+    } else {reqwest::multipart::Form::new().text("body",body)};
     for file in files {
         let bytes = STANDARD.decode(file.data).map_err(|e| e.to_string())?;
-        if bytes.len() > 25 * 1024 * 1024 {
+        if bytes.len() > 25 * 1024 * 1024 + if secure {4096} else {0} {
             return Err("Attachment exceeds 25 MiB".into());
         }
         let part = reqwest::multipart::Part::bytes(bytes)
@@ -352,7 +358,7 @@ pub async fn api_attachment(
         .unwrap_or("application/octet-stream")
         .to_string();
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    if bytes.len() > 25 * 1024 * 1024 {
+    if bytes.len() > 25 * 1024 * 1024 + 4096 {
         return Err("Attachment exceeds 25 MiB".into());
     }
     Ok(AttachmentReply {

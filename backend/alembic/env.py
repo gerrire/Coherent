@@ -16,6 +16,7 @@ from coherent_api.models import email_verification as email_verification_model  
 from coherent_api.models import friend_request as friend_request_model  # noqa: F401
 from coherent_api.models import message as message_model  # noqa: F401
 from coherent_api.models import message_attachment as message_attachment_model  # noqa: F401
+from coherent_api.models import mls as mls_model  # noqa: F401
 from coherent_api.models import push_subscription as push_subscription_model  # noqa: F401
 from coherent_api.models import registration as registration_model  # noqa: F401
 from coherent_api.models import server as server_model  # noqa: F401
