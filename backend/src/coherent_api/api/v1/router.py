@@ -4,6 +4,7 @@ from coherent_api.api.v1 import (
     admin,
     auth,
     calls,
+    device_links,
     e2ee,
     friends,
     health,
@@ -18,6 +19,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(e2ee.router)
+api_router.include_router(device_links.router)
 api_router.include_router(mls.router)
 api_router.include_router(admin.router)
 api_router.include_router(friends.router)

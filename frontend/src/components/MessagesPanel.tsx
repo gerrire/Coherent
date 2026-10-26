@@ -273,6 +273,12 @@ export default function MessagesPanel({
   }, [conversation.id, conversation.encryption, version, retry]);
 
   useEffect(() => {
+    if (!secure || securityReady || securityProblem?.kind !== "waiting") return;
+    const timer = window.setInterval(() => { if (!document.hidden) setRetry(value => value + 1); }, 4500);
+    return () => window.clearInterval(timer);
+  }, [secure, securityReady, securityProblem?.kind]);
+
+  useEffect(() => {
     if (!secure || !securityReady) return;
     let active = true;
     setMigrationError("");
@@ -427,7 +433,7 @@ export default function MessagesPanel({
         <button type="submit" disabled={renameBusy || !groupName.trim()}>Сохранить</button>
         <button type="button" onClick={() => setRenaming(false)}>Отмена</button>
       </form>}
-      {secure && <ChatSecurityNotice conversation={conversation} ready={securityReady} problem={securityProblem} busy={securityBusy} onVerify={verifyKeys} onRetry={() => setRetry(n => n + 1)} />}
+      {secure && <ChatSecurityNotice accountId={currentUserId} conversation={conversation} ready={securityReady} problem={securityProblem} busy={securityBusy} onVerify={verifyKeys} onRetry={() => setRetry(n => n + 1)} />}
       {migration && <div className="chat-security-notice">Переводим твою старую историю в E2EE: {migration.done} из {migration.total}. Сообщения остаются на месте.</div>}
       {migrationError && <div className="chat-security-notice">{migrationError} Облачная копия сохранена.</div>}
       {friendError && <p className="call-inline-error" role="alert">{friendError}</p>}

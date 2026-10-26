@@ -345,6 +345,25 @@ async def enroll_device(
         and device.signature_key == body.device.signature_key
         and device.revoked_at is None
     )
+    link = None
+    if body.link_id is not None and not existing:
+        from coherent_api.models.device_link import DeviceLink
+        from coherent_api.schemas.e2ee import DeviceBinding
+
+        link = await session.get(DeviceLink, body.link_id, with_for_update=True)
+        if (
+            link is None
+            or link.user_id != user.id
+            or link.session_version != user.session_version
+            or link.status != "delivered"
+            or link.expires_at.replace(tzinfo=UTC) <= datetime.now(UTC)
+            or link.new_device_id != body.device.device_id
+            or DeviceBinding.model_validate_json(link.new_device) != body.device
+        ):
+            raise HTTPException(status_code=403, detail="Подтверждение другого устройства истекло")
+        from coherent_api.services.mls import active_device
+
+        await active_device(session, user, link.approver_id)
     await verify_device_request(
         session,
         user,
@@ -355,7 +374,7 @@ async def enroll_device(
         body.current_password.get_secret_value(),
         "action",
         hashlib.sha256(body.payload.encode()).digest(),
-        require_password=not existing,
+        require_password=not existing and link is None,
     )
     try:
         signed = b"coherent/account-roster/v1\0" + payload.roster.payload.encode()
@@ -451,8 +470,16 @@ async def enroll_device(
         session, request.app.state.settings, len(payload.roster.payload.encode()) + 2048
     )
     account.roster_revision = roster.revision
+    if link is not None:
+        link.status = "completed"
+        link.request = None
+        link.response = None
+        link.finalization = None
+        link.envelope = None
     await session.commit()
-    await request.app.state.message_events.publish((user.id,), {"type": "security"})
+    from coherent_api.services.security_events import notify_security
+
+    await notify_security(request, session, user)
     return {"approved": True, "device_id": str(body.device.device_id), "revision": roster.revision}
 
 

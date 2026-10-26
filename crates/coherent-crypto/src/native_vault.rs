@@ -127,6 +127,19 @@ impl<K: VaultKeyStore> NativeVault<K> {
 
     /// Native shell calls this only after server reauthentication and a valid
     /// proof of this active trusted device. Never expose snapshots via IPC.
+    /// Called only after platform-side reauthentication, never through generic IPC.
+    pub fn approve_link(&self, account_id: &str, command: Value) -> Result<Value, CryptoError> {
+        let parsed: Command =
+            serde_json::from_value(command.clone()).map_err(|_| CryptoError::InvalidInput)?;
+        if !matches!(parsed, Command::LinkSend { .. }) {
+            return Err(CryptoError::InvalidInput);
+        }
+        self.request_inner(
+            account_id,
+            &json!({"type":"execute","command":command}).to_string(),
+            true,
+        )
+    }
     pub fn reveal_recovery(&self, account_id: &str) -> Result<Value, CryptoError> {
         self.request_inner(
             account_id,
@@ -157,7 +170,7 @@ impl<K: VaultKeyStore> NativeVault<K> {
         ) || (matches!(
             &request,
             VaultRequest::Execute {
-                command: Command::ShowRecovery,
+                command: Command::ShowRecovery | Command::LinkSend { .. },
                 ..
             }
         ) && !authorized_reveal)

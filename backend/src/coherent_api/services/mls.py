@@ -126,11 +126,18 @@ async def directory(session, user, conversation_id: UUID) -> dict:
                 "account_id": str(uid),
                 "public_key": account.recovery_public_key if account else None,
                 "rosters": [{"payload": r.payload, "signature": r.signature} for r in rosters],
-                "ready": bool(rosters and account and account.recovery_confirmed_at),
+                "ready": bool(rosters),
             }
         )
     state = await session.get(MlsState, conversation_id)
-    return {"accounts": accounts, "state": state_view(state)}
+    eligible = (
+        await eligible_devices(session, conversation) if all(a["ready"] for a in accounts) else []
+    )
+    return {
+        "accounts": accounts,
+        "state": state_view(state),
+        "eligible_devices": [str(x) for x in eligible],
+    }
 
 
 def state_view(state: MlsState | None) -> dict:
@@ -152,7 +159,7 @@ async def desired_devices(session, conversation) -> list[UUID]:
             if account and account.roster_revision
             else None
         )
-        if roster is None or not account.recovery_confirmed_at:
+        if roster is None:
             raise HTTPException(
                 status_code=409, detail="Не все участники настроили защищённую переписку"
             )
@@ -162,6 +169,29 @@ async def desired_devices(session, conversation) -> list[UUID]:
     if len(result) > 100 or len(set(result)) != len(result):
         raise HTTPException(status_code=409, detail="В беседе слишком много устройств")
     return sorted(result)
+
+
+async def eligible_devices(session, conversation, requester=None, reset=False):
+    allowed = await desired_devices(session, conversation)
+    now = datetime.now(UTC)
+    available = set(
+        await session.scalars(
+            select(MlsPackage.device_id)
+            .where(
+                MlsPackage.device_id.in_(allowed),
+                MlsPackage.consumed_at.is_(None),
+                MlsPackage.expires_at > now,
+            )
+            .distinct()
+        )
+    )
+    state = await session.get(MlsState, conversation.id)
+    current = set(UUID(x) for x in json.loads(state.roster)) if state and not reset else set()
+    if requester is not None:
+        if requester not in allowed:
+            raise HTTPException(status_code=403, detail="Устройство не входит в беседу")
+        available.add(requester)
+    return sorted(set(allowed) & (current | available))
 
 
 async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dict:
@@ -188,7 +218,17 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
             detail="Другая отправка ещё выполняется. Повтори через секунду",
             headers={"Retry-After": "1"},
         )
-    desired = await desired_devices(session, conversation)
+    desired = await eligible_devices(
+        session, conversation, body.device_id, body.operation in ("init", "reset")
+    )
+    account_ids = set(
+        await session.scalars(select(E2eeDevice.user_id).where(E2eeDevice.id.in_(desired)))
+    )
+    if account_ids != set(await conversation_member_ids(session, conversation)):
+        raise HTTPException(
+            status_code=409,
+            detail="Участник ещё не подготовил ключи. Откройте Когерент на устройствах участников",
+        )
     if body.device_id not in desired:
         raise HTTPException(status_code=403, detail="Устройство не входит в беседу")
     current = [UUID(x) for x in json.loads(state.roster)]
@@ -434,11 +474,18 @@ async def publish(
         or body.previous_epoch != lease_data["previous_epoch"]
         or ("message" if body.operation == "migrate" else body.operation) != lease_data["operation"]
         or [str(d) for d in body.roster] != lease_data["roster"]
-        or set(body.roster) != set(desired)
+        or not set(body.roster) <= set(desired)
         or [str(d) for d in body.targets] != lease_data["targets"]
         or body.package_ids != [p["id"] for p in lease_data["packages"]]
     ):
         raise HTTPException(status_code=409, detail="Состав или версия беседы изменились")
+    account_ids = set(
+        await session.scalars(select(E2eeDevice.user_id).where(E2eeDevice.id.in_(body.roster)))
+    )
+    if account_ids != set(await conversation_member_ids(session, conversation)):
+        raise HTTPException(
+            status_code=409, detail="В защищённой сессии отсутствует участник беседы"
+        )
     message = None
     old_paths = []
     migrating = body.operation == "migrate"

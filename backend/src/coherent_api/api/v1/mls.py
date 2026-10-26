@@ -108,6 +108,9 @@ async def publish_packages(
     )
     session.add_all(added)
     await session.commit()
+    from coherent_api.services.security_events import notify_security
+
+    await notify_security(request, session, user)
     return {"published": True}
 
 

@@ -44,6 +44,7 @@ import FriendsPanel from "./FriendsPanel";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
 import IncomingCallCard from "./IncomingCallCard";
+import DeviceApprovalPanel from "./DeviceLinkPanel";
 import { messagingFor, closeMessaging } from "../lib/crypto/messaging";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
@@ -128,7 +129,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const [showProfile, setShowProfile] = useState(false);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   useEffect(() => {
-    const refresh = () => { void messagingFor(user.id).initialize().then(() => setMessageVersion(n => n + 1)).catch(() => {}); };
+    const refresh = () => { void messagingFor(user.id).refreshKeys().then(() => setMessageVersion(n => n + 1)).catch(() => {}); };
     const profile = () => setProfileSettingsOpen(true);
     refresh();
     const timer = window.setInterval(() => { void messagingFor(user.id).refreshKeys().catch(() => {}); }, 60000);
@@ -493,6 +494,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             setFriendRequestVersion((current) => current + 1);
             return;
           }
+          if (payload.type === "device_link") { window.dispatchEvent(new Event("coherent-device-link")); return; }
           if (payload.type === "security") {
             window.dispatchEvent(new Event("coherent-security-changed"));
             setMessageVersion(current => current + 1);
@@ -1348,6 +1350,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           onClose={() => setShowGroupPicker(false)}
         />
       )}
+      <DeviceApprovalPanel accountId={user.id} />
     </main>
   );
 }

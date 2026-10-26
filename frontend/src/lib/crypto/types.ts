@@ -16,6 +16,12 @@ export interface MessageContext {
 }
 export interface SignedRoster { payload: string; signature: string }
 export type CryptoCommand =
+  | { operation: "link_prune"; ids: string[] }
+  | { operation: "link_start" | "link_info" | "link_cancel"; id: string }
+  | { operation: "link_offer"; id: string; device: DeviceBinding; code: string }
+  | { operation: "link_respond"; id: string; device: DeviceBinding; request: string }
+  | { operation: "link_send"; id: string; response: string; previous: SignedRoster }
+  | { operation: "link_finish"; id: string; finalization: string; envelope: Envelope; public_key: string }
   | { operation: "identity" | "key_package" | "recovery_backup" | "own_fingerprint" | "export_contact_pins" }
   | { operation: "sign_device_proof"; purpose: "bootstrap" | "recovery_view" | "confirm_recovery"; nonce: string; backup: Envelope | null }
   | { operation: "pin_device"; device: DeviceBinding }
@@ -69,3 +75,5 @@ export function deliveryPayload(operation: string, result: Record<string, unknow
 export interface HistoryBackup { version: 1; recipient: string; encapsulated: string; ciphertext: string }
 
 export interface ContactPin { account_id: string; public_key: string; proof: string }
+
+export type ApproveLinkRequest = { type: "approve_link"; current_password: string; csrf_token: string; command: Extract<CryptoCommand, { operation: "link_send" }> };

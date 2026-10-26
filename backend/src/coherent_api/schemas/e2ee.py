@@ -101,6 +101,7 @@ class EnrollPayload(StrictModel):
 
 
 class EnrollRequest(StrictModel):
+    link_id: UUID | None = None
     challenge_id: UUID
     device: DeviceBinding
     proof: str = Field(min_length=88, max_length=88)

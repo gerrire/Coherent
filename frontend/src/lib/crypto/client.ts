@@ -1,5 +1,5 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
-import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest, type RevealRequest } from "./types";
+import { UUID_PATTERN, type CryptoCommand, type CryptoReply, type DeliveryItem, type VaultRequest, type RevealRequest, type ApproveLinkRequest } from "./types";
 import { currentCsrfToken } from "../api";
 
 /** Shared bridge to the device-local Rust core, in a Worker or native vault. */
@@ -22,7 +22,8 @@ export class CryptoClient {
     }
   }
 
-  private call<T>(request: VaultRequest | RevealRequest): Promise<T> {
+  private call<T>(request: VaultRequest | RevealRequest | ApproveLinkRequest): Promise<T> {
+    if (isTauri() && request.type === "approve_link") return invoke<T>("desktop_crypto_approve_link", { accountId: this.account, currentPassword: request.current_password, command: request.command });
     if (isTauri() && request.type === "reveal_recovery") return invoke<T>("desktop_crypto_reveal", { accountId: this.account, currentPassword: request.current_password });
     if (isTauri()) return invoke<T>("desktop_crypto_request", { accountId: this.account, request });
     const worker = this.worker;
@@ -40,6 +41,11 @@ export class CryptoClient {
   pendingDeliveries(): Promise<DeliveryItem[]> { return this.call({ type: "pending" }); }
   async revealRecovery(currentPassword: string): Promise<CryptoReply> {
     return this.call({ type: "reveal_recovery", current_password: currentPassword, csrf_token: isTauri() ? "" : await currentCsrfToken() });
+  }
+  async approveLink(currentPassword: string, command: ApproveLinkRequest["command"]): Promise<CryptoReply> {
+    const reply = await this.call<CryptoReply>({ type: "approve_link", current_password: currentPassword, csrf_token: isTauri() ? "" : await currentCsrfToken(), command });
+    if (reply.result.rejected) throw new Error("Одноразовый код не совпал. Получи новый код на новом устройстве.");
+    return reply;
   }
   delivered(deliveryId: string): Promise<CryptoReply> { return this.call({ type: "delivered", delivery_id: deliveryId }); }
   close(): void {

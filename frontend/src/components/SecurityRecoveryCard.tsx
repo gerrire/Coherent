@@ -6,6 +6,7 @@ import { CryptoClient } from "../lib/crypto/client";
 import { enrollCurrentDevice } from "../lib/crypto/access";
 import type { DeviceBinding, Envelope } from "../lib/crypto/types";
 import "./security-recovery.css";
+import { NewDeviceLink } from "./DeviceLinkPanel";
 
 interface Props { user: User; initialPassword?: string; onComplete?: () => void }
 type Status = Awaited<ReturnType<typeof api.securityStatus>>;
@@ -127,14 +128,16 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
   }
 
   return <section className="profile-settings-card security-recovery-card" aria-label="Ключ восстановления">
-    <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>Ключ восстановления</h3></div>
-    <p>12 случайных слов для доступа к защищённой истории при потере устройств. Храни их отдельно от пароля. Сервер и почта этих слов не получают.</p>
+    <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>{status?.configured && !trusted ? "Подтверждение устройства" : "Ключ восстановления"}</h3></div>
+    {(!status?.configured || trusted) && <p>12 случайных слов для доступа к защищённой истории при потере устройств. Храни их отдельно от пароля. Сервер и почта этих слов не получают.</p>}
     {status?.setup_available && <p className="recovery-rollout-note">{status.chat_encryption === "mls" ? "Новые личные и групповые сообщения используют сквозное шифрование. Каналы серверов остаются облачными." : "Подготавливаем защищённую переписку. Текущие чаты пока используют облачное шифрование."}</p>}
     {trusted && fingerprint && <div className="account-safety-code"><span>Сверочный код аккаунта</span><code>{fingerprint.match(/.{1,4}/g)?.join(" ")}</code><p>Этот код можно сравнить с собеседником. Он публичный и не заменяет секретные 12 слов.</p><button type="button" className="recovery-action" onClick={() => void navigator.clipboard.writeText(fingerprint)}>Скопировать код</button></div>}
     {!status && !error && <p role="status">Открываем хранилище…</p>}
     {status && !status.setup_available && <p>Настройка ключей появится в следующем этапе перехода.</p>}
     {status?.setup_available && !user.email_verified && <p>Сначала подтверди почту в настройках выше.</p>}
-    {status?.configured && device && !trusted && <div className="recovery-device-unlock"><p>Подтверди это устройство ключом восстановления, если нет доступа к другому устройству. Слова проверяются только здесь и не отправляются серверу.</p><label>Пароль аккаунта<input type="password" value={password} autoComplete="current-password" maxLength={128} onChange={event => setPassword(event.target.value)} /></label><label>12 слов ключа восстановления<textarea value={recoveryInput} onChange={event => setRecoveryInput(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={400} rows={3} placeholder="Введи слова в сохранённом порядке" /></label><button type="button" className="recovery-action" disabled={busy || !password || !recoveryInput.trim()} onClick={() => void recoverDevice()}>{busy ? "Подтверждаем…" : "Подтвердить устройство"}</button></div>}
+    {status?.configured && device && !trusted && <>
+      {client.current && <NewDeviceLink client={client.current} onComplete={() => { void api.securityStatus().then(setStatus); window.dispatchEvent(new Event("coherent-security-changed")); onComplete?.(); }} />}
+      <details className="recovery-fallback"><summary>Нет доступа к доверенным устройствам? Использовать Recovery Key</summary><div className="recovery-device-unlock"><p>Подтверди это устройство ключом восстановления, если нет доступа к другому устройству. Слова проверяются только здесь и не отправляются серверу.</p><label>Пароль аккаунта<input type="password" value={password} autoComplete="current-password" maxLength={128} onChange={event => setPassword(event.target.value)} /></label><label>12 слов ключа восстановления<textarea value={recoveryInput} onChange={event => setRecoveryInput(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={400} rows={3} placeholder="Введи слова в сохранённом порядке" /></label><button type="button" className="recovery-action" disabled={busy || !password || !recoveryInput.trim()} onClick={() => void recoverDevice()}>{busy ? "Подтверждаем…" : "Подтвердить по Recovery Key"}</button></div></details></>}
     {status?.setup_available && user.email_verified && device && (!status.configured || trusted) && <>
       {!words.length && <div className="profile-password-form"><label htmlFor={`recovery-password-${user.id}`}>Текущий пароль для подтверждения доступа</label><div className="profile-password-field"><input id={`recovery-password-${user.id}`} type="password" value={password} maxLength={128} autoComplete="current-password" onChange={event => setPassword(event.target.value)} placeholder="Твой пароль" /></div><button className="recovery-action" type="button" disabled={busy || !password} onClick={() => void show(!status.configured)}><Eye size={16} />{busy ? "Открываем…" : status.configured ? "Показать ключ" : "Создать и сохранить ключ"}</button></div>}
       {!!words.length && <div className="recovery-visible">
@@ -147,6 +150,6 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
     {notice && <p className="profile-settings-success" role="status">{notice}</p>}
     {error && <p className="profile-settings-error" role="alert">{error}</p>}
     {trusted && status?.recovery_confirmed && !words.length && <p className="profile-settings-success"><Check size={16} /> Сохранение ключа подтверждено.</p>}
-    {onComplete && <button className="recovery-action recovery-continue" type="button" disabled={busy} onClick={() => { hide(); onComplete(); }}>{trusted && status?.recovery_confirmed ? "Начать общаться" : "Продолжить без личной переписки"}</button>}
+    {onComplete && <button className="recovery-action recovery-continue" type="button" disabled={busy} onClick={() => { hide(); onComplete(); }}>{trusted ? "Начать общаться" : "Продолжить без личной переписки"}</button>}
   </section>;
 }

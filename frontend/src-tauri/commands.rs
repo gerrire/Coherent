@@ -2,6 +2,7 @@ pub const COMMANDS: &[&str] = &[
     "api_initialize_csrf",
     "desktop_crypto_request",
     "desktop_crypto_reveal",
+    "desktop_crypto_approve_link",
     "desktop_media_permissions_get",
     "desktop_media_permissions_set",
     "api_request",

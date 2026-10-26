@@ -1,0 +1,9 @@
+# Automatically generated - DO NOT EDIT!
+[[permission]]
+identifier = "allow-desktop-crypto-approve-link"
+description = "Allows reauthenticated device key transfer."
+commands.allow = ["desktop_crypto_approve_link"]
+[[permission]]
+identifier = "deny-desktop-crypto-approve-link"
+description = "Denies device key transfer."
+commands.deny = ["desktop_crypto_approve_link"]

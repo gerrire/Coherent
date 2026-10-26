@@ -7,7 +7,7 @@ import type { ContactPin, CryptoCommand, DeliveryItem, DeviceBinding, Envelope, 
 
 interface AccountDirectory { account_id: string; public_key: string | null; ready: boolean; rosters: SignedRoster[] }
 interface GroupState { group_id: string | null; sequence: number; epoch: number; generation: number; roster: string[] }
-interface Directory { accounts: AccountDirectory[]; state: GroupState }
+interface Directory { accounts: AccountDirectory[]; state: GroupState; eligible_devices: string[] }
 interface Lease {
   accepted: boolean; event?: SecureEvent; lease_id: string; nonce: string; request_id: string;
   operation: "init" | "add" | "reset" | "message"; group_id: string; expected_sequence: number; previous_epoch: number;
@@ -72,9 +72,9 @@ export class MlsMessaging {
     if (this.initialization) return this.initialization;
     this.initialization = (async () => {
       const status = await api.securityStatus();
-      if (!status.configured || !status.recovery_confirmed) throw new MessagingAccessError("setup", "Настрой ключ восстановления в профиле, чтобы открыть защищённую переписку");
+      if (!status.configured) throw new MessagingAccessError("setup", "Настрой ключ восстановления в профиле, чтобы открыть защищённую переписку");
       const identity = await this.crypto.execute({ operation: "identity" }); this.device = identity.result.device as DeviceBinding;
-      if (!status.devices.some(d => d.id === this.device!.device_id)) throw new MessagingAccessError("device", "Подтверди это устройство ключом восстановления");
+      if (!status.devices.some(d => d.id === this.device!.device_id)) throw new MessagingAccessError("device", "Подтверди это устройство на другом устройстве или ключом восстановления");
       await enrollCurrentDevice(this.crypto, "");
       const saved = await apiRequest<{ pins: ContactPin[] }>("/api/v1/security/contacts");
       await this.crypto.execute({ operation: "import_contact_pins", pins: saved.pins });
@@ -102,15 +102,14 @@ export class MlsMessaging {
   private async checkDirectory(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     const directory = await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`);
     if (!same(directory.accounts.map(a => a.account_id), conversation.members.map(m => m.id))) throw new MessagingAccessError("changed", "Состав беседы изменился. Обнови её перед отправкой");
-    const reviews: KeyReview[] = []; let waiting = false;
+    let waiting = false;
     for (const account of directory.accounts) {
       if (!account.ready || !account.public_key || !account.rosters.length) { waiting = true; continue; }
       const checked = await this.crypto.execute({ operation: "inspect_roster", public_key: account.public_key, roster: account.rosters.at(-1)! });
       if (checked.result.account_id !== account.account_id || checked.result.changed) throw new MessagingAccessError("changed", "Сверочный ключ участника изменился. Отправка остановлена");
-      if (!checked.result.pinned) {
-        const fingerprint = checked.result.fingerprint as string;
-        if (!confirmed?.some(item => item.account_id === account.account_id && item.fingerprint === fingerprint)) { reviews.push({ account_id: account.account_id, fingerprint }); continue; }
-      }
+      // Pin the first observed identity; later root changes still fail closed.
+      // Out-of-band fingerprint comparison is available without blocking first contact.
+      if (confirmed?.some(item => item.account_id === account.account_id && item.fingerprint !== checked.result.fingerprint)) throw new MessagingAccessError("changed", "Сверочный код изменился");
       const known = Number(checked.result.known_revision);
       const latest = Number(checked.result.revision);
       if (latest < known) throw new MessagingAccessError("changed", "Сервер вернул устаревший список устройств");
@@ -119,12 +118,23 @@ export class MlsMessaging {
         if (revision > known || revision === latest) await this.crypto.execute({ operation: "accept_roster", public_key: account.public_key, roster, fingerprint: checked.result.pinned ? null : checked.result.fingerprint as string });
       }
     }
-    if (reviews.length) throw new MessagingAccessError("verify", "Сверь ключи участников перед первым защищённым сообщением", reviews);
     const exported = await this.crypto.execute({ operation: "export_contact_pins" });
     const saved = await apiRequest<{ pins: ContactPin[] }>("/api/v1/security/contacts"); const pins = exported.result.pins as ContactPin[];
     if (pins.some(pin => !saved.pins.some(old => old.account_id === pin.account_id && old.public_key === pin.public_key))) await apiRequest("/api/v1/security/contacts", { method: "POST", body: JSON.stringify({ device_id: this.device!.device_id, pins }) });
     if (waiting) throw new MessagingAccessError("waiting", "Не все участники настроили ключи. Старую историю можно читать; новые сообщения будут защищёнными");
     return directory;
+  }
+  async verificationCodes(conversation: Conversation): Promise<KeyReview[]> {
+    return this.lock(async () => {
+      await this.ready();
+      const directory = await this.checkDirectory(conversation);
+      const codes: KeyReview[] = [];
+      for (const account of directory.accounts) if (account.account_id !== this.account && account.public_key && account.rosters.length) {
+        const inspected = await this.crypto.execute({ operation: "inspect_roster", public_key: account.public_key, roster: account.rosters.at(-1)! });
+        codes.push({ account_id: account.account_id, fingerprint: inspected.result.fingerprint as string });
+      }
+      return codes;
+    });
   }
   private payload(item: DeliveryItem): string {
     const transport = hint(item); if (!transport) throw new Error("Неполный пакет в очереди");
@@ -222,7 +232,7 @@ export class MlsMessaging {
     }
   }
   private async ensureGroup(conversation: Conversation, directory: Directory): Promise<void> {
-    const desired = [...this.devices(directory).keys()]; const state = directory.state;
+    const desired = directory.eligible_devices; const state = directory.state;
     if (state.group_id && state.roster.includes(this.device!.device_id) && same(state.roster, desired)) return;
     const operation = !state.group_id ? "init" : !state.roster.includes(this.device!.device_id) ? "reset" : "add";
     const lease = await this.acquire(conversation, operation);

@@ -61,6 +61,39 @@ pub async fn desktop_crypto_reveal(
     account_id: String,
     current_password: String,
 ) -> Result<Value, String> {
+    authorized_secret(app, window, network, account_id, current_password, None).await
+}
+#[tauri::command]
+pub async fn desktop_crypto_approve_link(
+    app: AppHandle,
+    window: WebviewWindow,
+    network: State<'_, Arc<NetworkState>>,
+    account_id: String,
+    current_password: String,
+    command: Value,
+) -> Result<Value, String> {
+    if command["operation"] != "link_send" {
+        return Err("Недопустимое действие".into());
+    }
+    authorized_secret(
+        app,
+        window,
+        network,
+        account_id,
+        current_password,
+        Some(command),
+    )
+    .await
+}
+
+async fn authorized_secret(
+    app: AppHandle,
+    window: WebviewWindow,
+    network: State<'_, Arc<NetworkState>>,
+    account_id: String,
+    current_password: String,
+    transfer: Option<Value>,
+) -> Result<Value, String> {
     if window.label() != "main"
         || !window
             .url()
@@ -109,9 +142,12 @@ pub async fn desktop_crypto_reveal(
         tauri::async_runtime::spawn_blocking(move || {
             let vault = NativeVault::new(directory, SystemKeyStore { service })
                 .map_err(|_| "Хранилище ОС недоступно".to_string())?;
-            vault
-                .reveal_recovery(&account_id)
-                .map_err(|_| "Ключ восстановления недоступен".to_string())
+            let result = if let Some(command) = transfer {
+                vault.approve_link(&account_id, command)
+            } else {
+                vault.reveal_recovery(&account_id)
+            };
+            result.map_err(|_| "Не удалось подтвердить доступ к ключам".to_string())
         })
         .await
         .map_err(|_| "Хранилище недоступно".to_string())?
@@ -121,7 +157,7 @@ pub async fn desktop_crypto_reveal(
         any(target_os = "windows", target_os = "macos", target_os = "linux")
     )))]
     {
-        let _ = (app, network, account_id, current_password);
+        let _ = (app, network, account_id, current_password, transfer);
         Err("Обнови приложение для доступа к защищённому хранилищу".into())
     }
 }

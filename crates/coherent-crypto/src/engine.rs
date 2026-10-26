@@ -10,6 +10,7 @@ use crate::{
     CryptoError,
     envelope::{self, Envelope},
     mls::{DeviceBinding, MlsClient, Received},
+    pairing::Pairing,
     recovery,
     trust::{self, SignedRoster, TrustStore},
     uuid_bytes,
@@ -30,6 +31,8 @@ struct LocalEngine {
     trust: TrustStore,
     #[serde(default)]
     cursors: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    pairings: std::collections::BTreeMap<String, Pairing>,
 }
 
 impl Drop for LocalEngine {
@@ -102,6 +105,39 @@ impl Drop for ContentKey {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Identity,
+    LinkStart {
+        id: String,
+    },
+    LinkInfo {
+        id: String,
+    },
+    LinkOffer {
+        id: String,
+        device: DeviceBinding,
+        code: String,
+    },
+    LinkRespond {
+        id: String,
+        device: DeviceBinding,
+        request: String,
+    },
+    LinkSend {
+        id: String,
+        response: String,
+        previous: SignedRoster,
+    },
+    LinkFinish {
+        id: String,
+        finalization: String,
+        envelope: Envelope,
+        public_key: String,
+    },
+    LinkCancel {
+        id: String,
+    },
+    LinkPrune {
+        ids: Vec<String>,
+    },
     PinDevice {
         device: DeviceBinding,
     },
@@ -234,6 +270,7 @@ pub struct CryptoEngine {
     recovery_backup: Option<Envelope>,
     trust: TrustStore,
     cursors: std::collections::BTreeMap<String, u64>,
+    pairings: std::collections::BTreeMap<String, Pairing>,
 }
 
 impl CryptoEngine {
@@ -246,6 +283,7 @@ impl CryptoEngine {
             recovery_backup: None,
             trust: TrustStore::default(),
             cursors: std::collections::BTreeMap::new(),
+            pairings: std::collections::BTreeMap::new(),
         })
     }
 
@@ -308,6 +346,147 @@ impl CryptoEngine {
     fn execute(&mut self, command: Command) -> Result<serde_json::Value, CryptoError> {
         use serde_json::json;
         match command {
+            Command::LinkStart { id } => {
+                if self.pairings.contains_key(&id) {
+                    return Err(CryptoError::State);
+                }
+                self.pairings.retain(|_, pair| !pair.is_new());
+                if self.pairings.len() >= 4 {
+                    return Err(CryptoError::State);
+                }
+                let (pair, code) = Pairing::new_device(&id, self.mls.device().clone())?;
+                self.pairings.insert(id, pair);
+                Ok(json!({"code":code,"device":self.mls.device()}))
+            }
+            Command::LinkInfo { id } => {
+                let pair = self.pairings.get(&id).ok_or(CryptoError::State)?;
+                Ok(json!({"code":pair.code()}))
+            }
+            Command::LinkOffer { id, device, code } => {
+                if self.recovery_phrase.is_none()
+                    || self.pairings.len() >= 4
+                    || self.pairings.contains_key(&id)
+                {
+                    return Err(CryptoError::State);
+                }
+                let (pair, request) =
+                    Pairing::old_device(&id, device, self.mls.device().clone(), code)?;
+                self.pairings.insert(id, pair);
+                Ok(json!({"request":request}))
+            }
+            Command::LinkRespond {
+                id,
+                device,
+                request,
+            } => {
+                let response = self
+                    .pairings
+                    .get_mut(&id)
+                    .ok_or(CryptoError::State)?
+                    .respond(&id, device, &request)?;
+                Ok(json!({"response":response}))
+            }
+            Command::LinkSend {
+                id,
+                response,
+                previous,
+            } => {
+                let target = self
+                    .pairings
+                    .get(&id)
+                    .ok_or(CryptoError::State)?
+                    .new_device
+                    .clone();
+                let phrase = self.recovery_phrase.as_ref().ok_or(CryptoError::State)?;
+                let public_key = BASE64_STANDARD.encode(recovery::authorization_public(
+                    &self.mls.device().account_id,
+                    phrase,
+                )?);
+                let old_roster = trust::verify_roster(&public_key, &previous)?;
+                if !old_roster.devices.contains(self.mls.device()) {
+                    return Err(CryptoError::UntrustedDevice);
+                }
+                let roster =
+                    self.trust
+                        .own_roster(&target, phrase, &self.archive_key, Some(previous))?;
+                let plain=Zeroizing::new(serde_json::to_vec(&json!({"version":1,"id":id,"device":target,"phrase":phrase.as_str(),"backup":self.recovery_backup.as_ref().ok_or(CryptoError::State)?,"roster":roster,"public_key":public_key})).map_err(|_|CryptoError::State)?);
+                let sealed = self
+                    .pairings
+                    .get_mut(&id)
+                    .ok_or(CryptoError::State)?
+                    .seal(&id, &response, &plain);
+                let (finalization, envelope) = match sealed {
+                    Ok(value) => value,
+                    Err(_) => {
+                        self.pairings.remove(&id);
+                        return Ok(json!({"rejected":true}));
+                    }
+                };
+                Ok(json!({"finalization":finalization,"envelope":envelope}))
+            }
+            Command::LinkFinish {
+                id,
+                finalization,
+                envelope,
+                public_key,
+            } => {
+                let pair = self.pairings.get(&id).ok_or(CryptoError::State)?;
+                let plain = pair.open(&id, &finalization, &envelope)?;
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Transfer {
+                    version: u8,
+                    id: String,
+                    device: DeviceBinding,
+                    phrase: String,
+                    backup: Envelope,
+                    roster: SignedRoster,
+                    public_key: String,
+                }
+                let mut data: Transfer =
+                    serde_json::from_slice(&plain).map_err(|_| CryptoError::Authentication)?;
+                let phrase = Zeroizing::new(std::mem::take(&mut data.phrase));
+                if data.version != 1
+                    || data.id != id
+                    || data.device != *self.mls.device()
+                    || data.public_key != public_key
+                    || BASE64_STANDARD.encode(recovery::authorization_public(
+                        &data.device.account_id,
+                        &phrase,
+                    )?) != public_key
+                {
+                    return Err(CryptoError::Authentication);
+                }
+                let roster = trust::verify_roster(&public_key, &data.roster)?;
+                if !roster.devices.contains(self.mls.device())
+                    || !roster
+                        .devices
+                        .contains(pair.old_device.as_ref().ok_or(CryptoError::State)?)
+                {
+                    return Err(CryptoError::Authentication);
+                }
+                let recovered =
+                    recovery::recover_archive_key(&data.device.account_id, &phrase, &data.backup)?;
+                if self.archive_in_use && *recovered != *self.archive_key {
+                    return Err(CryptoError::State);
+                }
+                self.archive_key = recovered;
+                self.recovery_phrase = Some(phrase);
+                self.recovery_backup = Some(data.backup);
+                self.pairings.remove(&id);
+                Ok(json!({"roster":data.roster}))
+            }
+            Command::LinkPrune { ids } => {
+                if ids.len() > 8 {
+                    return Err(CryptoError::InvalidInput);
+                }
+                self.pairings.retain(|id, p| p.is_new() || ids.contains(id));
+                Ok(json!({}))
+            }
+            Command::LinkCancel { id } => {
+                self.pairings.remove(&id);
+                Ok(json!({}))
+            }
             Command::Identity => Ok(
                 json!({ "device": self.mls.device(), "fingerprint": self.mls.device().fingerprint()? }),
             ),
@@ -968,6 +1147,7 @@ impl CryptoEngine {
             recovery_backup: self.recovery_backup.clone(),
             trust: self.trust.clone(),
             cursors: self.cursors.clone(),
+            pairings: self.pairings.clone(),
         };
         Ok(Zeroizing::new(
             serde_json::to_vec(&snapshot).map_err(|_| CryptoError::State)?,
@@ -1006,6 +1186,7 @@ impl CryptoEngine {
             recovery_backup: snapshot.recovery_backup.clone(),
             trust: snapshot.trust.clone(),
             cursors: snapshot.cursors.clone(),
+            pairings: snapshot.pairings.clone(),
         })
     }
 }

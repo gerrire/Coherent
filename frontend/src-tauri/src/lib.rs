@@ -71,6 +71,7 @@ pub fn run() {
             network::api_initialize_csrf,
             e2ee::desktop_crypto_request,
             e2ee::desktop_crypto_reveal,
+            e2ee::desktop_crypto_approve_link,
             permissions::desktop_media_permissions_get,
             permissions::desktop_media_permissions_set,
             network::api_request,

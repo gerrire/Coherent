@@ -1,5 +1,5 @@
 import { BrowserVault } from "./browserVault";
-import { UUID_PATTERN, deliveryPayload, needsOutbox, type CryptoReply, type VaultRequest, type RevealRequest } from "./types";
+import { UUID_PATTERN, deliveryPayload, needsOutbox, type CryptoReply, type VaultRequest, type RevealRequest, type ApproveLinkRequest } from "./types";
 
 interface Core {
   execute(command: string): string;
@@ -21,7 +21,7 @@ function coreModule(): Promise<CoreModule> {
   return modulePromise;
 }
 
-async function perform(account: string, request: VaultRequest | RevealRequest): Promise<unknown> {
+async function perform(account: string, request: VaultRequest | RevealRequest | ApproveLinkRequest): Promise<unknown> {
   if (!UUID_PATTERN.test(account) || !navigator.locks) throw new Error("Защищённое хранилище недоступно");
   return navigator.locks.request(`coherent-crypto-v1-${account}`, { mode: "exclusive" }, async () => {
     const vault = await BrowserVault.open(account);
@@ -31,16 +31,16 @@ async function perform(account: string, request: VaultRequest | RevealRequest): 
     let engine: number[] | null = null;
     try {
       const { key, state, content } = await vault.load();
-      if (request.type === "reveal_recovery" && !content) throw new Error("Это устройство ещё не подтверждено");
+      if ((request.type === "reveal_recovery" || request.type === "approve_link") && !content) throw new Error("Это устройство ещё не подтверждено");
       if (request.type === "pending") return content?.outbox || [];
       const outbox = content?.outbox || [];
       const device = state?.device || crypto.randomUUID();
       const module = await coreModule();
       if (content) { local = new Uint8Array(content.engine); content.engine.fill(0); core = module.BrowserCrypto.restore(local); }
       else { core = new module.BrowserCrypto(account, device); }
-      if (request.type === "reveal_recovery") {
+      if (request.type === "reveal_recovery" || request.type === "approve_link") {
         async function post(path: string, body: unknown): Promise<Record<string, unknown>> {
-          if (request.type !== "reveal_recovery") throw new Error("Недоступно");
+          if (request.type !== "reveal_recovery" && request.type !== "approve_link") throw new Error("Недоступно");
           const response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": request.csrf_token }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
           if (!response.ok) throw new Error("Не удалось подтвердить доступ");
           return response.json();
@@ -49,7 +49,14 @@ async function perform(account: string, request: VaultRequest | RevealRequest): 
         const signed = JSON.parse(core.execute(JSON.stringify({ operation: "sign_device_proof", purpose: "recovery_view", nonce: challenge.nonce, backup: null }))) as { device: { device_id: string }; proof: string };
         const authorization = await post("/api/v1/security/recovery/authorize", { challenge_id: challenge.challenge_id, device_id: signed.device.device_id, proof: signed.proof, current_password: request.current_password });
         if (authorization.authorized !== true || authorization.account_id !== account || authorization.device_id !== device) throw new Error("Это устройство ещё не подтверждено");
-        return { result: JSON.parse(core.execute('{"operation":"show_recovery"}')), delivery_id: null } satisfies CryptoReply;
+        if (request.type === "reveal_recovery") return { result: JSON.parse(core.execute('{"operation":"show_recovery"}')), delivery_id: null } satisfies CryptoReply;
+        if (request.command.operation !== "link_send") throw new Error("Недоступно");
+        let result: Record<string, unknown>;
+        try { result = JSON.parse(core.execute(JSON.stringify(request.command))) as Record<string, unknown>; }
+        catch { throw new Error("PAIRING_CODE_FAILED"); }
+        snapshot = core.snapshot_local(); engine = Array.from(snapshot);
+        await vault.save(key, state, device, { engine, outbox });
+        return { result, delivery_id: null } satisfies CryptoReply;
       }
       let reply: CryptoReply = { result: {}, delivery_id: null };
       const delivered = request.type === "delivered" ? request.delivery_id : request.delivered_id;
@@ -64,7 +71,7 @@ async function perform(account: string, request: VaultRequest | RevealRequest): 
         outbox.splice(index, 1);
       }
       if (request.type === "execute") {
-        if (["create_recovery", "show_recovery"].includes(request.command.operation)) throw new Error("Требуется повторное подтверждение доступа");
+        if (["create_recovery", "show_recovery", "link_send"].includes(request.command.operation)) throw new Error("Требуется повторное подтверждение доступа");
         if (request.command.operation === "acknowledge_commit" && !delivered) throw new Error("Отсутствует подтверждение доставки");
         if (needsOutbox(request.command.operation) && outbox.length >= 100) throw new Error("Сначала дождись отправки сообщений из очереди");
         const result = JSON.parse(core.execute(JSON.stringify(request.command))) as Record<string, unknown>;
@@ -83,16 +90,16 @@ async function perform(account: string, request: VaultRequest | RevealRequest): 
     } finally {
       local?.fill(0); snapshot?.fill(0); engine?.fill(0);
       core?.free(); vault.close();
-      if (request.type === "reveal_recovery") request.current_password = "";
+      if (request.type === "reveal_recovery" || request.type === "approve_link") request.current_password = "";
     }
   });
 }
 
-self.onmessage = (event: MessageEvent<{ id: string; account: string; request: VaultRequest | RevealRequest }>) => {
+self.onmessage = (event: MessageEvent<{ id: string; account: string; request: VaultRequest | RevealRequest | ApproveLinkRequest }>) => {
   const { id, account, request } = event.data;
   void perform(account, request).then(
     result => self.postMessage({ id, result }),
     // No command, secret, payload or internal exception details in diagnostics.
-    () => self.postMessage({ id, error: request.type === "reveal_recovery" ? "Не удалось открыть ключ. Проверь текущий пароль и доверие к этому устройству." : "Не удалось выполнить действие с защищённой перепиской. Данные не отправлены." }),
+    (reason: unknown) => self.postMessage({ id, error: request.type === "approve_link" ? (reason instanceof Error && reason.message === "PAIRING_CODE_FAILED" ? "Одноразовый код не совпал. Получи новый код на новом устройстве." : "Не удалось подтвердить текущий пароль доверенного устройства.") : request.type === "reveal_recovery" ? "Не удалось открыть ключ. Проверь текущий пароль и доверие к этому устройству." : "Не удалось выполнить действие с защищённой перепиской. Данные не отправлены." }),
   );
 };

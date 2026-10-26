@@ -4,6 +4,7 @@
 pub mod engine;
 pub mod envelope;
 pub mod mls;
+pub mod pairing;
 pub mod recovery;
 pub mod trust;
 
