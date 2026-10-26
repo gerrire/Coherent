@@ -44,8 +44,16 @@ class MessageEvents:
             try:
                 async with asyncio.timeout(2):
                     await websocket.send_json(payload)
-            except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError):
+            except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError) as error:
                 self.remove(user_id, websocket)
+                if isinstance(error, TimeoutError):
+                    # Make the client reconnect instead of leaving an open,
+                    # unregistered socket that can no longer receive updates.
+                    try:
+                        async with asyncio.timeout(0.5):
+                            await websocket.close(code=1013)
+                    except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError):
+                        pass
 
         await asyncio.gather(
             *(
