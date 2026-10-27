@@ -12,6 +12,9 @@ htmlcov/
 .env
 .env.*
 !.env.example
+.tauri/
+*.key
+*.key.password*
 *.db
 *.sqlite3
 backups/
