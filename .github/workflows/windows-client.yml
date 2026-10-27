@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       prepare_release:
-        description: "Prepare a signed draft release from main"
+        description: "Prepare a signed draft release from main or windows-client"
         type: boolean
         default: false
 
@@ -26,6 +26,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Check release signing configuration
+        if: github.event_name == 'workflow_dispatch' && inputs.prepare_release
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ($env:GITHUB_REF -notin @('refs/heads/main', 'refs/heads/windows-client')) { throw 'Signed releases require main or windows-client' }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Configure the original updater key in repository Actions secrets. See docs/desktop-signing.md.' }
+          Write-Host 'Updater signing key is configured.'
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -54,21 +63,36 @@ jobs:
           path: frontend/src-tauri/target/release/coherent-desktop.exe
           if-no-files-found: error
       - name: Prepare signed draft release
-        if: github.event_name == 'workflow_dispatch' && inputs.prepare_release && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && inputs.prepare_release && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/windows-client')
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Set the original updater key as TAURI_SIGNING_PRIVATE_KEY in repository Actions secrets. Do not replace the existing public key.' }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing updater signing key' }
+          $version = (Get-Content frontend/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $tag = "desktop-v$version"
+          $notes = "docs/releases/desktop-$version.md"
+          if (-not (Test-Path -LiteralPath $notes)) { throw "Missing release notes: $notes" }
           Push-Location frontend
-          npm run tauri build -- --bundles nsis
+          # Package the executable already compiled and tested above.
+          npm run tauri bundle -- --ci --bundles nsis
           if ($LASTEXITCODE -ne 0) { throw 'Signed installer build failed' }
           Pop-Location
+          ./scripts/clean-desktop-artifacts.ps1
           ./scripts/prepare-desktop-release.ps1 -Notes 'Защищённая переписка, управление устройствами, улучшения звонков и стабильности.'
           $bundle = 'frontend/src-tauri/target/release/bundle/nsis'
-          $assets = @(Get-ChildItem "$bundle/*.exe", "$bundle/*.sig", "$bundle/latest.json" | ForEach-Object { $_.FullName })
-          if ($assets.Count -lt 3) { throw 'Signed installer assets are incomplete' }
-          gh release create desktop-v0.1.2 @assets --target $env:GITHUB_SHA --draft --title 'Coherent 0.1.2' --notes-file docs/releases/desktop-0.1.2.md
+          Push-Location frontend/src-tauri
+          try {
+            cargo run --release --locked --features tauri/custom-protocol --example verify_desktop_update -- target/release/bundle/nsis/Coherent-setup.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Updater signature verification failed' }
+          } finally { Pop-Location }
+          $checksums = @('Coherent-setup.exe', 'Coherent-setup.exe.sig', 'latest.json') | ForEach-Object {
+            $hash = (Get-FileHash "$bundle/$_" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $_"
+          }
+          [IO.File]::WriteAllLines("$bundle/SHA256SUMS.txt", $checksums, [Text.UTF8Encoding]::new($false))
+          $assets = @('Coherent-setup.exe', 'Coherent-setup.exe.sig', 'latest.json', 'SHA256SUMS.txt') | ForEach-Object { "$bundle/$_" }
+          gh release create $tag @assets --target $env:GITHUB_SHA --draft --latest=false --title "Coherent $version" --notes-file $notes
           if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed' }

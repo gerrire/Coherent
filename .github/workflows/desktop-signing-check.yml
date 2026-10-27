@@ -1,0 +1,57 @@
+name: Desktop signing check
+
+on:
+  push:
+    branches: [windows-client]
+    paths: [.github/workflows/desktop-signing-check.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install signature tools without signing secrets
+        run: |
+          npm install --prefix "$RUNNER_TEMP/coherent-signer" --ignore-scripts --no-audit --no-fund @tauri-apps/cli@2.12.4
+          sudo apt-get update -qq
+          sudo apt-get install -y minisign
+      - name: Sign a local probe using the original updater key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo 'Original updater key is not configured'; exit 1; }
+          version=$(node -p "JSON.parse(require('fs').readFileSync('frontend/src-tauri/tauri.conf.json')).version")
+          printf 'Coherent updater signing check\n' > "$RUNNER_TEMP/coherent-signing-check.txt"
+          node "$RUNNER_TEMP/coherent-signer/node_modules/@tauri-apps/cli/tauri.js" signer sign --app-version "$version" "$RUNNER_TEMP/coherent-signing-check.txt" > /dev/null
+      - name: Verify the public key, signed version and rejection of tampering
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const config = JSON.parse(readFileSync('frontend/src-tauri/tauri.conf.json', 'utf8'));
+          const probe = process.env.RUNNER_TEMP + '/coherent-signing-check.txt';
+          const signature = Buffer.from(readFileSync(probe + '.sig', 'utf8').trim(), 'base64').toString('utf8');
+          const comment = signature.split('\n').find(line => line.startsWith('trusted comment: '));
+          if (!comment?.slice('trusted comment: '.length).split('\t').includes('version:' + config.version)) {
+            throw new Error('The signature does not bind the configured app version');
+          }
+          writeFileSync(probe + '.minisig', signature);
+          writeFileSync(probe + '.pub', Buffer.from(config.plugins.updater.pubkey, 'base64'));
+          JS
+          probe="$RUNNER_TEMP/coherent-signing-check.txt"
+          minisign -Vm "$probe" -p "$probe.pub" -x "$probe.minisig"
+          printf 'tampered\n' >> "$probe"
+          if minisign -Vm "$probe" -p "$probe.pub" -x "$probe.minisig" > /dev/null 2>&1; then
+            echo 'Tampered probe was accepted'; exit 1
+          fi
+          echo 'Original key and password work on Linux; public key and version verified; tampered content rejected.'

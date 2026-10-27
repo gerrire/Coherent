@@ -12,17 +12,28 @@ if (Test-Path -LiteralPath (Join-Path $portableNode 'npm.cmd')) {
 
 $cargoDir = Join-Path $env:USERPROFILE '.cargo\bin'
 $env:PATH = "$cargoDir;$env:PATH"
-$key = Join-Path $env:USERPROFILE '.tauri\coherent.key'
-$passwordFile = Join-Path $env:USERPROFILE '.tauri\coherent.key.password.dpapi'
-if (-not (Test-Path -LiteralPath $key) -or -not (Test-Path -LiteralPath $passwordFile)) {
-    throw 'Missing local updater signing key. See frontend/src-tauri/README.md.'
-}
-
-$secure = (Get-Content -LiteralPath $passwordFile -Raw).Trim() | ConvertTo-SecureString
-$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+$originalKey = $env:TAURI_SIGNING_PRIVATE_KEY
+$originalPassword = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+$pointer = [IntPtr]::Zero
 try {
-    $env:TAURI_SIGNING_PRIVATE_KEY = $key
-    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+    # CI supplies the original key through secrets. Local Windows builds use
+    # the same key and a password encrypted for the current Windows account.
+    if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+        $key = Join-Path $env:USERPROFILE '.tauri\coherent.key'
+        $passwordFile = Join-Path $env:USERPROFILE '.tauri\coherent.key.password.dpapi'
+        if (-not (Test-Path -LiteralPath $key)) {
+            throw 'Set TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD, or restore ~/.tauri/coherent.key. See docs/desktop-signing.md.'
+        }
+        $env:TAURI_SIGNING_PRIVATE_KEY = $key
+        if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            if (-not (Test-Path -LiteralPath $passwordFile)) {
+                throw 'The local signing password is missing. See docs/desktop-signing.md.'
+            }
+            $secure = (Get-Content -LiteralPath $passwordFile -Raw).Trim() | ConvertTo-SecureString
+            $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+            $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        }
+    }
     Push-Location $frontend
     try {
         & $npm run tauri build
@@ -32,7 +43,7 @@ try {
         Pop-Location
     }
 } finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-    Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
-    Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+    if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+    $env:TAURI_SIGNING_PRIVATE_KEY = $originalKey
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $originalPassword
 }
