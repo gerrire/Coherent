@@ -11,6 +11,7 @@ from coherent_api.core.security import (
     hash_password_async,
     verify_password_async,
 )
+from coherent_api.models.auth_security import AuthSession
 from coherent_api.models.registration import RegistrationChallenge
 from coherent_api.models.user import User
 from coherent_api.schemas.auth import (
@@ -31,7 +32,13 @@ from coherent_api.services.auth import (
     authenticate_user,
     register_user,
 )
-from coherent_api.services.auth_security import revoke_session, throttle, token_digest
+from coherent_api.services.auth_security import (
+    remember_session,
+    revoke_record,
+    revoke_session,
+    throttle,
+    token_digest,
+)
 from coherent_api.services.email_verification import (
     EmailCodeError,
     EmailRateError,
@@ -61,9 +68,10 @@ def user_response(user: User, request: Request) -> UserResponse:
     )
 
 
-def set_session_cookies(response: Response, user: User, request: Request) -> None:
+async def set_session_cookies(response: Response, user: User, request: Request, session) -> None:
     settings = request.app.state.settings
     token = create_access_token(user.id, settings, user.session_version)
+    await remember_session(session, token, user, settings, request.headers.get("user-agent", ""))
     response.set_cookie(
         key=SESSION_COOKIE,
         value=token,
@@ -113,7 +121,7 @@ async def register(
             ),
         ) from error
 
-    set_session_cookies(response, user, request)
+    await set_session_cookies(response, user, request, session)
     return AuthResponse(user=user_response(user, request))
 
 
@@ -194,7 +202,7 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         ) from error
 
-    set_session_cookies(response, user, request)
+    await set_session_cookies(response, user, request, session)
     return AuthResponse(user=user_response(user, request))
 
 
@@ -221,6 +229,69 @@ async def logout(request: Request, response: Response, session: SessionDep) -> R
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: CurrentUser, request: Request) -> UserResponse:
     return user_response(user, request)
+
+
+@router.get("/sessions")
+async def list_sessions(request: Request, user: CurrentUser, session: SessionDep) -> dict:
+    token = request.cookies.get(SESSION_COOKIE) or request.headers.get(
+        "authorization", ""
+    ).removeprefix("Bearer ")
+    rows = await session.scalars(
+        select(AuthSession)
+        .where(
+            AuthSession.user_id == user.id,
+            AuthSession.revoked_at.is_(None),
+            AuthSession.session_version == user.session_version,
+            AuthSession.expires_at > datetime.now(UTC),
+        )
+        .order_by(AuthSession.last_seen_at.desc())
+    )
+    return {
+        "sessions": [
+            {
+                "id": str(row.id),
+                "agent": row.agent,
+                "current": row.digest == token_digest(token),
+                "created_at": row.created_at,
+                "last_seen_at": row.last_seen_at,
+                "expires_at": row.expires_at,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def terminate_session(
+    session_id: UUID, request: Request, user: CurrentUser, session: SessionDep
+) -> None:
+    row = await session.scalar(
+        select(AuthSession)
+        .where(
+            AuthSession.id == session_id,
+            AuthSession.user_id == user.id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(404, "Сессия не найдена")
+    await revoke_record(session, row)
+    await request.app.state.message_events.disconnect_session(row.digest)
+    # End only calls joined from this login, preserving other devices' calls.
+    from coherent_api.api.v1.calls import finish_call
+    from coherent_api.models.call_member import CallMember
+
+    calls = list(
+        await session.scalars(
+            select(CallMember.call_id).where(
+                CallMember.user_id == user.id,
+                CallMember.session_digest == row.digest,
+                CallMember.state == "joined",
+            )
+        )
+    )
+    for call_id in calls:
+        await finish_call(call_id, request, user, session)
 
 
 @router.patch("/profile", response_model=UserResponse)
@@ -283,5 +354,5 @@ async def change_password(
     user.password_hash = await hash_password_async(body.new_password)
     user.session_version += 1
     await session.commit()
-    set_session_cookies(response, user, request)
+    await set_session_cookies(response, user, request, session)
     await request.app.state.message_events.disconnect(user.id, code=4001)

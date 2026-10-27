@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  X,
   Bell,
   ChevronDown,
   CircleHelp,
@@ -580,7 +581,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         }
       }, (code) => {
         socketReadyRef.current = false;
-        if (stopped || code === 1008) return;
+        if (stopped) return;
+        if (code === 4001 || code === 1008) { void api.me().catch(() => undefined); return; }
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
       }, user.id).then((cleanup) => {
@@ -912,6 +914,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   }
 
   function openClientSettings(section: ClientSettingsSection = "appearance") {
+    setMobileNavigationOpen(false);
     setPopover(null);
     setShowProfile(false);
     setCallSettingsOpen(false);
@@ -1001,6 +1004,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     <main className="app-shell" ref={shellRef}>
       {mobileNavigationOpen && <button className="mobile-drawer-backdrop" aria-label="Закрыть меню бесед" onClick={() => setMobileNavigationOpen(false)} />}
       <div className={`workspace-navigation ${mobileNavigationOpen ? "is-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileNavigationOpen(false); }}>
+      <button className="mobile-drawer-close" aria-label="Закрыть меню бесед" onClick={() => setMobileNavigationOpen(false)}><X size={21} /></button>
       <aside className="server-rail">
         <button className="rail-home active" aria-label="Главная Coherent" title="Главная" onClick={openHome}>
           <span className="brand-mark"><span /><span /><span /></span>
@@ -1230,6 +1234,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             onSent={() => { void refreshConversations().catch(() => undefined); }}
             onRead={markConversationRead}
             callError={currentCall ? "" : callError}
+            inCall={currentCall?.status === "active" && busyInCall}
             peerOnline={selectedConversation.other_user ? onlineIds.has(selectedConversation.other_user.id) : undefined}
             onRename={renameGroup}
             incomingFiles={pendingFiles}

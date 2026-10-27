@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from coherent_api.db.session import get_session
 from coherent_api.models.user import User
-from coherent_api.services.auth_security import valid_session
+from coherent_api.services.auth_security import remember_session, valid_session
 
 bearer_scheme = HTTPBearer(auto_error=False)
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -36,6 +36,7 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Сессия недействительна"
         )
+    await remember_session(session, token, user, settings, request.headers.get("user-agent", ""))
     return user
 
 

@@ -182,7 +182,14 @@ async def get_join_token(
     if not livekit_ready(request.app.state.settings):
         raise HTTPException(status_code=503, detail="Сервер звонков пока не настроен")
     try:
-        return await join_call(session, user, call_id, request.app.state.settings)
+        from coherent_api.services.auth_security import token_digest
+
+        token = request.cookies.get("coherent_session") or request.headers.get(
+            "authorization", ""
+        ).removeprefix("Bearer ")
+        return await join_call(
+            session, user, call_id, request.app.state.settings, token_digest(token)
+        )
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
     except CallStateError as error:

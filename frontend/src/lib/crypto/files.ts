@@ -14,23 +14,35 @@ export function toBase64(value: Uint8Array<ArrayBuffer>): string { let text = ""
 async function digest(blob: Blob): Promise<string> { return toBase64(new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer()))); }
 function idb<T>(req: IDBRequest<T>): Promise<T> { return new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(new Error("Не удалось сохранить очередь файлов")); }); }
 async function database(): Promise<IDBDatabase> { const req = indexedDB.open("coherent-mls-cipher-uploads-v1", 1); req.onupgradeneeded = () => req.result.createObjectStore("files", { keyPath: "id" }); return idb(req); }
-interface CachedCipher { id: string; created: number; blob: Blob }
+interface CachedCipher { id: string; created: number; data?: ArrayBuffer; blob?: Blob }
 async function cache(account: string, id: string, blob: Blob): Promise<void> {
+  // WebKit can reject Blob writes to IndexedDB. Persist ciphertext bytes and
+  // keep every write inside the request callback, while its transaction is live.
+  const data = await blob.arrayBuffer();
   const db = await database();
   try {
     const tx = db.transaction("files", "readwrite", { durability: "strict" });
-    const done = new Promise<void>((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(new Error("Не удалось сохранить очередь файлов")); });
-    const store = tx.objectStore("files");
-    const values = await idb(store.getAll()) as CachedCipher[];
-    let used = 0;
-    for (const value of values) { if (value.created < Date.now() - 3 * 86400000) store.delete(value.id); else used += value.blob.size; }
-    if (used + blob.size > 100 * 1024 * 1024) { tx.abort(); await done.catch(() => {}); throw new Error("Слишком много неотправленных файлов. Сначала повтори их отправку"); }
-    store.put({ id: `${account}:${id}`, created: Date.now(), blob }); await done;
+    let failure: Error | undefined;
+    const done = new Promise<void>((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(failure ?? new Error("Не удалось сохранить очередь файлов")); });
+    const store = tx.objectStore("files"), existing = store.getAll();
+    existing.onsuccess = () => {
+      try {
+        let used = 0;
+        for (const value of existing.result as CachedCipher[]) {
+          const size = value.data?.byteLength ?? value.blob?.size;
+          if (value.created < Date.now() - 3 * 86400000 || size === undefined) store.delete(value.id);
+          else used += size;
+        }
+        if (used + data.byteLength > 100 * 1024 * 1024) throw new Error("Слишком много неотправленных файлов. Сначала повтори их отправку");
+        store.put({ id: `${account}:${id}`, created: Date.now(), data } satisfies CachedCipher);
+      } catch (reason) { failure = reason instanceof Error ? reason : new Error("Очередь файлов недоступна"); tx.abort(); }
+    };
+    await done;
   } finally { db.close(); }
 }
 export async function cachedCipher(account: string, id: string): Promise<Blob> {
   const db = await database();
-  try { const value = await idb(db.transaction("files").objectStore("files").get(`${account}:${id}`)) as CachedCipher | undefined; if (!value) throw new Error("Зашифрованный файл отсутствует в очереди. Прикрепи его заново"); return value.blob; }
+  try { const value = await idb(db.transaction("files").objectStore("files").get(`${account}:${id}`)) as CachedCipher | undefined; if (value?.data) return new Blob([value.data], {type:"application/octet-stream"}); if (value?.blob) return value.blob; throw new Error("Зашифрованный файл отсутствует в очереди. Прикрепи его заново"); }
   finally { db.close(); }
 }
 export async function forgetCipher(account: string, ids: string[]): Promise<void> {
@@ -77,7 +89,7 @@ export async function openCipherFile(client: CryptoClient, path: string, meta: S
       const plain = fromBase64(result.result.data as string); size += plain.length; chunks.push(plain);
     }
     if (offset !== bytes.length || size !== meta.size) throw new Error("Размер расшифрованного файла не совпадает");
-    const allowed = /^(image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm)|audio\/(mpeg|ogg|wav|webm))$/;
+    const allowed = /^(image\/(png|jpeg|gif|webp|avif|heic|heif)|video\/(mp4|webm)|audio\/(mpeg|ogg|wav|webm))$/;
     return URL.createObjectURL(new Blob(chunks, { type: allowed.test(meta.media_type) ? meta.media_type : "application/octet-stream" }));
   } finally { if (source.startsWith("blob:")) URL.revokeObjectURL(source); }
 }

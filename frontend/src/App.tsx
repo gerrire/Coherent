@@ -77,6 +77,16 @@ function MainApp() {
 
   function authenticated(next: User, password = "") { setUnlockPassword(password); setUser(next); }
 
+  useEffect(() => {
+    if (!user) return;
+    const ended = () => {
+      closeMessaging(user.id);
+      setUnlockUser(null); setUnlockPassword(""); setUser(null);
+    };
+    window.addEventListener("coherent-session-ended", ended);
+    return () => window.removeEventListener("coherent-session-ended", ended);
+  }, [user?.id]);
+
   async function logout() {
     await api.logout().catch(() => undefined);
     if (user) closeMessaging(user.id);

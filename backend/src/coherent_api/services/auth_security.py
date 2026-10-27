@@ -1,11 +1,12 @@
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from coherent_api.core.security import access_token_expiry, decode_access_token
-from coherent_api.models.auth_security import AuthThrottle, RevokedSession
+from coherent_api.models.auth_security import AuthSession, AuthThrottle, RevokedSession
 
 
 def token_digest(token: str) -> str:
@@ -19,11 +20,67 @@ async def valid_session(session, token: str, settings):
     return identity
 
 
+async def remember_session(session, token, user, settings, agent):
+    """Lazily register older cookies too; a revoked row is never reactivated."""
+    now = datetime.now(UTC)
+    digest = token_digest(token)
+    row = await session.scalar(select(AuthSession).where(AuthSession.digest == digest))
+    if row is None:
+        expires = access_token_expiry(token, settings)
+        if expires is None:
+            return
+        if session.get_bind().dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert
+        await session.execute(
+            insert(AuthSession)
+            .values(
+                id=uuid4(),
+                user_id=user.id,
+                digest=digest,
+                session_version=user.session_version,
+                agent=agent[:300],
+                created_at=now,
+                last_seen_at=now,
+                expires_at=expires,
+            )
+            .on_conflict_do_nothing()
+        )
+        await session.commit()
+    elif row.revoked_at is None and now - row.last_seen_at.replace(tzinfo=UTC) > timedelta(
+        minutes=5
+    ):
+        row.last_seen_at = now
+        await session.commit()
+
+
+async def revoke_record(session, row):
+    now = datetime.now(UTC)
+    row.revoked_at = now
+    if session.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    await session.execute(
+        insert(RevokedSession)
+        .values(
+            digest=row.digest,
+            expires_at=row.expires_at,
+        )
+        .on_conflict_do_nothing()
+    )
+    await session.commit()
+
+
 async def revoke_session(session, token: str, settings) -> None:
     expires = access_token_expiry(token, settings)
     if expires is None:
         return
     key = token_digest(token)
+    row = await session.scalar(select(AuthSession).where(AuthSession.digest == key))
+    if row is not None:
+        row.revoked_at = datetime.now(UTC)
     if session.get_bind().dialect.name == "postgresql":
         from sqlalchemy.dialects.postgresql import insert
     else:

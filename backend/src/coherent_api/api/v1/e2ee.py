@@ -676,7 +676,7 @@ async def reset_device_trust(
     await allocate_storage(session, request.app.state.settings, len(body.payload.encode()) + 2048)
     user.session_version += 1
     await session.commit()
-    set_session_cookies(response, user, request)
+    await set_session_cookies(response, user, request, session)
     from coherent_api.models.call import Call
     from coherent_api.models.call_member import CallMember
     from coherent_api.services.calls import end_call

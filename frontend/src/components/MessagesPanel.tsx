@@ -12,6 +12,7 @@ interface MessagesPanelProps {
   onSent: () => void;
   onRead: (conversationId: string, messageId: string) => Promise<void>;
   callError: string;
+  inCall?: boolean;
   onRename: (conversationId: string, name: string) => Promise<void>;
   peerOnline?: boolean;
   incomingFiles?: { nonce: number; conversationId: string; files: File[] } | null;
@@ -73,6 +74,7 @@ export default function MessagesPanel({
   onSent,
   onRead,
   callError,
+  inCall = false,
   onRename,
   peerOnline,
   incomingFiles,
@@ -133,6 +135,7 @@ export default function MessagesPanel({
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [friendError, setFriendError] = useState("");
   const [relationship, setRelationship] = useState<UserSearchResult | null>(null);
   const [friendBusy, setFriendBusy] = useState(false);
@@ -256,6 +259,7 @@ export default function MessagesPanel({
       setPreview(null);
       setLoading(true);
       setError("");
+      setLoadError("");
       setRenaming(false);
     }
 
@@ -273,11 +277,11 @@ export default function MessagesPanel({
         hasLoadedPage.current = true;
       }
       setLoading(false);
-      setError("");
+      setLoadError("");
     }).catch((requestError: unknown) => {
       if (!active) return;
       setLoading(false);
-      setError(requestError instanceof Error ? requestError.message : "Не удалось загрузить сообщения.");
+      setLoadError(requestError instanceof Error ? requestError.message : "Не удалось загрузить сообщения.");
     });
     return () => { active = false; };
   }, [conversation.id, conversation.encryption, version, retry]);
@@ -418,7 +422,7 @@ export default function MessagesPanel({
 
   return (
     <div className="messages-panel" ref={panelRef}>
-      <div className="messages-intro">
+      <div className="messages-intro" hidden={inCall}>
         <span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={25} /> : title[0]?.toUpperCase()}</span>
         <div className="messages-intro-copy">
           <div className="messages-intro-heading">
@@ -459,7 +463,7 @@ export default function MessagesPanel({
         <button type="submit" disabled={renameBusy || !groupName.trim()}>Сохранить</button>
         <button type="button" onClick={() => setRenaming(false)}>Отмена</button>
       </form>}
-      {secure && <ChatSecurityNotice accountId={currentUserId} conversation={conversation} ready={securityReady} problem={securityProblem} busy={securityBusy} onVerify={verifyKeys} onRetry={() => setRetry(n => n + 1)} />}
+      {secure && (!inCall || !!securityProblem) && <ChatSecurityNotice accountId={currentUserId} conversation={conversation} ready={securityReady} problem={securityProblem} busy={securityBusy} onVerify={verifyKeys} onRetry={() => setRetry(n => n + 1)} />}
       {migration && <div className="chat-security-notice">Переводим твою старую историю в E2EE: {migration.done} из {migration.total}. Сообщения остаются на месте.</div>}
       {migrationError && <div className="chat-security-notice">{migrationError} Облачная копия сохранена.</div>}
       {friendError && <p className="call-inline-error" role="alert">{friendError}</p>}
@@ -522,9 +526,9 @@ export default function MessagesPanel({
 
       {pendingId && !sending && <div className="pending-secure-message">Сообщение сохранено в защищённой очереди. Повторная отправка не создаст копию.<button type="button" onClick={() => void sendMessage()}>Повторить</button><button type="button" onClick={() => void cancelPending()}>Отменить отправку</button></div>}
       <form className="message-composer" onSubmit={(event) => void sendMessage(event)}>
-        {error && (
+        {(error || loadError) && (
           <div className="message-error" role="alert">
-            {error} {messages.length === 0 && <button type="button" onClick={() => setRetry((n) => n + 1)}>Повторить</button>}
+            {error || loadError} {messages.length === 0 && <button type="button" onClick={() => setRetry((n) => n + 1)}>Повторить</button>}
           </div>
         )}
         {files.length > 0 && <div className="composer-files">{files.map((file, index) => <span key={`${file.name}-${index}`}>{file.name}<button type="button" onClick={() => setFiles((current) => current.filter((_, position) => position !== index))} aria-label={`Убрать ${file.name}`}><X size={13} /></button></span>)}</div>}

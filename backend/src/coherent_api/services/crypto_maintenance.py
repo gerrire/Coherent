@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 async def prune(session, settings):
-    from coherent_api.models.auth_security import AuthThrottle, RevokedSession
+    from coherent_api.models.auth_security import AuthSession, AuthThrottle, RevokedSession
 
     now = datetime.now(UTC)
     stale = list(
@@ -28,6 +28,7 @@ async def prune(session, settings):
     if stale:
         await session.execute(delete(AuthThrottle).where(AuthThrottle.key.in_(stale)))
     await session.execute(delete(RevokedSession).where(RevokedSession.expires_at < now))
+    await session.execute(delete(AuthSession).where(AuthSession.expires_at < now))
     packages = list(
         await session.scalars(
             select(MlsPackage)

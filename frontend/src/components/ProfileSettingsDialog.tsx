@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CalendarDays, Check, Eye, EyeOff, KeyRound, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 import { api, displayName, type User } from "../lib/api";
 import SecurityRecoveryCard from "./SecurityRecoveryCard";
+import DeviceSessionsCard from "./DeviceSessionsCard";
 
 interface ProfileSettingsDialogProps {
   user: User;
@@ -160,6 +161,7 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
             {emailError && <p className="profile-settings-error" role="alert">{emailError}</p>}
           </section>
           <SecurityRecoveryCard user={user} />
+          <DeviceSessionsCard />
           <section className="profile-settings-card" aria-label="Безопасность">
             <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>Безопасность</h3></div>
             <p>Для смены пароля введи текущий и новый пароль.</p>

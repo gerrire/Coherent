@@ -111,6 +111,46 @@ def test_join_token_requires_call_membership(
     assert all(item["id"] != crypto.json()["id"] for item in listed["conversations"])
 
 
+def test_ending_login_removes_the_call_joined_from_that_session(client, csrf_token, monkeypatch):
+    call_id, alice_id, _, first, _ = _active_call(client, csrf_token)
+    settings = client.app.state.settings
+    monkeypatch.setattr(settings, "livekit_url", "ws://localhost:7880")
+    monkeypatch.setattr(settings, "livekit_api_key", "session-test-key")
+    monkeypatch.setattr(
+        settings, "livekit_api_secret", SecretStr("session-test-secret-32-characters")
+    )
+    remove = AsyncMock()
+    monkeypatch.setattr(calls_api, "remove_livekit_participant", remove)
+    assert (
+        client.post(
+            f"/api/v1/calls/{call_id}/join", headers=_headers(first, csrf_token)
+        ).status_code
+        == 200
+    )
+    target = client.get("/api/v1/auth/sessions", headers=_headers(first, csrf_token)).json()[
+        "sessions"
+    ][0]
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "username": "alice",
+                "password": "correct-horse-92",
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.delete(
+            f"/api/v1/auth/sessions/{target['id']}", headers={"X-CSRF-Token": csrf_token}
+        ).status_code
+        == 204
+    )
+    remove.assert_awaited_once_with(settings, UUID(call_id), UUID(alice_id))
+    assert client.get("/api/v1/auth/me").status_code == 200
+
+
 def test_cancelling_ringing_call_closes_room(
     client: TestClient, csrf_token: str, monkeypatch
 ) -> None:

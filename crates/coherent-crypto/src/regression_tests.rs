@@ -63,6 +63,44 @@ fn group(a: &mut CryptoEngine, b: &mut CryptoEngine, room: &str) {
 }
 
 #[test]
+fn retiring_call_keeps_acknowledged_cursor_across_restart() {
+    let (mut a, ba, ra) = account(ALICE, "30000000-0000-4000-8000-000000000001");
+    let (mut b, bb, rb) = account(BOB, "30000000-0000-4000-8000-000000000002");
+    for core in [&mut a, &mut b] {
+        trust(core, &ba, &ra);
+        trust(core, &bb, &rb);
+    }
+    group(&mut a, &mut b, ROOM);
+    run(
+        &mut a,
+        json!({"operation":"apply_event","stream":CALL,"sequence":1,"command":null,"group_id":ROOM}),
+    );
+    run(&mut a, json!({"operation":"retire_stream","stream":CALL}));
+    let mut restored = CryptoEngine::restore_local(&a.snapshot_local().unwrap()).unwrap();
+    assert_eq!(
+        run(
+            &mut restored,
+            json!({"operation":"stream_cursor","stream":CALL})
+        )["sequence"],
+        1
+    );
+    assert_eq!(
+        run(
+            &mut restored,
+            json!({"operation":"group_status","conversation_id":ROOM})
+        )["exists"],
+        false
+    );
+    assert_eq!(
+        run(
+            &mut restored,
+            json!({"operation":"apply_event","stream":CALL,"sequence":1,"command":null})
+        )["duplicate"],
+        true
+    );
+}
+
+#[test]
 fn recovery_rotation_survives_restart_preserves_history_and_rejects_old_key() {
     let (mut a, ba, ra) = account(ALICE, "30000000-0000-4000-8000-000000000001");
     let (mut b, bb, rb) = account(BOB, "30000000-0000-4000-8000-000000000002");

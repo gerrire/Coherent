@@ -1,4 +1,6 @@
-import { messagingFor } from "../lib/crypto/messaging";
+import { messagingFor, MessagingAccessError } from "../lib/crypto/messaging";
+import { CryptoOperationError } from "../lib/crypto/errors";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import {
   AudioTrack,
@@ -36,7 +38,7 @@ import {
   X,
 } from "lucide-react";
 import { AudioPresets, ConnectionQuality, ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type Participant } from "livekit-client";
-import { api, displayName, type Call, type CallJoin } from "../lib/api";
+import { api, ApiError, displayName, type Call, type CallJoin } from "../lib/api";
 import {
   cameraCapture,
   cameraPublish,
@@ -54,6 +56,7 @@ import { NativeScreenAudio } from "../lib/nativeScreenAudio";
 import { NativeScreenShare, type ScreenSource } from "../lib/nativeScreenShare";
 import DesktopSharePicker from "./DesktopSharePicker";
 import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cancelDesktopMediaRequests } from "../lib/desktopPermissions";
 
 type ViewMode = "grid" | "focus";
@@ -328,6 +331,7 @@ function CallRoom({
   const [joinAttempt, setJoinAttempt] = useState(0);
   const [error, setError] = useState("");
   const [mediaError, setMediaError] = useState("");
+  const [keyNotice, setKeyNotice] = useState("");
   const [connected, setConnected] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [participantVolumes, setParticipantVolumes] = useState(loadParticipantVolumes);
@@ -384,23 +388,34 @@ function CallRoom({
       if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
       if (!join?.media_conversation_id) throw new Error("Обнови клиент для защищённых звонков.");
       const mediaKey = await messagingFor(currentUserId).mediaKey(call.id);
+      if (!active) return;
       const provider = new ExternalE2EEKeyProvider();
       worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
       room = new Room({ ...roomOptions, encryption: { keyProvider: provider, worker } });
       await provider.setKey(mediaKey.key);
       await room.setE2EEEnabled(true);
       const fingerprint = await keyFingerprint(mediaKey.key);
+      if (!active) { void room.disconnect(); worker.terminate(); return; }
       if (active) setEncryptedRoom({ callId: call.id, room, fingerprint });
-      let previousKey = mediaKey.key, refreshing = false;
+      let previousKey = mediaKey.key, refreshing = false, failureSince = 0;
       refreshKey = () => {
         if (!active || refreshing) return; refreshing = true;
         void messagingFor(currentUserId).mediaKey(call.id).then(async next => {
+          if (active) { failureSince = 0; setKeyNotice(""); }
           if (!active || next.key === previousKey) return;
           await provider.setKey(next.key); previousKey = next.key;
           const nextFingerprint = await keyFingerprint(next.key);
           if (active && room) setEncryptedRoom({callId:call.id,room,fingerprint:nextFingerprint});
         }).catch(reason => {
-          if (active) { setError(reason instanceof Error ? reason.message : "Не удалось обновить ключ звонка"); void room?.disconnect(); }
+          if (!active) return;
+          const temporary = reason instanceof TypeError || (reason instanceof DOMException && ["TimeoutError", "AbortError"].includes(reason.name)) || (reason instanceof CryptoOperationError && reason.code === "CRYPTO_TIMEOUT") || (reason instanceof ApiError && (reason.status >= 500 || reason.status === 429 || reason.status === 409))
+            || (reason instanceof MessagingAccessError && reason.kind === "changed" && reason.message.includes("Состав беседы изменился"));
+          if (temporary) {
+            failureSince ||= Date.now();
+            if (Date.now() - failureSince < 30000) { setKeyNotice("Восстанавливаем соединение…"); return; }
+          }
+          setError(reason instanceof Error ? reason.message : "Не удалось обновить ключ звонка");
+          void room?.disconnect();
         }).finally(() => { refreshing = false; });
       };
       window.addEventListener("coherent-media-membership", refreshKey);
@@ -422,6 +437,7 @@ function CallRoom({
 
   function retryConnection() {
     setError("");
+    setKeyNotice("");
     setJoin(null);
     setConnected(false);
     setJoinAttempt((attempt) => attempt + 1);
@@ -476,7 +492,7 @@ function CallRoom({
       audio={false}
       video={false}
       onConnected={() => setConnected(true)}
-      onDisconnected={() => setConnected(false)}
+      onDisconnected={() => { setConnected(false); setError("Соединение со звонком завершилось. Подключись повторно."); }}
       onError={(reason) => setError(reason.message)}
       onEncryptionError={(reason) => { setError(`Ошибка шифрования: ${reason.message}`); void encryptedRoom.room.disconnect(); }}
     >
@@ -485,6 +501,7 @@ function CallRoom({
       {header}
       <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
       <div className="call-surface-controls">
+        {keyNotice && <span className="call-key-notice" role="status">{keyNotice}</span>}
         <CallConnectionNotice />
         <StartAudio className="call-start-audio" label="Включить звук" />
         <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
@@ -862,18 +879,61 @@ function SidebarParticipant({ participant, camera, volume, onVolumeChange, media
   </div>;
 }
 
-function FocusedScreen({ trackRef, style, label, volumeButton, onAspectRatioChange }: {
+function FocusedScreen({ trackRef, style, label, volumeButton, onAspectRatioChange, onFocus }: {
   trackRef: NonNullable<ComponentProps<typeof VideoTrack>["trackRef"]>;
-  style: CSSProperties;
+  style?: CSSProperties;
   label: string;
   volumeButton: ReactNode;
-  onAspectRatioChange: (ratio: number) => void;
+  onAspectRatioChange?: (ratio: number) => void;
+  onFocus?: () => void;
 }) {
-  return <div className="call-tile call-tile-screen" style={style}>
+  const tile = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [viewport, setViewport] = useState(false);
+  useEffect(() => {
+    if ((!fullscreen && !viewport) || !isTauri()) return;
+    let active = true, restore = false;
+    const window = getCurrentWindow();
+    document.documentElement.classList.add("coherent-screen-fullscreen");
+    void window.isFullscreen().then(async previous => {
+      if (!active || previous) return;
+      await window.setFullscreen(true);
+      if (active) restore = true;
+      else await window.setFullscreen(false);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      document.documentElement.classList.remove("coherent-screen-fullscreen");
+      if (restore) void window.setFullscreen(false).catch(() => undefined);
+    };
+  }, [fullscreen, viewport]);
+  useEffect(() => {
+    const change = () => setFullscreen(document.fullscreenElement === tile.current);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setViewport(false);
+      if (document.fullscreenElement === tile.current) void document.exitFullscreen().catch(() => undefined);
+    };
+    document.addEventListener("fullscreenchange", change);
+    window.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("fullscreenchange", change); window.removeEventListener("keydown", escape); };
+  }, []);
+  async function toggle() {
+    if (viewport) { setViewport(false); return; }
+    if (document.fullscreenElement === tile.current) { await document.exitFullscreen(); return; }
+    try {
+      if (!tile.current?.requestFullscreen) throw new Error("Fullscreen unavailable");
+      await tile.current.requestFullscreen();
+    } catch { setViewport(true); }
+  }
+  const content = <div ref={tile} className={`call-tile call-tile-screen ${viewport ? "call-screen-viewport" : ""}`} style={style} onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) void toggle(); }}>
     <VideoWithResolution trackRef={trackRef} onAspectRatioChange={onAspectRatioChange} />
     <span className="call-tile-name">{label}</span>
     {volumeButton}
+    {onFocus && <button className="call-screen-focus-button" onClick={onFocus} aria-label={`Крупно: ${label}`}>Крупно</button>}
+    <button type="button" className="call-screen-fullscreen-button" onClick={() => void toggle()} aria-label={fullscreen || viewport ? "Вернуться из демонстрации" : `Демонстрация на весь экран: ${label}`} title={fullscreen || viewport ? "Выйти из полного экрана" : "Только демонстрация на весь экран"}>{fullscreen || viewport ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</button>
   </div>;
+  return viewport ? createPortal(content, document.body) : content;
 }
 
 function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange, screenVolumes, onScreenVolumeChange, media }: {
@@ -1011,12 +1071,7 @@ function CallStage({ call, mode, onModeChange, density, volumes, onVolumeChange,
   if (screens.length > 0) {
     return <>
       <div className={`call-stage call-stage-grid call-stage-with-screens ${denseClass} ${tileCount > 2 ? "call-stage-group" : ""} ${tileCount > 4 ? "call-stage-many" : ""}`}>
-        {screens.map((item) => <div className="call-tile call-tile-screen" key={`screen-${item.participant.identity}`}>
-          <VideoWithResolution trackRef={item} />
-          <span className="call-tile-name">{screenLabel(item.participant)}</span>
-          {screenVolumeButton(item.participant)}
-          <button className="call-screen-focus-button" onClick={() => { setSelectedScreenOwner(item.participant.identity); onModeChange("focus"); }} aria-label={`Крупно: ${screenLabel(item.participant)}`}>Открыть крупно</button>
-        </div>)}
+        {screens.map((item) => <FocusedScreen key={`screen-${item.participant.identity}`} trackRef={item} label={screenLabel(item.participant)} volumeButton={screenVolumeButton(item.participant)} onFocus={() => { setSelectedScreenOwner(item.participant.identity); onModeChange("focus"); }} />)}
         {participants.map(tile)}
         {invited.map(invitedTile)}
       </div>

@@ -199,6 +199,11 @@ export async function initializeCsrf(): Promise<void> {
   csrfToken = result.csrf_token;
 }
 
+export interface DeviceSession {
+  id: string; agent: string; current: boolean;
+  created_at: string; last_seen_at: string; expires_at: string;
+}
+
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   if (isTauri()) {
@@ -223,6 +228,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       });
     if (reply.status === 204) return undefined as T;
     if (reply.status < 200 || reply.status >= 300) {
+      if (reply.status === 401 && path !== "/api/v1/auth/login") window.dispatchEvent(new Event("coherent-session-ended"));
       const detail = (reply.body as ApiErrorBody)?.detail;
       const message = Array.isArray(detail) ? detail.map((item) => item.msg).join(". ") : detail;
       throw new ApiError(message || "Не получилось выполнить запрос. Попробуй ещё раз.", reply.status);
@@ -239,11 +245,13 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     headers.set("X-CSRF-Token", csrfToken);
   }
 
-  const response = await fetch(path, { ...init, method, headers, credentials: "include" });
+  const signal = init.signal ?? AbortSignal.timeout(init.body instanceof FormData ? 120000 : 20000);
+  const response = await fetch(path, { cache: "no-store", ...init, signal, method, headers, credentials: "include" });
   if (response.status === 204) return undefined as T;
 
   const result = await response.json().catch(() => ({} as ApiErrorBody));
   if (!response.ok) {
+    if (response.status === 401 && path !== "/api/v1/auth/login") window.dispatchEvent(new Event("coherent-session-ended"));
     const detail = (result as ApiErrorBody).detail;
     const message = Array.isArray(detail) ? detail.map((item) => item.msg).join(". ") : detail;
     throw new ApiError(
@@ -290,6 +298,8 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   logout: () => request<void>("/api/v1/auth/logout", { method: "POST" }),
+  sessions: () => request<{ sessions: DeviceSession[] }>("/api/v1/auth/sessions"),
+  terminateSession: (id: string) => request<void>(`/api/v1/auth/sessions/${id}`, { method: "DELETE" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/api/v1/auth/password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
   updateProfile: (display_name: string) => request<User>("/api/v1/auth/profile", { method: "PATCH", body: JSON.stringify({ display_name }) }),

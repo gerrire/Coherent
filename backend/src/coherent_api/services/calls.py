@@ -385,7 +385,11 @@ async def invite_to_call(
 
 
 async def join_call(
-    session: AsyncSession, user: User, call_id: UUID, settings: Settings
+    session: AsyncSession,
+    user: User,
+    call_id: UUID,
+    settings: Settings,
+    session_digest: str | None = None,
 ) -> CallJoinResponse:
     call = await get_call(session, user, call_id)
     member = await session.get(CallMember, (call_id, user.id))
@@ -393,6 +397,7 @@ async def join_call(
         raise CallStateError
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     token = issue_join_token(settings, call.id, user.id, user.public_name)
+    member.session_digest = session_digest
     media_id = await sync_members(session, call)
     await session.commit()
     return CallJoinResponse(

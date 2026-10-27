@@ -30,7 +30,7 @@ $secure = $saved.Trim() | ConvertTo-SecureString
 Linux-среде не нужен путь `C:\Users\Алексей\.tauri`: ключ передаётся Windows runner из GitHub Secrets только на шаге подписи. Windows-приложение собирается и проверяется на `windows-latest`.
 
 1. Зафиксируйте исходники с согласованной версией в Tauri, Cargo и npm и заметками `docs/releases/desktop-<version>.md`.
-2. Запустите workflow **Windows client** из `main` или `windows-client`, включив `prepare_release`.
+2. Для черновика запустите workflow **Windows client** из `main` или `windows-client`, включив `prepare_release`. Для публикации подписанного выпуска создайте и отправьте тег `desktop-v<version>` на проверенном коммите, включённом в `main`: сборка по тегу проверяет версию и подпись, затем публикует выпуск в канал обновлений.
 
 ```bash
 gh workflow run windows-client.yml --repo gerrire/Coherent --ref windows-client -f prepare_release=true
@@ -41,7 +41,7 @@ gh workflow run windows-client.yml --repo gerrire/Coherent --ref windows-client 
 
 Быстрая проверка секретов без сборки приложения — workflow **Desktop signing check**. Он работает на Linux runner: подписывает временный текстовый файл, сверяет публичный ключ и подписанную версию и проверяет отказ после изменения файла. Ключи и временные файлы не загружаются в artifacts.
 
-Ветка `windows-client` содержит актуальный сценарий подписи. Если Linux-агент работает в `main`, изменения сценария можно перенести туда обычным review/merge; сами секреты общие для репозитория и уже доступны существующему workflow `main`.
+Исходники и сценарий подписи входят в `main`; единственная Windows-ветка — `windows-client`. Временная ветка `windows-release` и сценарии неподписанной ручной публикации удалены после восстановления исходного ключа.
 
 ## Локальная сборка Windows
 

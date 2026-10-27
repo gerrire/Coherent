@@ -29,3 +29,4 @@ class CallMember(Base):
     )
     joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    session_digest: Mapped[str | None] = mapped_column(String(64))

@@ -108,8 +108,15 @@ export class MlsMessaging {
   }
   async refreshKeys(): Promise<void> { return this.lock(async () => { await this.ready(); await this.packages(); }); }
   async initialize(): Promise<void> { return this.lock(() => this.ready()); }
+  private async directory(conversationId: string): Promise<Directory> {
+    const result = await apiRequest<Directory>(`/api/v1/conversations/${conversationId}/secure`, { cache: "no-store" });
+    if (!result?.state || !Array.isArray(result.state.roster) || !Array.isArray(result.accounts) || !Array.isArray(result.eligible_devices)) {
+      throw new ApiError("Не удалось синхронизировать защищённую сессию. Повтори отправку после подключения к сети", 502);
+    }
+    return result;
+  }
   private async checkDirectory(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
-    const directory = await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`);
+    const directory = await this.directory(conversation.id);
     if (!same(directory.accounts.map(a => a.account_id), conversation.members.map(m => m.id))) throw new MessagingAccessError("changed", "Состав беседы изменился. Обнови её перед отправкой");
     let waiting = false;
     for (const account of directory.accounts) {
@@ -232,8 +239,16 @@ export class MlsMessaging {
         const pending = (await this.crypto.pendingDeliveries()).find(item => hint(item)?.lease.request_id === event.id);
         // Old generations use the account's authenticated history archive. Do
         // not replay their live ratchets on a newly joined/recovered device.
-        const ours = packet.roster.includes(this.device!.device_id) &&
+        let ours = packet.roster.includes(this.device!.device_id) &&
           (packet.group_id === directory.state.group_id || (!!pending && event.sender.device_id === this.device!.device_id));
+        if (ours && !pending) {
+          const local = await this.crypto.execute({ operation: "group_status", conversation_id: packet.group_id });
+          // Older versions retired the ratchet and cursor together. Verify old
+          // events but recover with a fresh group instead of replaying a lost
+          // ratchet. Mismatched pending acknowledgements remain fatal.
+          const welcome = !packet.message && packet.targets.includes(this.device!.device_id) && event.sender.device_id !== this.device!.device_id;
+          if (!local.result.exists && !welcome) ours = false;
+        }
         let inner: CryptoCommand | null = null; let delivered: string | undefined;
         if (ours) {
           await this.crypto.execute({ operation: "authorize_conversation", conversation_id: packet.group_id, device_ids: packet.roster });
@@ -266,6 +281,8 @@ export class MlsMessaging {
           recover:!!recoveryGroup, recovery_group_id:recoveryGroup});
         const signed = await this.crypto.execute({operation:"sign_action", nonce:challenge.nonce, payload});
         const lease = await apiRequest<Lease>(`/api/v1/conversations/${conversation.id}/secure/lease`, { method: "POST", body: JSON.stringify({ device_id:this.device!.device_id, request_id:requestId, operation, recover:!!recoveryGroup, recovery_group_id:recoveryGroup, challenge_id:challenge.challenge_id, proof:signed.result.proof }) });
+        if (lease.accepted) throw new ApiError("Состав или версия беседы изменились. Повтори синхронизацию", 409);
+        if (typeof lease.group_id !== "string" || typeof lease.lease_id !== "string" || typeof lease.nonce !== "string" || !Array.isArray(lease.roster) || !Array.isArray(lease.packages)) throw new ApiError("Не удалось получить состояние защищённой отправки", 502);
         this.acquired.set(lease.lease_id, { conversation, lease }); return lease;
       }
       catch (error) { const retry = !(error instanceof ApiError) || error.status >= 500 || (error.status === 409 && error.message.includes("Другая отправка")); if (!retry || attempt >= 3) throw error; await pause(1100); }
@@ -288,7 +305,7 @@ export class MlsMessaging {
       : { operation: "add_members", conversation_id: lease.group_id, key_packages: lease.packages.map(p => p.wire) }, undefined, { conversation_id: conversation.id, lease, files: [] });
     const item = (await this.crypto.pendingDeliveries()).find(p => p.id === result.delivery_id)!;
     await this.post(item);
-    directory.state = (await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`)).state;
+    directory.state = (await this.directory(conversation.id)).state;
     await this.pull(conversation, directory);
     if (!same(directory.state.roster, directory.eligible_devices)) await this.ensureGroup(conversation, directory);
   }
@@ -296,7 +313,7 @@ export class MlsMessaging {
     for (let attempt=0;;attempt++) {
       try { return await this.prepareOnce(conversation,confirmed); }
       catch (error) {
-        const race=error instanceof ApiError && (error.status >= 500 || (error.status === 409 && ["Защищённая сессия уже создана","Состав или версия беседы изменились","Сначала синхронизируй новые устройства","Состав защищённой сессии изменился","Состав защищённой сессии уже обновлён","Для этого устройства нужна новая защищённая сессия"].some(text => error.message.includes(text))));
+        const race=error instanceof ApiError && (error.status >= 500 || (error.status === 409 && ["Защищённая сессия уже создана","Состав или версия беседы изменились","Сначала синхронизируй новые устройства","Состав защищённой сессии изменился","Состав защищённой сессии уже обновлён","Для этого устройства нужна новая защищённая сессия","Это устройство уже участвует в защищённой сессии","Защищённая сессия уже обновилась"].some(text => error.message.includes(text))));
         if (!race || attempt>=3) throw error;
         await pause(300*(attempt+1));
       }
@@ -313,7 +330,7 @@ export class MlsMessaging {
       if (!(error instanceof CryptoOperationError) || error.code !== "WELCOME_TREE_MISSING") throw error;
       await this.ensureGroup(conversation, directory, true);
     }
-    directory.state = (await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`)).state;
+    directory.state = (await this.directory(conversation.id)).state;
     await this.ensureGroup(conversation, directory);
     for (const old of await this.crypto.pendingDeliveries()) {
       if (old.operation !== "send" || hint(old)?.conversation_id !== conversation.id) continue;

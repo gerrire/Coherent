@@ -2904,8 +2904,6 @@ a {
   .message-composer { flex: 0 0 auto; padding: 10px 14px 12px; }
   .composer-field textarea { font-size: 16px; }
   .app-statusbar { display: none; }
-  .app-shell:has(.message-composer:focus-within) .account-bar { display: none; }
-  .content-area:has(.message-composer:focus-within) { padding-bottom: env(safe-area-inset-bottom, 0px); }
   .content-area:has(.message-composer:focus-within) .mobile-conversations,
   .content-area:has(.message-composer:focus-within) .messages-intro { display: none; }
   .content-area:has(.message-composer:focus-within) .call-surface-expanded:not(:fullscreen):not(.call-surface-maximized) { height: 54px; }

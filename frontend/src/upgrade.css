@@ -1,4 +1,25 @@
 .workspace-navigation { display: contents; }
+.mobile-drawer-close { display: none; }
+.messages-intro[hidden] { display: none; }
+.coherent-screen-fullscreen .desktop-titlebar { display: none; }
+.session-refresh { margin-left: auto; background: none; border: 0; color: var(--theme-muted); cursor: pointer; }
+.device-sessions { display: grid; gap: 10px; }
+.device-session { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--theme-border); border-radius: 12px; min-width: 0; }
+.device-session > svg { flex: 0 0 auto; color: var(--theme-accent-text); }
+.device-session-info { display: grid; gap: 5px; flex: 1; min-width: 0; }
+.device-session-info strong { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.device-session-info strong span { color: var(--theme-accent-text); font-size: 10px; }
+.device-session-info small { color: var(--theme-muted); font-size: 10px; }
+.device-session > button { display: flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; padding: 9px; background: var(--theme-hover); color: var(--theme-text); cursor: pointer; }
+.call-key-notice { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 5px 10px; font-size: 10px; color: var(--theme-muted); border-radius: 8px; background: var(--theme-panel); white-space: nowrap; pointer-events: none; }
+.call-screen-fullscreen-button { position: absolute; bottom: 10px; right: 10px; z-index: 3; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #fff3; border-radius: 8px; color: #fff; background: #101014cc; cursor: pointer; }
+.call-tile-screen:fullscreen, .call-tile-screen.call-screen-viewport { display: block; position: fixed; inset: 0; z-index: 2400; width: 100vw !important; height: 100dvh !important; max-width: none !important; max-height: none !important; aspect-ratio: auto !important; padding: 0; margin: 0; border: 0; border-radius: 0; background: #000; }
+.call-tile-screen:fullscreen video, .call-screen-viewport video { width: 100%; height: 100%; object-fit: contain; }
+.call-tile-screen:fullscreen .call-tile-resolution, .call-screen-viewport .call-tile-resolution { display: none; }
+.call-tile-screen:fullscreen .call-tile-name, .call-tile-screen:fullscreen .call-screen-volume-button, .call-tile-screen:fullscreen .call-screen-focus-button,
+.call-screen-viewport .call-tile-name, .call-screen-viewport .call-screen-volume-button, .call-screen-viewport .call-screen-focus-button { display: none; }
+.call-tile-screen:fullscreen .call-screen-fullscreen-button, .call-screen-viewport .call-screen-fullscreen-button { opacity: .3; }
+.call-tile-screen:fullscreen:hover .call-screen-fullscreen-button, .call-screen-viewport:hover .call-screen-fullscreen-button { opacity: 1; }
 .mobile-menu-toggle, .mobile-drawer-backdrop { display: none; }
 .message-date-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0 12px; color: var(--theme-muted); font-size: 11px; }
 .message-date-divider::before, .message-date-divider::after { content: ""; height: 1px; flex: 1; background: var(--theme-border); }
@@ -47,6 +68,10 @@
   .workspace-navigation { display: none; }
   .workspace-navigation.is-open { display: grid; position: fixed; z-index: 151; inset: 0 auto 0 0; width: min(92vw, 370px); grid-template-columns: 56px minmax(0, 1fr); height: var(--coherent-visible-height, 100dvh); background: var(--theme-sidebar); box-shadow: 16px 0 70px #0006; }
   .workspace-navigation.is-open .server-rail, .workspace-navigation.is-open .channel-sidebar { display: flex; }
+  .workspace-navigation.is-open .mobile-drawer-close { display: grid; place-items: center; position: absolute; top: max(10px, env(safe-area-inset-top)); right: 10px; z-index: 2; width: 36px; height: 36px; border: 1px solid var(--theme-border); border-radius: 10px; background: var(--theme-panel); color: var(--theme-text); }
+  .workspace-navigation .workspace-picker { padding-right: 42px; }
+  .device-session { flex-wrap: wrap; }
+  .device-session > button { margin-left: auto; }
   .workspace-navigation .server-rail { padding-top: max(14px, env(safe-area-inset-top)); overflow-y: auto; gap: 10px; }
   .workspace-navigation .rail-item, .workspace-navigation .rail-home { width: 40px; height: 40px; border-radius: 13px; }
   .workspace-navigation .channel-sidebar { padding: 0 10px max(16px, env(safe-area-inset-bottom)); }

@@ -107,6 +107,11 @@ impl NetworkState {
             .and_then(|bytes| String::from_utf8(bytes).ok());
         Ok(Self {
             client: reqwest::Client::builder()
+                .user_agent(concat!(
+                    "CoherentDesktop/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (Windows)"
+                ))
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .timeout(std::time::Duration::from_secs(60))

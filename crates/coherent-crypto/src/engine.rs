@@ -433,7 +433,8 @@ impl CryptoEngine {
                     self.mls.retire_group(&group)?;
                     self.active_groups.remove(&stream);
                 }
-                self.cursors.remove(&stream);
+                // Preserve acknowledgements when retiring a call ratchet. A
+                // returning device must not replay its own consumed outbox.
                 Ok(json!({}))
             }
             Command::MediaKey {
