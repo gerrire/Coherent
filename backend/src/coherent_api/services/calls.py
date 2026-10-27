@@ -1,6 +1,3 @@
-import base64
-import hashlib
-import hmac
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -17,12 +14,14 @@ from coherent_api.schemas.calls import (
     CallResponse,
     CurrentCallsResponse,
 )
+from coherent_api.services.call_media import sync_members
 from coherent_api.services.conversation_access import (
     GroupMembershipError,
     add_group_members,
     conversation_member_ids,
     get_conversation,
     get_server_channel,
+    is_call_media,
     other_user_id,
     validate_friends,
 )
@@ -111,6 +110,7 @@ async def expire_calls(session: AsyncSession, user_ids: tuple[UUID, ...]) -> boo
         call.status = "missed" if call.status == "ringing" else "ended"
         call.ended_at = now
         await release_members(session, call.id, now)
+        await sync_members(session, call)
         changed = True
     if changed:
         await session.flush()
@@ -162,7 +162,9 @@ async def start_call(
     session: AsyncSession, user: User, conversation_id: UUID, invitee_ids: list[UUID] | None = None
 ) -> CallResponse:
     conversation = await get_conversation(session, user, conversation_id)
-    if await get_server_channel(session, conversation_id) is not None:
+    if await get_server_channel(session, conversation_id) is not None or await is_call_media(
+        session, conversation_id
+    ):
         raise CallInviteError("Этот канал предназначен для текстовых сообщений")
     extras = set(invitee_ids or ())
     if conversation.kind == "group":
@@ -183,7 +185,10 @@ async def start_call(
     # Lock accounts in a stable order so two simultaneous calls cannot reserve one user twice.
     users = list(
         await session.scalars(
-            select(User).where(User.id.in_(participant_ids)).order_by(User.id).with_for_update()
+            select(User)
+            .where(User.id.in_(participant_ids))
+            .order_by(User.id)
+            .with_for_update(key_share=True)
         )
     )
     if len(users) != len(participant_ids):
@@ -277,6 +282,7 @@ async def accept_call(session: AsyncSession, user: User, call_id: UUID) -> CallR
         call.expires_at = now + timedelta(minutes=LAST_PARTICIPANT_MINUTES)
     elif joined_before == 1:
         call.expires_at = now + timedelta(hours=MAX_CALL_HOURS)
+    await sync_members(session, call)
     await session.commit()
     return await call_response(session, call)
 
@@ -315,6 +321,7 @@ async def end_call(session: AsyncSession, user: User, call_id: UUID) -> tuple[Ca
     if call.status not in ("ringing", "active"):
         call.ended_at = now
         await release_members(session, call.id, now)
+    await sync_members(session, call)
     await session.commit()
     return await call_response(session, call), was_active
 
@@ -327,7 +334,10 @@ async def invite_to_call(
         raise CallInviteError
     users = list(
         await session.scalars(
-            select(User).where(User.id.in_(targets)).order_by(User.id).with_for_update()
+            select(User)
+            .where(User.id.in_(targets))
+            .order_by(User.id)
+            .with_for_update(key_share=True)
         )
     )
     if len(users) != len(targets):
@@ -369,6 +379,7 @@ async def invite_to_call(
             existing.left_at = None
         else:
             session.add(CallMember(call_id=call_id, user_id=target_id, state="invited"))
+    await sync_members(session, call)
     await session.commit()
     return await call_response(session, call)
 
@@ -382,13 +393,8 @@ async def join_call(
         raise CallStateError
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     token = issue_join_token(settings, call.id, user.id, user.public_name)
-    key = hmac.new(
-        settings.secret_key.get_secret_value().encode(),
-        b"coherent-call-e2ee-v1:" + call.id.bytes,
-        hashlib.sha256,
-    ).digest()
+    media_id = await sync_members(session, call)
+    await session.commit()
     return CallJoinResponse(
-        server_url=settings.livekit_url,
-        token=token,
-        e2ee_key=base64.urlsafe_b64encode(key).decode().rstrip("="),
+        server_url=settings.livekit_url, token=token, media_conversation_id=media_id
     )

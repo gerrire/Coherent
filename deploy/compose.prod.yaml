@@ -1,9 +1,16 @@
 name: coherent
 
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   database:
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       POSTGRES_DB: coherent
       POSTGRES_USER: coherent
@@ -19,6 +26,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *bounded-logging
     network_mode: host
     command: ["redis-server", "--bind", "127.0.0.1", "--save", "", "--appendonly", "no"]
     healthcheck:
@@ -28,10 +36,15 @@ services:
       retries: 20
 
   api:
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    image: coherent-api:${COHERENT_IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
     restart: unless-stopped
+    logging: *bounded-logging
     extra_hosts:
       - "host.docker.internal:host-gateway"
     tmpfs:
@@ -70,6 +83,7 @@ services:
     volumes:
       - ../data/attachments:/data/attachments
       - ../data/vapid:/data/vapid
+      - ../data/operations:/data/operations:ro
       - /etc/coherent/keys:/run/coherent-keys:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"]
@@ -80,11 +94,15 @@ services:
   livekit:
     image: livekit/livekit-server:v1.13.10
     restart: unless-stopped
+    logging: *bounded-logging
     network_mode: host
     environment:
       LIVEKIT_CONFIG: |
         port: 7880
         log_level: info
+        webhook:
+          api_key: "${LIVEKIT_API_KEY}"
+          urls: ["http://127.0.0.1:8000/api/v1/calls/media-events"]
         rtc:
           tcp_port: 7881
           udp_port: 7882-7883
@@ -110,10 +128,12 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
 
   web:
+    image: coherent-web:${COHERENT_IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
     restart: unless-stopped
+    logging: *bounded-logging
     network_mode: host
     environment:
       PUBLIC_IP: ${PUBLIC_IP:?Set PUBLIC_IP in deploy/.env}
@@ -130,10 +150,12 @@ services:
         condition: service_started
 
   monitor-bot:
+    image: coherent-monitor-bot:${COHERENT_IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile.monitor-bot
     restart: unless-stopped
+    logging: *bounded-logging
     network_mode: host
     read_only: true
     cap_drop: [ALL]

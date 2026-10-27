@@ -13,6 +13,10 @@ class CreateGroupRequest(BaseModel):
     name: str | None = Field(default=None, max_length=64)
 
 
+class AddGroupMembersRequest(BaseModel):
+    user_ids: list[UUID] = Field(min_length=1, max_length=9)
+
+
 class RenameConversationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
@@ -65,6 +69,7 @@ class ConversationUser(BaseModel):
 class ConversationResponse(BaseModel):
     id: UUID
     kind: str
+    owner_id: UUID | None = None
     encryption: str = "cloud"
     name: str | None = None
     members: list[ConversationUser] = Field(default_factory=list)
@@ -79,6 +84,7 @@ class ConversationResponse(BaseModel):
 
 class ConversationsResponse(BaseModel):
     conversations: list[ConversationResponse] = Field(default_factory=list)
+    next_cursor: str | None = None
 
 
 class MessagesResponse(BaseModel):

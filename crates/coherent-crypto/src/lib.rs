@@ -35,3 +35,6 @@ pub(crate) fn uuid_bytes(value: &str) -> Result<[u8; 16], CryptoError> {
         .map_err(|_| CryptoError::InvalidInput)?
         .as_bytes())
 }
+
+#[cfg(test)]
+mod regression_tests;

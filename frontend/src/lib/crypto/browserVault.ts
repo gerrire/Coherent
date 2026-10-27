@@ -1,7 +1,35 @@
 import { UUID_PATTERN, type DeliveryItem } from "./types";
 
-interface StoredState { device: string; revision: number; nonce: Uint8Array<ArrayBuffer>; ciphertext: ArrayBuffer }
-export interface VaultContent { engine: number[]; outbox: DeliveryItem[] }
+export interface VaultVersion { device: string; revision: number }
+interface StoredState extends VaultVersion { nonce: Uint8Array<ArrayBuffer>; ciphertext: ArrayBuffer }
+export interface VaultContent { engine: Uint8Array<ArrayBuffer>; outbox: DeliveryItem[] }
+
+export function encodeVault(content: VaultContent): Uint8Array<ArrayBuffer> {
+  const outbox = new TextEncoder().encode(JSON.stringify(content.outbox));
+  const plain = new Uint8Array(13 + content.engine.length + outbox.length);
+  plain.set(new TextEncoder().encode("CohVault2"));
+  new DataView(plain.buffer).setUint32(9, content.engine.length, false);
+  plain.set(content.engine, 13); plain.set(outbox, 13 + content.engine.length); outbox.fill(0);
+  return plain;
+}
+
+export function decodeVault(bytes: Uint8Array<ArrayBuffer>): VaultContent {
+  if (bytes.length > 96 * 1024 * 1024) throw new Error("Локальное хранилище переполнено");
+  const magic = new TextEncoder().encode("CohVault2");
+  let content: VaultContent;
+  if (magic.every((value, index) => bytes[index] === value)) {
+    if (bytes.length < 13) throw new Error("Повреждено локальное хранилище");
+    const length = new DataView(bytes.buffer, bytes.byteOffset).getUint32(9, false);
+    if (!length || length > bytes.length - 13) throw new Error("Повреждено локальное хранилище");
+    content = {engine:bytes.slice(13, 13 + length), outbox:JSON.parse(new TextDecoder().decode(bytes.subarray(13 + length)))};
+  } else {
+    const legacy = JSON.parse(new TextDecoder().decode(bytes)) as {engine:number[];outbox:DeliveryItem[]};
+    if (!Array.isArray(legacy.engine) || !legacy.engine.length || !legacy.engine.every(value => Number.isInteger(value) && value >= 0 && value <= 255)) throw new Error("Повреждено локальное хранилище");
+    content = {engine:new Uint8Array(legacy.engine),outbox:legacy.outbox}; legacy.engine.fill(0);
+  }
+  if (!Array.isArray(content.outbox) || content.outbox.length > 100) throw new Error("Повреждено локальное хранилище");
+  return content;
+}
 
 function request<T>(value: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -32,6 +60,14 @@ export class BrowserVault {
     return new BrowserVault(database, account);
   }
 
+  async version(): Promise<VaultVersion | null> {
+    const tx = this.database.transaction("vault", "readonly");
+    const head = await request(tx.objectStore("vault").get("head")) as VaultVersion | undefined;
+    if (head) return head;
+    const legacy = await request(this.database.transaction("vault", "readonly").objectStore("vault").get("state")) as StoredState | undefined;
+    return legacy ? { device: legacy.device, revision: legacy.revision } : null;
+  }
+
   private aad(device: string, revision: number): Uint8Array<ArrayBuffer> {
     return new TextEncoder().encode(`coherent/browser-vault/v1\0${this.account}\0${device}\0${revision}`);
   }
@@ -59,17 +95,16 @@ export class BrowserVault {
     if (!UUID_PATTERN.test(state.device) || !Number.isSafeInteger(state.revision) || state.revision < 1 || state.nonce.byteLength !== 12 || state.ciphertext.byteLength > 96 * 1024 * 1024) throw new Error("Повреждено локальное хранилище");
     const bytes = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: state.nonce, additionalData: this.aad(state.device, state.revision) }, storedKey, state.ciphertext));
     try {
-      const content = JSON.parse(new TextDecoder().decode(bytes)) as VaultContent;
-      if (!Array.isArray(content.engine) || !Array.isArray(content.outbox) || content.outbox.length > 100) throw new Error("Повреждено локальное хранилище");
+      const content = decodeVault(bytes);
       return { key: storedKey, state, content };
     } finally { bytes.fill(0); }
   }
 
-  async save(key: CryptoKey, previous: StoredState | null, device: string, content: VaultContent): Promise<void> {
+  async save(key: CryptoKey, previous: VaultVersion | null, device: string, content: VaultContent): Promise<VaultVersion> {
     const revision = (previous?.revision || 0) + 1;
     if (!Number.isSafeInteger(revision) || content.outbox.length > 100) throw new Error("Очередь защищённых сообщений заполнена");
     const nonce = crypto.getRandomValues(new Uint8Array(12));
-    const plain = new TextEncoder().encode(JSON.stringify(content));
+    const plain = encodeVault(content);
     let ciphertext: ArrayBuffer;
     try {
       if (plain.byteLength > 96 * 1024 * 1024) throw new Error("Локальное хранилище переполнено");
@@ -78,11 +113,13 @@ export class BrowserVault {
     const write = this.database.transaction("vault", "readwrite", { durability: "strict" });
     const done = completed(write);
     const current = await request(write.objectStore("vault").get("state")) as StoredState | undefined;
-    if ((current?.revision || 0) !== (previous?.revision || 0) || (current && current.device !== device)) {
+    if ((current?.revision || 0) !== (previous?.revision || 0) || (current && current.device !== previous?.device)) {
       write.abort(); await done.catch(() => {}); throw new Error("Хранилище изменилось. Повтори действие");
     }
     write.objectStore("vault").put({ device, revision, nonce, ciphertext } satisfies StoredState, "state");
+    write.objectStore("vault").put({ device, revision }, "head");
     await done;
+    return { device, revision };
   }
 
   close(): void { this.database.close(); }

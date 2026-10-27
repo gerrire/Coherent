@@ -34,6 +34,9 @@ class Conversation(Base):
     kind: Mapped[str] = mapped_column(
         String(16), default="direct", server_default="direct", nullable=False
     )
+    owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     name: Mapped[str | None] = mapped_column(String(64))
     user_low_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=True

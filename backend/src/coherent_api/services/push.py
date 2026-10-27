@@ -112,7 +112,6 @@ async def send_to_users(
     if not subscriptions:
         return
     public_key(settings)
-    data = json.dumps(payload, ensure_ascii=False)
 
     def send_one(subscription: PushSubscription) -> int | None:
         try:
@@ -124,7 +123,9 @@ async def send_to_users(
                         "auth": subscription.auth,
                     },
                 },
-                data=data,
+                data=json.dumps(
+                    {**payload, "account_id": str(subscription.user_id)}, ensure_ascii=False
+                ),
                 vapid_private_key=settings.vapid_key_path,
                 vapid_claims={"sub": settings.vapid_subject},
                 ttl=180,

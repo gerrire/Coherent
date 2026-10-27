@@ -1,3 +1,4 @@
+import { messagingFor } from "../lib/crypto/messaging";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import {
   AudioTrack,
@@ -220,6 +221,7 @@ export default function CallPanel({
   return (
     <section ref={panelRef} className={`call-surface ${compact ? "call-surface-compact" : "call-surface-expanded"} ${isViewportFullscreen ? "call-surface-maximized" : ""}`} aria-label={`Разговор: ${title}`}>
       <CallRoom
+        currentUserId={currentUserId}
         key={call.id}
         call={call}
         title={title}
@@ -276,6 +278,7 @@ export default function CallPanel({
 }
 
 function CallRoom({
+  currentUserId,
   call,
   title,
   compact,
@@ -296,6 +299,7 @@ function CallRoom({
   onEnd,
   pending,
 }: {
+  currentUserId: string;
   call: Call;
   title: string;
   compact: boolean;
@@ -370,16 +374,33 @@ function CallRoom({
     let active = true;
     let room: Room | undefined;
     let worker: Worker | undefined;
+    let refreshTimer: number | undefined;
+    let refreshKey: (() => void) | undefined;
     async function prepareEncryption() {
       if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
-      if (!join?.e2ee_key) throw new Error("Не получен ключ шифрования звонка.");
+      if (!join?.media_conversation_id) throw new Error("Обнови клиент для защищённых звонков.");
+      const mediaKey = await messagingFor(currentUserId).mediaKey(call.id);
       const provider = new ExternalE2EEKeyProvider();
       worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
       room = new Room({ ...roomOptions, encryption: { keyProvider: provider, worker } });
-      await provider.setKey(join.e2ee_key);
+      await provider.setKey(mediaKey.key);
       await room.setE2EEEnabled(true);
-      const fingerprint = await keyFingerprint(join.e2ee_key);
+      const fingerprint = await keyFingerprint(mediaKey.key);
       if (active) setEncryptedRoom({ callId: call.id, room, fingerprint });
+      let previousKey = mediaKey.key, refreshing = false;
+      refreshKey = () => {
+        if (!active || refreshing) return; refreshing = true;
+        void messagingFor(currentUserId).mediaKey(call.id).then(async next => {
+          if (!active || next.key === previousKey) return;
+          await provider.setKey(next.key); previousKey = next.key;
+          const nextFingerprint = await keyFingerprint(next.key);
+          if (active && room) setEncryptedRoom({callId:call.id,room,fingerprint:nextFingerprint});
+        }).catch(reason => {
+          if (active) { setError(reason instanceof Error ? reason.message : "Не удалось обновить ключ звонка"); void room?.disconnect(); }
+        }).finally(() => { refreshing = false; });
+      };
+      window.addEventListener("coherent-media-membership", refreshKey);
+      refreshTimer = window.setInterval(refreshKey, 5000);
     }
     void prepareEncryption().catch((reason: unknown) => {
       if (room) void room.disconnect();
@@ -388,10 +409,12 @@ function CallRoom({
     });
     return () => {
       active = false;
+      if (refreshTimer) window.clearInterval(refreshTimer);
+      if (refreshKey) window.removeEventListener("coherent-media-membership", refreshKey);
       if (room) void room.disconnect();
       worker?.terminate();
     };
-  }, [join, roomOptions, call.id]);
+  }, [join, roomOptions, call.id, currentUserId]);
 
   function retryConnection() {
     setError("");
@@ -416,7 +439,7 @@ function CallRoom({
         <strong>{title}</strong>
         <small>{error || (connected ? `${joinedCount} в звонке · ${time}` : "Подключение...")}</small>
       </div>
-      {connected && encryptedRoom?.callId === call.id && <span className="call-encryption" title={`Сквозное шифрование медиа. Ключ выдаёт Когерент, LiveKit его не получает. Сверь эмодзи и код с собеседниками: ${encryptedRoom.fingerprint.code}`}><LockKeyhole size={13} /> Шифрование <span>{encryptedRoom.fingerprint.emoji}</span></span>}
+      {connected && encryptedRoom?.callId === call.id && <span className="call-encryption" title={`Сквозное шифрование медиа. Ключ создают устройства через MLS. Серверы Когерента и LiveKit его не получают. Сверь эмодзи и код с собеседниками: ${encryptedRoom.fingerprint.code}`}><LockKeyhole size={13} /> Шифрование <span>{encryptedRoom.fingerprint.emoji}</span></span>}
       {compact ? (
         <button className="call-focus-button" onClick={onFocus} aria-label="Развернуть звонок" title="Развернуть звонок">
           <ChevronsDown size={17} />

@@ -2,18 +2,20 @@
 """Deploy the latest main commit after its GitHub Actions build succeeds."""
 
 import fcntl
+import hashlib
 import json
 import os
 import re
-import subprocess
+import shutil
 import stat
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
-
 
 ROOT = Path("/opt/coherent")
 STATE = Path("/var/lib/coherent-deploy/deployed-sha")
@@ -23,15 +25,26 @@ WORKFLOW_URL = (
     "workflows/build-deploy.yml/runs"
 )
 COMPOSE = [
-    "docker", "compose", "--env-file", "deploy/.env", "-f", "deploy/compose.prod.yaml"
+    "docker",
+    "compose",
+    "--env-file",
+    "deploy/.env",
+    "-f",
+    "deploy/compose.prod.yaml",
 ]
 GIT_ENV = dict(os.environ, GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10")
 
 
 def run(*args: str, timeout: int = 1800, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
-        args, cwd=ROOT, env=env, check=False, text=True, timeout=timeout,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        args,
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        timeout=timeout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
     if result.stdout.strip():
         print(result.stdout.strip(), flush=True)
@@ -45,7 +58,10 @@ def git(*args: str) -> str:
 
 
 def github_headers() -> dict[str, str]:
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "coherent-vps-deploy"}
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "coherent-vps-deploy",
+    }
     token_path = Path("/etc/coherent/github-token")
     try:
         descriptor = os.open(token_path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -66,7 +82,9 @@ def github_headers() -> dict[str, str]:
 
 
 def successful_build(sha: str) -> bool:
-    query = urlencode({"branch": "main", "event": "push", "head_sha": sha, "per_page": 1})
+    query = urlencode(
+        {"branch": "main", "event": "push", "head_sha": sha, "per_page": 1}
+    )
     request = Request(
         f"{WORKFLOW_URL}?{query}",
         headers=github_headers(),
@@ -76,7 +94,9 @@ def successful_build(sha: str) -> bool:
             runs = json.load(response).get("workflow_runs", [])
     except HTTPError as error:
         if error.code in (401, 403, 404):
-            raise RuntimeError("Cannot read GitHub build status; check /etc/coherent/github-token and repository Actions: read permission") from None
+            raise RuntimeError(
+                "Cannot read GitHub build status; check /etc/coherent/github-token and repository Actions: read permission"
+            ) from None
         raise
 
     if not runs:
@@ -93,9 +113,11 @@ def successful_build(sha: str) -> bool:
 
 def healthy() -> None:
     domain = next(
-        (line.removeprefix("PUBLIC_DOMAIN=").strip()
-         for line in (ROOT / "deploy/.env").read_text().splitlines()
-         if line.startswith("PUBLIC_DOMAIN=")),
+        (
+            line.removeprefix("PUBLIC_DOMAIN=").strip()
+            for line in (ROOT / "deploy/.env").read_text().splitlines()
+            if line.startswith("PUBLIC_DOMAIN=")
+        ),
         "",
     )
     if not re.fullmatch(r"[a-zA-Z0-9.-]+", domain):
@@ -115,6 +137,93 @@ def healthy() -> None:
             if attempt == 11:
                 raise
             time.sleep(5)
+
+
+def image_environment(sha: str) -> dict[str, str]:
+    return {**os.environ, "COHERENT_IMAGE_TAG": sha}
+
+
+def load_verified_images(sha: str) -> None:
+    """Download the workflow's exact images, check archive and loaded image IDs."""
+    base = f"https://github.com/gerrire/Coherent/releases/download/deployment-{sha}"
+    with urlopen(
+        Request(base + "/manifest.json", headers=github_headers()), timeout=30
+    ) as response:
+        manifest = json.load(response)
+    names = {"coherent-api", "coherent-web", "coherent-monitor-bot"}
+    if (
+        manifest.get("commit") != sha
+        or set(manifest.get("images", {})) != names
+        or not re.fullmatch(r"[a-f0-9]{64}", manifest.get("archive_sha256", ""))
+    ):
+        raise RuntimeError("Deployment manifest does not match the approved commit")
+    if shutil.disk_usage(ROOT).free < 3 * 1024**3:
+        raise RuntimeError("Not enough free space to stage a deployment safely")
+    with tempfile.TemporaryDirectory(
+        prefix="coherent-images-", dir="/var/lib/coherent-deploy"
+    ) as directory:
+        archive = Path(directory) / "images.tar.gz"
+        hasher = hashlib.sha256()
+        size = 0
+        with (
+            urlopen(
+                Request(base + "/images.tar.gz", headers=github_headers()), timeout=60
+            ) as source,
+            archive.open("wb") as target,
+        ):
+            while chunk := source.read(1024 * 1024):
+                size += len(chunk)
+                if size > 2 * 1024**3:
+                    raise RuntimeError("Deployment archive exceeds limit")
+                target.write(chunk)
+                hasher.update(chunk)
+        if hasher.hexdigest() != manifest["archive_sha256"]:
+            raise RuntimeError("Deployment archive checksum failed")
+        run("docker", "load", "--input", str(archive))
+    for name, expected in manifest["images"].items():
+        if not re.fullmatch(r"sha256:[a-f0-9]{64}", expected):
+            raise RuntimeError("Invalid image digest")
+        actual = run(
+            "docker", "image", "inspect", f"{name}:{sha}", "--format", "{{.Id}}"
+        )
+        if actual != expected:
+            raise RuntimeError(f"Image digest mismatch: {name}")
+
+
+def preserve_running_images(sha: str) -> None:
+    for service, name in (
+        ("api", "coherent-api"),
+        ("web", "coherent-web"),
+        ("monitor-bot", "coherent-monitor-bot"),
+    ):
+        container = run(*COMPOSE, "ps", "--quiet", service)
+        if not container:
+            raise RuntimeError(f"No running image to roll back: {service}")
+        image = run("docker", "inspect", container, "--format", "{{.Image}}")
+        run("docker", "tag", image, f"{name}:{sha}")
+
+
+def prepare_private_storage() -> None:
+    # API runs as an unprivileged UID. Keys remain root-owned and read-only.
+    for name in ("attachments", "vapid"):
+        directory = ROOT / "data" / name
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for base, dirs, files in os.walk(directory, followlinks=False):
+            for path in [Path(base), *[Path(base) / name for name in dirs + files]]:
+                if path.is_symlink():
+                    raise RuntimeError("Unexpected link in private storage")
+                info = path.stat()
+                if info.st_uid != 10001 or info.st_gid != 10001:
+                    os.chown(path, 10001, 10001)
+    keys = Path("/etc/coherent/keys")
+    if keys.is_dir():
+        os.chown(keys, 0, 10001)
+        keys.chmod(0o750)
+        for key in keys.glob("*.key"):
+            if key.is_symlink():
+                raise RuntimeError("Unexpected key link")
+            os.chown(key, 0, 10001)
+            key.chmod(0o640)
 
 
 def main() -> None:
@@ -143,14 +252,43 @@ def main() -> None:
         current = git("rev-parse", "HEAD")
         subprocess.run(
             ["git", "merge-base", "--is-ancestor", current, target],
-            cwd=ROOT, env=GIT_ENV, check=True, timeout=120,
+            cwd=ROOT,
+            env=GIT_ENV,
+            check=True,
+            timeout=120,
         )
+        load_verified_images(target)
+        preserve_running_images(deployed)
+        run("sh", str(ROOT / "deploy/backup.sh"))
         git("merge", "--ff-only", target)
-        run(*COMPOSE, "build", "api", "web", "monitor-bot")
-        run(*COMPOSE, "run", "--rm", "api", "alembic", "upgrade", "head")
-        run(*COMPOSE, "up", "-d", "--no-build")
-        healthy()
-        STATE.write_text(target + "\n")
+        try:
+            prepare_private_storage()
+            # Schema changes must remain compatible with the previous application.
+            # Never restore a DB automatically: doing so could discard new messages.
+            run(
+                *COMPOSE,
+                "run",
+                "--rm",
+                "--no-deps",
+                "api",
+                "alembic",
+                "upgrade",
+                "head",
+                env=image_environment(target),
+            )
+            run(*COMPOSE, "up", "-d", "--no-build", env=image_environment(target))
+            healthy()
+        except Exception:
+            print(
+                "Deployment failed; restoring previous application images", flush=True
+            )
+            git("switch", "--detach", deployed)
+            run(*COMPOSE, "up", "-d", "--no-build", env=image_environment(deployed))
+            healthy()
+            raise
+        temporary = STATE.with_suffix(".tmp")
+        temporary.write_text(target + "\n")
+        temporary.replace(STATE)
         print(f"Deployed {target}", flush=True)
 
 

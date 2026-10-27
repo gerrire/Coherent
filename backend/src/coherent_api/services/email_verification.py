@@ -97,7 +97,7 @@ def send_recovery_notice(settings: Settings, email: str) -> None:
 
 
 async def request_code(session: AsyncSession, settings: Settings, user: User, email: str) -> None:
-    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update(key_share=True))
     if session.get_bind().dialect.name == "postgresql":
         from sqlalchemy import text
 
@@ -151,7 +151,7 @@ async def confirm_code(session: AsyncSession, settings: Settings, user: User, co
     await session.scalar(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     challenge = await session.scalar(

@@ -25,6 +25,7 @@ class ServerMember(Base):
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
     )
+    role: Mapped[str] = mapped_column(String(16), default="member", server_default="member")
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

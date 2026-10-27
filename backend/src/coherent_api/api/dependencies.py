@@ -5,9 +5,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from coherent_api.core.security import decode_access_token
 from coherent_api.db.session import get_session
 from coherent_api.models.user import User
+from coherent_api.services.auth_security import valid_session
 
 bearer_scheme = HTTPBearer(auto_error=False)
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -23,7 +23,7 @@ async def get_current_user(
         token = credentials.credentials
 
     settings = request.app.state.settings
-    identity = decode_access_token(token, settings) if token else None
+    identity = await valid_session(session, token, settings) if token else None
     if identity is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

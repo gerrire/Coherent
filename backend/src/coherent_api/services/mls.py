@@ -16,6 +16,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import delete, func, or_, select, text
 
 from coherent_api.models.conversation import Conversation
+from coherent_api.models.crypto_history import ConversationCryptoAccount
 from coherent_api.models.e2ee import AccountRoster, E2eeAccount, E2eeDevice
 from coherent_api.models.message import Message
 from coherent_api.models.message_attachment import MessageAttachment
@@ -102,15 +103,16 @@ async def allocate_storage(session, settings, amount: int) -> None:
         await session.flush()
     if counter.allocated_bytes + amount > settings.e2ee_storage_limit_mb * 1024 * 1024:
         raise HTTPException(status_code=507, detail="Хранилище защищённых сообщений заполнено")
-    counter.allocated_bytes += amount
+    counter.allocated_bytes = max(0, counter.allocated_bytes + amount)
 
 
 async def directory(session, user, conversation_id: UUID) -> dict:
     conversation = await secure_conversation(session, user, conversation_id)
-    accounts = []
-    for uid in await conversation_member_ids(session, conversation):
+    member_ids = set(await conversation_member_ids(session, conversation))
+
+    async def account_view(uid):
         account = await session.get(E2eeAccount, uid)
-        rosters = (
+        records = (
             list(
                 await session.scalars(
                     select(AccountRoster)
@@ -121,20 +123,44 @@ async def directory(session, user, conversation_id: UUID) -> dict:
             if account
             else []
         )
-        accounts.append(
-            {
-                "account_id": str(uid),
-                "public_key": account.recovery_public_key if account else None,
-                "rosters": [{"payload": r.payload, "signature": r.signature} for r in rosters],
-                "ready": bool(rosters),
-            }
+        return {
+            "account_id": str(uid),
+            "public_key": account.recovery_public_key if account else None,
+            "rosters": [
+                {"payload": r.payload, "signature": r.signature}
+                for r in records
+                if r.revision >= account.root_revision
+            ],
+            "history_rosters": [
+                {
+                    "public_key": r.signer_public_key or account.recovery_public_key,
+                    "roster": {"payload": r.payload, "signature": r.signature},
+                }
+                for r in records
+            ],
+            "ready": bool(account and account.roster_revision),
+        }
+
+    accounts = [await account_view(uid) for uid in sorted(member_ids)]
+
+    historical_ids = (
+        set(
+            await session.scalars(
+                select(ConversationCryptoAccount.user_id).where(
+                    ConversationCryptoAccount.conversation_id == conversation_id
+                )
+            )
         )
+        - member_ids
+    )
+    history_accounts = [await account_view(uid) for uid in sorted(historical_ids)]
     state = await session.get(MlsState, conversation_id)
     eligible = (
         await eligible_devices(session, conversation) if all(a["ready"] for a in accounts) else []
     )
     return {
         "accounts": accounts,
+        "history_accounts": history_accounts,
         "state": state_view(state),
         "eligible_devices": [str(x) for x in eligible],
     }
@@ -248,12 +274,13 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
         raise HTTPException(
             status_code=409, detail="Это устройство уже участвует в защищённой сессии"
         )
-    if body.operation in ("init", "reset", "add"):
+    if body.operation in ("init", "reset", "add", "remove"):
         recent = await session.scalar(
             select(func.count())
             .select_from(MlsEvent)
             .where(
                 MlsEvent.device_id == body.device_id,
+                MlsEvent.conversation_id == conversation_id,
                 MlsEvent.created_at > now - timedelta(hours=1),
                 MlsEvent.message_id.is_(None),
             )
@@ -264,7 +291,7 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
             )
     if body.operation == "init" and state.group_id is not None:
         raise HTTPException(status_code=409, detail="Защищённая сессия уже создана")
-    if body.operation in ("add", "message") and (
+    if body.operation in ("add", "remove", "message") and (
         state.group_id is None or body.device_id not in current
     ):
         raise HTTPException(
@@ -272,8 +299,12 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
         )
     if body.operation == "message" and set(current) != set(desired):
         raise HTTPException(status_code=409, detail="Сначала синхронизируй новые устройства")
+    if body.operation == "remove":
+        desired = sorted(set(current) & set(desired))
     targets = (
-        [d for d in desired if d != body.device_id]
+        [d for d in current if d not in desired]
+        if body.operation == "remove"
+        else [d for d in desired if d != body.device_id]
         if body.operation in ("init", "reset")
         else [d for d in desired if d not in current]
         if body.operation == "add"
@@ -281,10 +312,12 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
     )
     if body.operation == "add" and (not targets or not set(current) <= set(desired)):
         raise HTTPException(status_code=409, detail="Состав защищённой сессии изменился")
+    if body.operation == "remove" and not targets:
+        raise HTTPException(409, "Состав защищённой сессии уже обновлён")
     lease_id = uuid4()
     expires = now + timedelta(minutes=2)
     packages = []
-    for target in targets:
+    for target in [] if body.operation == "remove" else targets:
         package = await session.scalar(
             select(MlsPackage)
             .where(
@@ -494,10 +527,19 @@ async def publish(
     account_ids = set(
         await session.scalars(select(E2eeDevice.user_id).where(E2eeDevice.id.in_(body.roster)))
     )
-    if account_ids != set(await conversation_member_ids(session, conversation)):
+    if body.operation != "remove" and account_ids != set(
+        await conversation_member_ids(session, conversation)
+    ):
         raise HTTPException(
             status_code=409, detail="В защищённой сессии отсутствует участник беседы"
         )
+    from coherent_api.services.conversation_access import is_call_media
+
+    if body.operation in ("message", "migrate") and await is_call_media(session, conversation_id):
+        raise HTTPException(400, "Медиа-группа используется только для ключей звонка")
+    from coherent_api.services.crypto_history import remember_accounts
+
+    await remember_accounts(session, conversation_id, account_ids)
     message = None
     old_paths = []
     migrating = body.operation == "migrate"
@@ -582,7 +624,8 @@ async def publish(
     else:
         if (
             not body.commit
-            or not body.welcome
+            or (body.operation != "remove" and body.targets and not body.welcome)
+            or (body.operation == "remove" and body.welcome is not None)
             or body.message is not None
             or body.files
             or files
@@ -590,6 +633,8 @@ async def publish(
         ):
             raise HTTPException(status_code=400, detail="Неверный пакет изменения MLS")
         for value in (body.commit, body.welcome):
+            if value is None:
+                continue
             try:
                 base64.b64decode(value, validate=True)
             except ValueError as error:
@@ -602,6 +647,7 @@ async def publish(
                 or package.consumed_at is None
             ):
                 raise HTTPException(status_code=409, detail="Одноразовый пакет уже использован")
+            await allocate_storage(session, settings, -len(package.wire))
             package.consumed_at = now
             package.wire = ""
             package.reserved_id = None

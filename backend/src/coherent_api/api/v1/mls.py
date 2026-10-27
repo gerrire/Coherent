@@ -133,40 +133,39 @@ async def acquire_lease(
             raise HTTPException(
                 status_code=409, detail="Новая защищённая переписка ещё не включена"
             )
-    if body.recover:
-        device = await mls.active_device(session, user, body.device_id)
-        state = await session.get(MlsState, conversation_id)
-        if not body.challenge_id or not body.proof or not body.recovery_group_id:
-            raise HTTPException(
-                status_code=403, detail="Подтверди восстановление ключом устройства"
-            )
-        if state is None or state.group_id != body.recovery_group_id:
-            raise HTTPException(
-                status_code=409, detail="Защищённая сессия уже обновилась. Повтори подключение"
-            )
-        payload = json.dumps(
-            {
-                "operation": "recover_session",
-                "conversation_id": str(conversation_id),
-                "device_id": str(body.device_id),
-                "request_id": str(body.request_id),
-                "group_id": str(body.recovery_group_id),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        await verify_device_request(
-            session,
-            user,
-            body.challenge_id,
-            device.id,
-            device.signature_key,
-            body.proof,
-            "",
-            "action",
-            hashlib.sha256(payload.encode()).digest(),
-            require_password=False,
-        )
+    device = await mls.active_device(session, user, body.device_id)
+    if not body.challenge_id or not body.proof:
+        raise HTTPException(status_code=403, detail="Подтверди отправку ключом устройства")
+    payload = json.dumps(
+        {
+            "operation": "acquire_lease",
+            "conversation_id": str(conversation_id),
+            "device_id": str(body.device_id),
+            "request_id": str(body.request_id),
+            "kind": body.operation,
+            "recover": body.recover,
+            "recovery_group_id": str(body.recovery_group_id) if body.recovery_group_id else None,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    await verify_device_request(
+        session,
+        user,
+        body.challenge_id,
+        device.id,
+        device.signature_key,
+        body.proof,
+        "",
+        "action",
+        hashlib.sha256(payload.encode()).digest(),
+        require_password=False,
+    )
+    # Consume proof even when a later lease conflict rolls back the request.
+    await session.commit()
+    from coherent_api.services.auth_security import throttle
+
+    await throttle(session, "mls-lease", str(device.id), 120, 60)
     return await mls.lease(session, user, conversation_id, body)
 
 

@@ -1,3 +1,4 @@
+import GroupMembersDialog from "./GroupMembersDialog";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
@@ -82,6 +83,7 @@ export default function MessagesPanel({
   const [securityReady, setSecurityReady] = useState(false);
   const [securityProblem, setSecurityProblem] = useState<MessagingAccessError | null>(null);
   const [migration, setMigration] = useState<{ done: number; total: number } | null>(null);
+  const [migrationInfo, setMigrationInfo] = useState<{remaining:number; own_remaining:number; other_remaining:number} | null>(null);
   const [migrationError, setMigrationError] = useState("");
   const [securityBusy, setSecurityBusy] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -96,6 +98,13 @@ export default function MessagesPanel({
     }
     return result;
   }
+
+  useEffect(() => {
+    if (!secure) { setMigrationInfo(null); return; }
+    let active = true;
+    void apiRequest<{remaining:number;own_remaining:number;other_remaining:number}>(`/api/v1/conversations/${conversation.id}/migration`).then(info => { if (active) setMigrationInfo(info); }).catch(() => {});
+    return () => { active = false; };
+  }, [conversation.id, secure, migration?.done, version]);
 
   async function verifyKeys(keys: KeyReview[]) {
     setSecurityBusy(true);
@@ -128,6 +137,7 @@ export default function MessagesPanel({
   const [relationship, setRelationship] = useState<UserSearchResult | null>(null);
   const [friendBusy, setFriendBusy] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
@@ -319,7 +329,7 @@ export default function MessagesPanel({
 
   useEffect(() => {
     function markVisibleMessages() {
-      if (document.hidden || !latestId || loading || messages.at(-1)?.locked) return;
+      if (document.hidden || !document.hasFocus() || !nearBottom.current || !latestId || loading || messages.at(-1)?.locked) return;
       const key = `${conversation.id}:${latestId}`;
       if (lastReadRef.current === key) return;
       lastReadRef.current = key;
@@ -328,8 +338,19 @@ export default function MessagesPanel({
       });
     }
     markVisibleMessages();
+    const list = listRef.current;
+    const onScroll = () => {
+      if (list) nearBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 30;
+      markVisibleMessages();
+    };
     document.addEventListener("visibilitychange", markVisibleMessages);
-    return () => document.removeEventListener("visibilitychange", markVisibleMessages);
+    window.addEventListener("focus", markVisibleMessages);
+    list?.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      document.removeEventListener("visibilitychange", markVisibleMessages);
+      window.removeEventListener("focus", markVisibleMessages);
+      list?.removeEventListener("scroll", onScroll);
+    };
   }, [conversation.id, latestId, loading, onRead]);
 
   async function loadOlder() {
@@ -428,6 +449,9 @@ export default function MessagesPanel({
             : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent. Файлы хранятся только 3 дня.`}</p>
         </div>
       </div>
+      {conversation.kind === "group" && !conversation.server_id && <button className="group-members-button" title="Участники группы" onClick={() => setMembersOpen(true)}><UsersRound size={16} /> Участники</button>}
+      {membersOpen && <GroupMembersDialog conversation={conversation} account={currentUserId} onClose={() => setMembersOpen(false)} onUpdated={() => { setMembersOpen(false); onSent(); }} onLeft={() => { setMembersOpen(false); onSent(); }} />}
+      {secure && !!migrationInfo?.remaining && <p className="migration-status">Старая облачная история: {migrationInfo.remaining} сообщений. {migrationInfo.own_remaining ? `Твоих осталось перенести: ${migrationInfo.own_remaining}.` : "Твои сообщения перенесены."} {migrationInfo.other_remaining ? "Остальные перенесутся, когда авторы откроют беседу." : ""}</p>}
       {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>
         <input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={64} aria-label="Название группы" autoFocus />
         <button type="submit" disabled={renameBusy || !groupName.trim()}>Сохранить</button>
@@ -445,7 +469,7 @@ export default function MessagesPanel({
         aria-label={`Сообщения: ${title}`}
         onScroll={(event) => {
           const element = event.currentTarget;
-          nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+          nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 30;
         }}
       >
         {hasMore && (

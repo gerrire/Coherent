@@ -64,7 +64,7 @@ class MessagePacket(StrictModel):
 class LeaseRequest(StrictModel):
     device_id: UUID
     request_id: UUID
-    operation: Literal["init", "add", "message", "reset"]
+    operation: Literal["init", "add", "remove", "message", "reset"]
     recover: bool = False
     recovery_group_id: UUID | None = None
     challenge_id: UUID | None = None
@@ -78,7 +78,7 @@ class TransportPayload(StrictModel):
     request_id: UUID
     lease_id: UUID
     expected_sequence: int = Field(ge=0, le=2**53 - 2)
-    operation: Literal["init", "add", "message", "reset", "migrate"]
+    operation: Literal["init", "add", "remove", "message", "reset", "migrate"]
     previous_epoch: int = Field(ge=0, le=2**53 - 2)
     commit: str | None = Field(default=None, max_length=1400000)
     welcome: str | None = Field(default=None, max_length=1400000)

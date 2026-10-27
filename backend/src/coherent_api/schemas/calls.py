@@ -38,7 +38,7 @@ class CurrentCallsResponse(BaseModel):
 class CallJoinResponse(BaseModel):
     server_url: str
     token: str
-    e2ee_key: str
+    media_conversation_id: UUID
 
 
 class CreateCallRequest(BaseModel):

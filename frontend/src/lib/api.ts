@@ -12,6 +12,10 @@ export interface User {
 }
 
 export interface AdminOverview {
+  e2ee_storage_bytes: number;
+  e2ee_storage_limit_bytes: number;
+  pending_private_migration: number;
+  backup: {last_success_at?: string; bytes?: number; offsite_last_success_at?: string; offsite_bytes?: number; restore_checked_at?: string} | null;
   cloud_encryption_enabled: boolean;
   legacy_plaintext_messages: number;
   legacy_plaintext_attachments: number;
@@ -29,6 +33,11 @@ export interface AdminOverview {
 }
 
 export interface ServerMetricSample {
+  api_requests_minute?: number;
+  api_errors_minute?: number;
+  api_p95_ms?: number | null;
+  network_receive_bps?: number;
+  network_send_bps?: number;
   at: string;
   cpu_percent: number | null;
   memory_percent: number | null;
@@ -93,6 +102,7 @@ export interface Conversation {
   channel_id?: string | null;
   id: string;
   kind: "direct" | "group";
+  owner_id?: string | null;
   name: string | null;
   members: Array<{ id: string; username: string; display_name?: string | null }>;
   other_user: { id: string; username: string; display_name?: string | null } | null;
@@ -150,7 +160,7 @@ export interface Call {
 export interface CallJoin {
   server_url: string;
   token: string;
-  e2ee_key: string;
+  media_conversation_id: string;
 }
 
 interface AuthResponse {
@@ -311,13 +321,34 @@ export const api = {
     ),
   removeFriendRequest: (requestId: string) =>
     request<void>(`/api/v1/friends/requests/${requestId}`, { method: "DELETE" }),
-  conversations: () =>
-    request<{ conversations: Conversation[] }>("/api/v1/conversations"),
+  conversations: async () => {
+    const collected = new Map<string, Conversation>();
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const page: { conversations: Conversation[]; next_cursor?: string | null } = await request(`/api/v1/conversations${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+      for (const conversation of page.conversations) collected.set(conversation.id, conversation);
+      cursor = page.next_cursor || null;
+      if (cursor && seen.has(cursor)) throw new Error("Список бесед изменился. Повтори загрузку");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return { conversations: [...collected.values()] };
+  },
   openConversation: (userId: string) =>
     request<Conversation>("/api/v1/conversations", {
       method: "POST",
       body: JSON.stringify({ user_id: userId }),
     }),
+  addGroupMembers: (id: string, userIds: string[]) => request<Conversation>(`/api/v1/conversations/${id}/members`, { method: "POST", body: JSON.stringify({ user_ids: userIds }) }),
+  removeGroupMember: (id: string, userId: string) => request<void>(`/api/v1/conversations/${id}/members/${userId}`, { method: "DELETE" }),
+  serverMembers: (id: string) => request<{members: Array<{id:string; username:string; display_name:string|null; role:"owner"|"moderator"|"member"}>}>(`/api/v1/servers/${id}/members`),
+  editServer: (id: string, name: string) => request<CommunityServer>(`/api/v1/servers/${id}`, { method:"PATCH", body:JSON.stringify({name}) }),
+  editServerChannel: (id:string, channel:string, name:string, category:string) => request<CommunityServer>(`/api/v1/servers/${id}/channels/${channel}`, {method:"PATCH",body:JSON.stringify({name,category})}),
+  deleteServerChannel: (id:string, channel:string) => request<CommunityServer>(`/api/v1/servers/${id}/channels/${channel}`, {method:"DELETE"}),
+  removeServerMember: (id:string, member:string) => request<void>(`/api/v1/servers/${id}/members/${member}`, {method:"DELETE"}),
+  setServerRole: (id:string, member:string, role:string) => request<void>(`/api/v1/servers/${id}/members/${member}`, {method:"PATCH",body:JSON.stringify({role})}),
+  transferServer: (id:string, userId:string) => request<CommunityServer>(`/api/v1/servers/${id}/owner`, {method:"POST",body:JSON.stringify({user_id:userId})}),
+  deleteServer: (id:string) => request<void>(`/api/v1/servers/${id}`, {method:"DELETE"}),
   createGroup: (userIds: string[], name?: string) =>
     request<Conversation>("/api/v1/conversations/groups", {
       method: "POST",
@@ -374,6 +405,7 @@ export const api = {
       headers: { "X-CSRF-Token": csrfToken },
     });
   },
+  callCrypto: (id: string) => request<Conversation>(`/api/v1/calls/${id}/crypto`),
   joinCall: (callId: string) =>
     request<CallJoin>(`/api/v1/calls/${callId}/join`, { method: "POST" }),
 };

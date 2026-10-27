@@ -1,3 +1,4 @@
+import { useModalFocus } from "../lib/useModalFocus";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CalendarDays, Check, Eye, EyeOff, KeyRound, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 import { api, displayName, type User } from "../lib/api";
@@ -34,27 +35,13 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
   const [saved, setSaved] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const emailCodeRef = useRef<HTMLInputElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!emailSent) return;
     emailCodeRef.current?.scrollIntoView({ block: "center", behavior: "auto" });
   }, [emailSent]);
 
-  useEffect(() => {
-    dialogRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
+  useModalFocus(dialogRef, onClose);
 
   async function savePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

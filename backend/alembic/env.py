@@ -6,11 +6,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from coherent_api.core.config import get_settings
 from coherent_api.db.base import Base
+from coherent_api.models import auth_security as auth_security_model  # noqa: F401
 from coherent_api.models import call as call_model  # noqa: F401
+from coherent_api.models import call_media as call_media_model  # noqa: F401
 from coherent_api.models import call_member as call_member_model  # noqa: F401
 from coherent_api.models import conversation as conversation_model  # noqa: F401
 from coherent_api.models import conversation_member as conversation_member_model  # noqa: F401
 from coherent_api.models import conversation_read as conversation_read_model  # noqa: F401
+from coherent_api.models import crypto_history as crypto_history_model  # noqa: F401
 from coherent_api.models import device_link as device_link_model  # noqa: F401
 from coherent_api.models import e2ee as e2ee_model  # noqa: F401
 from coherent_api.models import email_verification as email_verification_model  # noqa: F401
@@ -18,6 +21,7 @@ from coherent_api.models import friend_request as friend_request_model  # noqa: 
 from coherent_api.models import message as message_model  # noqa: F401
 from coherent_api.models import message_attachment as message_attachment_model  # noqa: F401
 from coherent_api.models import mls as mls_model  # noqa: F401
+from coherent_api.models import operational_metric as operational_metric_model  # noqa: F401
 from coherent_api.models import push_subscription as push_subscription_model  # noqa: F401
 from coherent_api.models import registration as registration_model  # noqa: F401
 from coherent_api.models import server as server_model  # noqa: F401

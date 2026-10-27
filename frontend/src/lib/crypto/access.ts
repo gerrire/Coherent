@@ -6,6 +6,8 @@ import type { SignedRoster } from "./types";
 /** Words never enter an HTTP request; the core signs a public device roster. */
 export async function enrollCurrentDevice(client: CryptoClient, currentPassword: string, phrase?: string, linkId?: string): Promise<void> {
   const material = await api.recoveryMaterial();
+  const localIdentity = await client.execute({operation:"identity"});
+  if (localIdentity.result.pending_rotation_public_key === material.public_key) await client.execute({operation:"commit_rotation", public_key:material.public_key});
   if (phrase) await client.execute({ operation: "recover_archive", phrase: phrase.trim().toLowerCase().split(/\s+/).join(" "), backup: material.backup });
   const own = await client.execute({ operation: "own_fingerprint" });
   if (own.result.public_key !== material.public_key) throw new Error("Ключ восстановления не соответствует аккаунту");
@@ -42,4 +44,10 @@ export async function enrollCurrentDevice(client: CryptoClient, currentPassword:
   const checked = await client.execute({ operation: "inspect_roster", public_key: material.public_key, roster });
   await client.execute({ operation: "accept_roster", public_key: material.public_key, roster, fingerprint: checked.result.fingerprint as string });
   window.dispatchEvent(new Event("coherent-security-changed"));
+}
+
+
+export async function withDeviceState<T>(account: string, mode: "shared" | "exclusive", work: () => Promise<T>): Promise<T> {
+  if (navigator.locks) return navigator.locks.request(`coherent-device-state-v1-${account}`, {mode},work);
+  return work();
 }

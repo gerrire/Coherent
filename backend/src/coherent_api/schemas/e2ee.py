@@ -91,6 +91,18 @@ class RosterPayload(StrictModel):
     previous_hash: str = Field(min_length=44, max_length=44)
     archive_public_key: str = Field(min_length=44, max_length=44)
     devices: list[DeviceBinding] = Field(min_length=1, max_length=16)
+    history_roots: list[str] = Field(default_factory=list, max_length=128)
+
+    @field_validator("history_roots")
+    @classmethod
+    def valid_history_roots(cls, values: list[str]) -> list[str]:
+        if len(set(values)) != len(values):
+            raise ValueError("Duplicate history roots")
+        for value in values:
+            raw = base64.b64decode(value, validate=True)
+            if len(raw) != 32 or base64.b64encode(raw).decode() != value:
+                raise ValueError("Invalid history root")
+        return values
 
 
 class EnrollPayload(StrictModel):
@@ -118,3 +130,26 @@ class ContactPinPayload(StrictModel):
 class ContactPinsRequest(StrictModel):
     device_id: UUID
     pins: list[ContactPinPayload] = Field(max_length=1000)
+
+
+class RotationEnvelope(StrictModel):
+    version: Literal[1]
+    nonce: str = Field(min_length=16, max_length=16)
+    ciphertext: str = Field(min_length=64, max_length=24000)
+
+    @field_validator("nonce", "ciphertext")
+    @classmethod
+    def encoding(cls, value, info):
+        raw = base64.b64decode(value, validate=True)
+        if base64.b64encode(raw).decode() != value or (
+            info.field_name == "nonce" and len(raw) != 12
+        ):
+            raise ValueError("Invalid backup")
+        return value
+
+
+class RotationPayload(StrictModel):
+    operation: Literal["rotate_recovery"]
+    public_key: str = Field(min_length=44, max_length=44)
+    backup: RotationEnvelope
+    roster: SignedRoster

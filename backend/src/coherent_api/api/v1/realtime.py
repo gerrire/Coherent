@@ -1,9 +1,13 @@
 """Authenticated WebSocket for message, call, friend and presence events."""
 
+import asyncio
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from coherent_api.core.security import decode_access_token
+from coherent_api.core.security import access_token_expiry
 from coherent_api.models.user import User
+from coherent_api.services.auth_security import token_digest, valid_session
 
 # Keep the existing URL because clients already connect here.
 router = APIRouter(prefix="/conversations")
@@ -18,13 +22,12 @@ async def realtime_events(websocket: WebSocket) -> None:
         return
 
     token = websocket.cookies.get("coherent_session")
-    identity = decode_access_token(token, settings) if token else None
-    if identity is None:
-        await websocket.close(code=1008)
-        return
-
     session_factory = websocket.app.state.session_factory
     async with session_factory() as session:
+        identity = await valid_session(session, token, settings) if token else None
+        if identity is None:
+            await websocket.close(code=1008)
+            return
         user = await session.get(User, identity[0])
     if user is None or user.session_version != identity[1]:
         await websocket.close(code=1008)
@@ -33,12 +36,16 @@ async def realtime_events(websocket: WebSocket) -> None:
 
     await websocket.accept()
     events = websocket.app.state.message_events
-    if events.add(user_id, websocket):
+    if events.add(user_id, websocket, token_digest(token)):
         await events.publish_all({"type": "presence"})
+    expires = access_token_expiry(token, settings)
     try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
+        async with asyncio.timeout(max(0, (expires - datetime.now(UTC)).total_seconds())):
+            while True:
+                await websocket.receive_text()
+    except TimeoutError:
+        await websocket.close(code=4001)
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         if events.remove(user_id, websocket):

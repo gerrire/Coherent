@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Check, Copy, Download, Eye, EyeOff, ShieldCheck } from "lucide-react";
-import { api, type User } from "../lib/api";
+import { apiRequest, api, type User } from "../lib/api";
 import { CryptoClient } from "../lib/crypto/client";
-import { enrollCurrentDevice } from "../lib/crypto/access";
+import { closeMessaging } from "../lib/crypto/messaging";
+import { enrollCurrentDevice, withDeviceState } from "../lib/crypto/access";
 import type { DeviceBinding, Envelope } from "../lib/crypto/types";
 import "./security-recovery.css";
 import { NewDeviceLink } from "./DeviceLinkPanel";
@@ -23,6 +24,7 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [fingerprint, setFingerprint] = useState("");
+  const [resetConfirmed, setResetConfirmed] = useState(false);
   const [recoveryInput, setRecoveryInput] = useState("");
   const trusted = !!device && !!status?.devices.some(item => item.id === device.device_id);
 
@@ -36,9 +38,16 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
       setStatus(result);
       if (result.setup_available) {
         local = new CryptoClient(user.id); client.current = local;
-        const identity = await local.execute({ operation: "identity" });
+        let identity = await local.execute({ operation: "identity" });
+        let own = await local.execute({ operation: "own_fingerprint" }).catch(() => null);
+        if (own && !result.devices.some(item => item.id === (identity.result.device as DeviceBinding).device_id)) {
+          identity = await local.execute({operation:"replace_identity",device_id:crypto.randomUUID()});
+          closeMessaging(user.id);
+        } else if (own && result.configured) {
+          await enrollCurrentDevice(local, "");
+          own = await local.execute({operation:"own_fingerprint"});
+        }
         if (active) setDevice(identity.result.device as DeviceBinding);
-        const own = await local.execute({ operation: "own_fingerprint" }).catch(() => null);
         if (active && own) setFingerprint(own.result.fingerprint as string);
       }
     }).catch(() => { if (active) setError("Не удалось открыть защищённое хранилище. Обнови клиент и попробуй снова."); });
@@ -119,6 +128,34 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
     finally { setBusy(false); }
   }
 
+  async function resetTrust() {
+    const local = client.current;
+    if (!local || !trusted || !device || !password || !resetConfirmed || busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await withDeviceState(user.id,"exclusive",async () => {
+      const pending = await local.pendingDeliveries();
+      if (pending.some(item => ["send","add_members","remove_members"].includes(item.operation))) throw new Error("Сначала заверши или отмени неотправленные сообщения");
+      const material = await api.recoveryMaterial();
+      const prepared = await local.execute({operation:"prepare_rotation",previous:material.rosters.at(-1)!});
+      const payload = JSON.stringify({operation:"rotate_recovery",public_key:prepared.result.public_key,backup:prepared.result.backup,roster:prepared.result.roster});
+      const challenge = await api.deviceChallenge("action");
+      const signed = await local.execute({operation:"sign_action",nonce:challenge.nonce,payload});
+      await apiRequest("/api/v1/security/devices/reset-trust",{method:"POST",body:JSON.stringify({challenge_id:challenge.challenge_id,device:signed.result.device,proof:signed.result.proof,payload,current_password:password})});
+      await local.execute({operation:"commit_rotation",public_key:prepared.result.public_key as string});
+      closeMessaging(user.id);
+      const nextStatus = await api.securityStatus(); setStatus(nextStatus);
+      const own = await local.execute({operation:"own_fingerprint"}); setFingerprint(own.result.fingerprint as string);
+      const shown = await local.revealRecovery(password);
+      const nextWords = String(shown.result.phrase).split(" ");
+      setWords(nextWords); setIndices([0, Math.min(7,nextWords.length-1)]); setAnswers(["",""]); setResetConfirmed(false);
+      setNotice("Сохрани новые 12 слов. Прежний ключ больше не подходит. Остальные устройства нужно подтвердить заново; собеседникам — сверить новый код. Старая история сохранена.");
+      window.dispatchEvent(new Event("coherent-security-changed"));
+      });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось сменить доверие к устройствам"); }
+    finally { setBusy(false); }
+  }
+
   function saveFile() {
     const text = `Когерент — ключ восстановления\nАккаунт: @${user.username}\n\n${words.join(" ")}\n\nХрани отдельно от пароля. Никому не передавай эти слова.\n`;
     const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
@@ -148,6 +185,12 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
         {!status.recovery_confirmed && <div className="recovery-confirm"><p>Сохрани слова, затем введи два слова из своей копии.</p><div>{indices.map((index, position) => <label key={position}>Слово №{index + 1}<input autoComplete="off" autoCapitalize="none" spellCheck={false} value={answers[position]} onChange={event => setAnswers(previous => position === 0 ? [event.target.value, previous[1]] : [previous[0], event.target.value])} /></label>)}</div><button className="recovery-action" type="button" disabled={busy || answers.some((answer, index) => answer.trim().toLowerCase() !== words[indices[index]])} onClick={() => void confirmSaved()}><Check size={16} /> Я сохранил ключ</button></div>}
       </div>}
     </>}
+    {trusted && status && !words.length && <details className="recovery-fallback"><summary>Доверенные устройства · {status.devices.length} из 16</summary>
+      {status.devices.map(item => <div className="management-row" key={item.id}><span>{item.label}<small>{item.platform}{item.id === device?.device_id ? " · Это устройство" : ""}</small></span></div>)}
+      <p>Если устройство потеряно или ключ скомпрометирован, сбрось доверие. Текущее устройство сохранит историю. Остальные устройства выйдут из аккаунта и потребуют нового подтверждения; действующие звонки завершатся для твоего аккаунта.</p>
+      <label className="recovery-reset-check"><input type="checkbox" checked={resetConfirmed} onChange={event => setResetConfirmed(event.target.checked)} /> Я сохраню новые 12 слов и заново подтвержу остальные устройства</label>
+      <button className="recovery-action" disabled={busy || !password || !resetConfirmed} onClick={() => void resetTrust()}>Сменить ключ и отозвать остальные устройства</button>
+    </details>}
     {notice && <p className="profile-settings-success" role="status">{notice}</p>}
     {error && <p className="profile-settings-error" role="alert">{error}</p>}
     {trusted && status?.recovery_confirmed && !words.length && <p className="profile-settings-success"><Check size={16} /> Сохранение ключа подтверждено.</p>}

@@ -90,3 +90,74 @@ pub fn recover_archive_key(
         .map_err(|_| CryptoError::InvalidInput)?;
     Ok(Zeroizing::new(key))
 }
+
+/// Versioned recovery material retains historical archive roots when trust is reset.
+/// It never contains MLS ratchets or device signing secrets.
+pub fn protect_archive_keys(
+    account_id: &str,
+    phrase: &str,
+    keys: &[[u8; 32]],
+) -> Result<Envelope, CryptoError> {
+    use base64::{Engine as _, prelude::BASE64_STANDARD as B64};
+    if keys.is_empty() || keys.len() > 128 {
+        return Err(CryptoError::InvalidInput);
+    }
+    let plain = Zeroizing::new(serde_json::to_vec(&serde_json::json!({"version":2,"keys":keys.iter().map(|key|B64.encode(key)).collect::<Vec<_>>()})).map_err(|_|CryptoError::State)?);
+    seal(
+        &*wrapping_key(account_id, phrase)?,
+        &plain,
+        &backup_aad(account_id)?,
+    )
+}
+
+pub fn recover_archive_keys(
+    account_id: &str,
+    phrase: &str,
+    backup: &Envelope,
+) -> Result<Vec<Zeroizing<[u8; 32]>>, CryptoError> {
+    use base64::{Engine as _, prelude::BASE64_STANDARD as B64};
+    let plain = open(
+        &*wrapping_key(account_id, phrase)?,
+        backup,
+        &backup_aad(account_id)?,
+    )?;
+    if plain.len() == 32 {
+        return Ok(vec![Zeroizing::new(
+            plain
+                .as_slice()
+                .try_into()
+                .map_err(|_| CryptoError::InvalidInput)?,
+        )]);
+    }
+    if plain.len() > 16384 {
+        return Err(CryptoError::InvalidInput);
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Bundle {
+        version: u8,
+        keys: Vec<String>,
+    }
+    let mut bundle: Bundle =
+        serde_json::from_slice(&plain).map_err(|_| CryptoError::InvalidInput)?;
+    if bundle.version != 2 || bundle.keys.is_empty() || bundle.keys.len() > 128 {
+        return Err(CryptoError::InvalidInput);
+    }
+    let result = bundle
+        .keys
+        .iter()
+        .map(|wire| {
+            let bytes = Zeroizing::new(B64.decode(wire).map_err(|_| CryptoError::InvalidInput)?);
+            Ok(Zeroizing::new(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| CryptoError::InvalidInput)?,
+            ))
+        })
+        .collect();
+    for key in &mut bundle.keys {
+        zeroize::Zeroize::zeroize(key);
+    }
+    result
+}

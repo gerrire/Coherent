@@ -15,6 +15,7 @@ from coherent_api.core.config import Settings, get_settings
 from coherent_api.models.message import Message
 from coherent_api.services.attachment_cleanup import attachment_cleanup_loop
 from coherent_api.services.call_cleanup import call_cleanup_loop
+from coherent_api.services.crypto_maintenance import crypto_maintenance_loop
 from coherent_api.services.events import MessageEvents
 from coherent_api.services.livekit_media import livekit_ready
 from coherent_api.services.registration import registration_mail_loop
@@ -45,6 +46,9 @@ def create_app(
                 chat_cipher.decrypt(
                     encrypted.body_ciphertext, encrypted.conversation_id, encrypted.id
                 )
+        protocol_cleanup = asyncio.create_task(
+            crypto_maintenance_loop(session_factory, app_settings)
+        )
         metrics = asyncio.create_task(application.state.server_metrics.run())
         registration_mail = asyncio.create_task(
             registration_mail_loop(session_factory, app_settings)
@@ -60,6 +64,9 @@ def create_app(
         try:
             yield
         finally:
+            protocol_cleanup.cancel()
+            with suppress(asyncio.CancelledError):
+                await protocol_cleanup
             metrics.cancel()
             registration_mail.cancel()
             with suppress(asyncio.CancelledError):
@@ -88,7 +95,7 @@ def create_app(
     app.state.chat_cipher = chat_cipher
     app.state.session_factory = session_factory
     app.state.message_events = MessageEvents()
-    app.state.server_metrics = ServerMetrics()
+    app.state.server_metrics = ServerMetrics(session_factory)
 
     app.add_middleware(
         CORSMiddleware,
@@ -99,9 +106,25 @@ def create_app(
     )
 
     @app.middleware("http")
+    async def observe_requests(request: Request, call_next):
+        from time import monotonic
+
+        start = monotonic()
+        code = 500
+        try:
+            response = await call_next(request)
+            code = response.status_code
+            return response
+        finally:
+            if not request.url.path.startswith(f"{app_settings.api_prefix}/health"):
+                request.app.state.server_metrics.observe(code, (monotonic() - start) * 1000)
+
+    @app.middleware("http")
     async def verify_csrf(request: Request, call_next):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith(
-            f"{app_settings.api_prefix}/"
+        if (
+            request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.url.path.startswith(f"{app_settings.api_prefix}/")
+            and request.url.path != f"{app_settings.api_prefix}/calls/media-events"
         ):
             cookie_token = request.cookies.get("coherent_csrf")
             header_token = request.headers.get("X-CSRF-Token")

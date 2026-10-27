@@ -50,16 +50,41 @@ pub struct AttachmentReply {
 impl NetworkState {
     #[cfg(feature = "mls-preview")]
     pub(crate) async fn crypto_post(&self, path: &str, body: Value) -> Result<Value, String> {
-        if !matches!(path, "/api/v1/security/challenges" | "/api/v1/security/recovery/authorize") { return Err("Недопустимый запрос устройства".into()); }
+        if !matches!(
+            path,
+            "/api/v1/security/challenges" | "/api/v1/security/recovery/authorize"
+        ) {
+            return Err("Недопустимый запрос устройства".into());
+        }
         let mut session = self.session.lock().await;
-        if session.csrf_token.is_none() { self.initialize_csrf(&mut session).await?; }
-        let response = self.client.post(format!("{}{}", self.base_url, path))
+        if session.csrf_token.is_none() {
+            self.initialize_csrf(&mut session).await?;
+        }
+        let request = self
+            .client
+            .post(format!("{}{}", self.base_url, path))
             .header(COOKIE, Self::cookie_header(&session))
             .header("X-CSRF-Token", session.csrf_token.as_deref().unwrap_or(""))
-            .json(&body).send().await.map_err(|_| "Не удалось подтвердить доступ к ключу".to_string())?;
-        self.update_cookies(&mut session, &response)?;
-        if !response.status().is_success() { return Err("Проверь пароль и доверие к этому устройству".into()); }
-        response.json().await.map_err(|_| "Не удалось подтвердить доступ к ключу".to_string())
+            .json(&body);
+        let request_token = session.token.clone();
+        drop(session);
+        let response = request
+            .send()
+            .await
+            .map_err(|_| "Не удалось подтвердить доступ к ключу".to_string())?;
+        {
+            let mut session = self.session.lock().await;
+            if session.token == request_token {
+                self.update_cookies(&mut session, &response)?;
+            }
+        }
+        if !response.status().is_success() {
+            return Err("Проверь пароль и доверие к этому устройству".into());
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| "Не удалось подтвердить доступ к ключу".to_string())
     }
 
     pub fn new(app: &AppHandle) -> Result<Self, String> {
@@ -250,9 +275,16 @@ pub async fn api_request(
     if let Some(body) = body {
         request = request.json(&body);
     }
+    let request_token = session.token.clone();
+    drop(session);
     let response = request.send().await.map_err(|e| e.to_string())?;
     let status = response.status().as_u16();
-    state.update_cookies(&mut session, &response)?;
+    {
+        let mut session = state.session.lock().await;
+        if session.token == request_token {
+            state.update_cookies(&mut session, &response)?;
+        }
+    }
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     let body = if bytes.is_empty() {
         Value::Null
@@ -285,12 +317,16 @@ pub async fn api_upload(
     let secure = path.ends_with("/secure/files");
     let mut form = if secure {
         let data = secure_data.ok_or("Missing encrypted request")?;
-        if data.len() > 2*1024*1024 {return Err("Encrypted request too large".into());}
-        reqwest::multipart::Form::new().text("data",data)
-    } else {reqwest::multipart::Form::new().text("body",body)};
+        if data.len() > 2 * 1024 * 1024 {
+            return Err("Encrypted request too large".into());
+        }
+        reqwest::multipart::Form::new().text("data", data)
+    } else {
+        reqwest::multipart::Form::new().text("body", body)
+    };
     for file in files {
         let bytes = STANDARD.decode(file.data).map_err(|e| e.to_string())?;
-        if bytes.len() > 25 * 1024 * 1024 + if secure {4096} else {0} {
+        if bytes.len() > 25 * 1024 * 1024 + if secure { 4096 } else { 0 } {
             return Err("Attachment exceeds 25 MiB".into());
         }
         let part = reqwest::multipart::Part::bytes(bytes)
@@ -311,9 +347,16 @@ pub async fn api_upload(
     if let Some(csrf) = &session.csrf_token {
         request = request.header("X-CSRF-Token", csrf);
     }
+    let request_token = session.token.clone();
+    drop(session);
     let response = request.send().await.map_err(|e| e.to_string())?;
     let status = response.status().as_u16();
-    state.update_cookies(&mut session, &response)?;
+    {
+        let mut session = state.session.lock().await;
+        if session.token == request_token {
+            state.update_cookies(&mut session, &response)?;
+        }
+    }
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     let body = if bytes.is_empty() {
         Value::Null

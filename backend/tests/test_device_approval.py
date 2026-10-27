@@ -154,11 +154,13 @@ def test_unconfirmed_recovery_and_empty_offline_device_do_not_lock_chat(
     ).json()
     payload = json.dumps(
         {
-            "operation": "recover_session",
+            "operation": "acquire_lease",
             "conversation_id": str(conversation_id),
             "device_id": body["device_id"],
             "request_id": body["request_id"],
-            "group_id": str(group_id),
+            "kind": body["operation"],
+            "recover": True,
+            "recovery_group_id": str(group_id),
         },
         sort_keys=True,
         separators=(",", ":"),

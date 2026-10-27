@@ -4,7 +4,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -39,6 +39,10 @@ class AdminOverview(BaseModel):
     cloud_encryption_enabled: bool = False
     legacy_plaintext_messages: int = 0
     legacy_plaintext_attachments: int = 0
+    e2ee_storage_bytes: int = 0
+    e2ee_storage_limit_bytes: int = 0
+    pending_private_migration: int = 0
+    backup: dict | None = None
 
 
 @router.get("/overview", response_model=AdminOverview)
@@ -52,7 +56,40 @@ async def overview(request: Request, user: AdminUser, session: SessionDep) -> Ad
             select(User.username, User.created_at).order_by(User.created_at.desc()).limit(10)
         )
     ).all()
+    import json
+
+    from coherent_api.models.mls import MlsStorage
+    from coherent_api.models.server import ServerChannel
+
+    storage = await session.get(MlsStorage, 1)
+    try:
+        backup = json.loads(Path("/data/operations/backup-status.json").read_text())
+        backup = {
+            key: backup[key]
+            for key in (
+                "last_success_at",
+                "bytes",
+                "offsite_last_success_at",
+                "offsite_bytes",
+                "restore_checked_at",
+            )
+            if key in backup
+        }
+    except (OSError, ValueError, TypeError):
+        backup = None
     return AdminOverview(
+        e2ee_storage_bytes=storage.allocated_bytes if storage else 0,
+        e2ee_storage_limit_bytes=settings.e2ee_storage_limit_mb * 1024 * 1024,
+        pending_private_migration=await session.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(
+                Message.mls_payload.is_(None),
+                ~Message.conversation_id.in_(select(ServerChannel.conversation_id)),
+            )
+        )
+        or 0,
+        backup=backup,
         users=await session.scalar(select(func.count()).select_from(User)) or 0,
         conversations=await session.scalar(select(func.count()).select_from(Conversation)) or 0,
         messages=await session.scalar(select(func.count()).select_from(Message)) or 0,
@@ -88,5 +125,7 @@ async def overview(request: Request, user: AdminUser, session: SessionDep) -> Ad
 
 
 @router.get("/metrics")
-async def metrics(request: Request, user: AdminUser) -> dict:
-    return request.app.state.server_metrics.snapshot()
+async def metrics(
+    request: Request, user: AdminUser, hours: int = Query(default=24, ge=1, le=168)
+) -> dict:
+    return await request.app.state.server_metrics.snapshot(hours)

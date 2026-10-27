@@ -74,7 +74,7 @@ async def list_servers(session: AsyncSession, user: User) -> list[ServerResponse
 
 
 async def check_capacity(session: AsyncSession, user: User) -> None:
-    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update(key_share=True))
     count = (
         await session.scalar(
             select(func.count()).select_from(ServerMember).where(ServerMember.user_id == user.id)
@@ -88,7 +88,7 @@ async def check_capacity(session: AsyncSession, user: User) -> None:
 async def create_channel(
     session: AsyncSession, user: User, server_id: UUID, name: str, category: str
 ) -> ServerResponse:
-    server = await get_server(session, user, server_id, owner=True)
+    server = await manage_server(session, user, server_id)
     await session.execute(select(Server.id).where(Server.id == server_id).with_for_update())
     count = (
         await session.scalar(
@@ -127,7 +127,7 @@ async def create_server(session: AsyncSession, user: User, name: str) -> ServerR
 
 
 async def create_invite(session: AsyncSession, user: User, server_id: UUID) -> ServerInviteResponse:
-    await get_server(session, user, server_id, owner=True)
+    await manage_server(session, user, server_id)
     await session.execute(select(Server.id).where(Server.id == server_id).with_for_update())
     # Replacing the previous invitation also provides an explicit way to revoke it.
     await session.execute(delete(ServerInvite).where(ServerInvite.server_id == server_id))
@@ -144,7 +144,6 @@ async def create_invite(session: AsyncSession, user: User, server_id: UUID) -> S
 
 
 async def join_server(session: AsyncSession, user: User, code: str) -> ServerResponse:
-    await check_capacity(session, user)
     token_hash = hashlib.sha256(code.encode()).hexdigest()
     server_id = await session.scalar(
         select(ServerInvite.server_id).where(ServerInvite.token_hash == token_hash)
@@ -152,7 +151,12 @@ async def join_server(session: AsyncSession, user: User, code: str) -> ServerRes
     if server_id is None:
         raise ServerNotFoundError
     # All invitation mutations lock the server first, then the invitation.
-    server = await session.scalar(select(Server).where(Server.id == server_id).with_for_update())
+    server = await session.scalar(
+        select(Server)
+        .where(Server.id == server_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if server is None:
         raise ServerNotFoundError
     invite = await session.scalar(
@@ -167,6 +171,7 @@ async def join_server(session: AsyncSession, user: User, code: str) -> ServerRes
     ):
         raise ServerNotFoundError
     if await session.get(ServerMember, (server.id, user.id)) is None:
+        await check_capacity(session, user)
         count = (
             await session.scalar(
                 select(func.count())
@@ -181,3 +186,123 @@ async def join_server(session: AsyncSession, user: User, code: str) -> ServerRes
         invite.uses += 1
         await session.commit()
     return await response(session, server)
+
+
+async def members(session, user, server_id):
+    server = await get_server(session, user, server_id)
+    rows = (
+        await session.execute(
+            select(ServerMember, User)
+            .join(User, User.id == ServerMember.user_id)
+            .where(ServerMember.server_id == server_id)
+            .order_by(ServerMember.joined_at, User.username)
+        )
+    ).all()
+    return [
+        {
+            "id": str(person.id),
+            "username": person.username,
+            "display_name": person.display_name,
+            "role": "owner" if server.owner_id == person.id else member.role,
+        }
+        for member, person in rows
+    ]
+
+
+async def manage_server(session, user, server_id, *, owner=False):
+    server = await get_server(session, user, server_id)
+    server = await session.scalar(
+        select(Server)
+        .where(Server.id == server_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    member = await session.get(ServerMember, (server_id, user.id), populate_existing=True)
+    if server.owner_id != user.id and (owner or member.role != "moderator"):
+        raise ServerPermissionError
+    return server
+
+
+async def update_server(session, user, server_id, name):
+    server = await manage_server(session, user, server_id, owner=True)
+    server.name = name
+    await session.commit()
+    return await response(session, server)
+
+
+async def change_role(session, user, server_id, target_id, role):
+    server = await manage_server(session, user, server_id, owner=True)
+    target = await session.get(ServerMember, (server_id, target_id))
+    if target is None or target_id == server.owner_id:
+        raise ServerPermissionError
+    target.role = role
+    await session.commit()
+
+
+async def transfer_owner(session, user, server_id, target_id):
+    server = await manage_server(session, user, server_id, owner=True)
+    if target_id == user.id or await session.get(ServerMember, (server_id, target_id)) is None:
+        raise ServerPermissionError
+    server.owner_id = target_id
+    await session.commit()
+    return await response(session, server)
+
+
+async def remove_member(session, user, server_id, target_id):
+    server = await get_server(session, user, server_id)
+    server = await session.scalar(
+        select(Server)
+        .where(Server.id == server_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if target_id == server.owner_id:
+        raise ServerLimitError("Сначала передай владение другому участнику или удали сервер")
+    target = await session.get(ServerMember, (server_id, target_id))
+    if target is None:
+        raise ServerNotFoundError
+    if target_id != user.id:
+        await manage_server(session, user, server_id)
+        if target.role == "moderator" and server.owner_id != user.id:
+            raise ServerPermissionError
+    await session.delete(target)
+    await session.commit()
+
+
+async def update_channel(session, user, server_id, channel_id, name, category):
+    server = await manage_server(session, user, server_id)
+    channel = await session.get(ServerChannel, channel_id)
+    if channel is None or channel.server_id != server_id:
+        raise ServerNotFoundError
+    channel.name, channel.category = name, category
+    conversation = await session.get(Conversation, channel.conversation_id)
+    conversation.name = name
+    await session.commit()
+    return await response(session, server)
+
+
+async def delete_channel(session, user, server_id, channel_id):
+    server = await manage_server(session, user, server_id)
+    channel = await session.get(ServerChannel, channel_id)
+    if channel is None or channel.server_id != server_id:
+        raise ServerNotFoundError
+    count = await session.scalar(
+        select(func.count()).select_from(ServerChannel).where(ServerChannel.server_id == server_id)
+    )
+    if count <= 1:
+        raise ServerLimitError("На сервере должен остаться хотя бы один текстовый канал")
+    await session.execute(delete(Conversation).where(Conversation.id == channel.conversation_id))
+    await session.commit()
+    return await response(session, server)
+
+
+async def delete_server(session, user, server_id):
+    await manage_server(session, user, server_id, owner=True)
+    ids = list(
+        await session.scalars(
+            select(ServerChannel.conversation_id).where(ServerChannel.server_id == server_id)
+        )
+    )
+    await session.execute(delete(Conversation).where(Conversation.id.in_(ids)))
+    await session.execute(delete(Server).where(Server.id == server_id))
+    await session.commit()

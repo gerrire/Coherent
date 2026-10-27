@@ -9,13 +9,13 @@ from uuid import UUID, uuid4
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
-from coherent_api.core.security import verify_password
+from coherent_api.core.security import verify_password_async
 from coherent_api.models.e2ee import AccountRoster, DeviceChallenge, E2eeAccount, E2eeDevice
 from coherent_api.models.user import User
 from coherent_api.schemas.e2ee import (
@@ -27,6 +27,7 @@ from coherent_api.schemas.e2ee import (
     EnrollRequest,
     RosterPayload,
 )
+from coherent_api.services.auth_security import throttle
 from coherent_api.services.email_verification import send_recovery_notice
 
 router = APIRouter(prefix="/security", tags=["Устройства и восстановление"])
@@ -72,22 +73,10 @@ async def device_challenge(
     body: ChallengeRequest, request: Request, user: CurrentUser, session: SessionDep
 ) -> dict:
     require_available(request)
-    await session.scalar(select(User).where(User.id == user.id).with_for_update())
-    old = await session.scalar(
-        select(DeviceChallenge).where(
-            DeviceChallenge.user_id == user.id, DeviceChallenge.purpose == body.purpose
-        )
-    )
+    await session.scalar(select(User).where(User.id == user.id).with_for_update(key_share=True))
+    await throttle(session, "device-challenges", str(user.id), 240, 60)
     now = datetime.now(UTC)
-    if old and old.created_at.replace(tzinfo=UTC) > now - timedelta(seconds=2):
-        raise HTTPException(
-            status_code=429, detail="Повтори через несколько секунд", headers={"Retry-After": "2"}
-        )
-    await session.execute(
-        delete(DeviceChallenge).where(
-            DeviceChallenge.user_id == user.id, DeviceChallenge.purpose == body.purpose
-        )
-    )
+    await session.execute(delete(DeviceChallenge).where(DeviceChallenge.expires_at < now))
     challenge = DeviceChallenge(
         id=uuid4(),
         user_id=user.id,
@@ -118,7 +107,7 @@ async def verify_device_request(
     await session.scalar(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     challenge = await session.scalar(
@@ -158,7 +147,7 @@ async def verify_device_request(
         Ed25519PublicKey.from_public_bytes(public_bytes).verify(
             base64.b64decode(proof, validate=True), signed
         )
-        valid = not require_password or verify_password(password, user.password_hash)
+        valid = not require_password or await verify_password_async(password, user.password_hash)
     except (ValueError, InvalidSignature):
         pass
     if not valid:
@@ -303,7 +292,9 @@ async def recovery_material(request: Request, user: CurrentUser, session: Sessio
     rosters = list(
         await session.scalars(
             select(AccountRoster)
-            .where(AccountRoster.user_id == user.id)
+            .where(
+                AccountRoster.user_id == user.id, AccountRoster.revision >= account.root_revision
+            )
             .order_by(AccountRoster.revision)
         )
     )
@@ -332,7 +323,7 @@ async def enroll_device(
         raise HTTPException(
             status_code=400, detail="Неверный формат подтверждения устройства"
         ) from error
-    await session.scalar(select(User).where(User.id == user.id).with_for_update())
+    await session.scalar(select(User).where(User.id == user.id).with_for_update(key_share=True))
     account = await session.get(E2eeAccount, user.id)
     if account is None or roster.account_id != user.id:
         raise HTTPException(
@@ -426,20 +417,19 @@ async def enroll_device(
             status_code=403, detail="Подтверждать можно только текущее новое устройство"
         )
     for d in known:
-        if (
-            d.revoked_at is not None
-            or d.id not in by_id
-            or d.signature_key != by_id[d.id].signature_key
-        ):
+        if d.revoked_at is not None:
+            continue
+        if d.id not in by_id or d.signature_key != by_id[d.id].signature_key:
             raise HTTPException(
                 status_code=403, detail="Существующие ключи устройств менять нельзя"
             )
-    if (
-        previous
-        and RosterPayload.model_validate_json(previous.payload).archive_public_key
-        != roster.archive_public_key
-    ):
-        raise HTTPException(status_code=403, detail="Ключ архива не совпадает")
+    if previous:
+        before = RosterPayload.model_validate_json(previous.payload)
+        if (
+            before.archive_public_key != roster.archive_public_key
+            or before.history_roots != roster.history_roots
+        ):
+            raise HTTPException(status_code=403, detail="Ключ архива не совпадает")
     if device is not None and not existing:
         raise HTTPException(status_code=409, detail="Идентификатор устройства уже занят")
     if not existing:
@@ -462,6 +452,7 @@ async def enroll_device(
             payload=payload.roster.payload,
             signature=payload.roster.signature,
             digest=digest,
+            signer_public_key=account.recovery_public_key,
         )
     )
     from coherent_api.services.mls import allocate_storage
@@ -504,7 +495,7 @@ async def save_contact_pins(
     from coherent_api.services.mls import active_device, allocate_storage
 
     await active_device(session, user, body.device_id)
-    await session.scalar(select(User).where(User.id == user.id).with_for_update())
+    await session.scalar(select(User).where(User.id == user.id).with_for_update(key_share=True))
     account = await session.get(E2eeAccount, user.id)
     assert account is not None
     known = list(await session.scalars(select(ContactPin).where(ContactPin.user_id == user.id)))
@@ -527,8 +518,8 @@ async def save_contact_pins(
             ) from error
         old = by_id.get(pin.account_id)
         if old:
-            if old.public_key != pin.public_key:
-                raise HTTPException(status_code=409, detail="Ключ контакта изменился")
+            old.public_key = pin.public_key
+            old.proof = pin.proof
         else:
             if len(by_id) >= 1000:
                 raise HTTPException(status_code=409, detail="Достигнут предел ключей контактов")
@@ -546,3 +537,169 @@ async def save_contact_pins(
     await allocate_storage(session, request.app.state.settings, added * 1024)
     await session.commit()
     return {"saved": True}
+
+
+@router.post("/devices/reset-trust")
+async def reset_device_trust(
+    body: EnrollRequest,
+    request: Request,
+    response: Response,
+    user: CurrentUser,
+    session: SessionDep,
+):
+    """Rotate archive/recovery roots and require every other device to pair again."""
+    from sqlalchemy import exists, or_, update
+
+    from coherent_api.api.v1.auth import set_session_cookies
+    from coherent_api.models.conversation import Conversation
+    from coherent_api.models.conversation_member import ConversationMember
+    from coherent_api.models.device_link import DeviceLink
+    from coherent_api.models.e2ee import ContactPin
+    from coherent_api.models.mls import MlsState
+    from coherent_api.models.server import ServerChannel
+    from coherent_api.schemas.e2ee import RotationPayload
+    from coherent_api.services.mls import active_device, allocate_storage, digest
+
+    require_available(request)
+    device = await active_device(session, user, body.device.device_id)
+    if body.device.account_id != user.id or body.device.signature_key != device.signature_key:
+        raise HTTPException(403, "Ключ устройства не совпадает")
+    try:
+        payload = RotationPayload.model_validate_json(body.payload)
+        roster = RosterPayload.model_validate_json(payload.roster.payload)
+    except ValidationError:
+        raise HTTPException(400, "Неверные данные смены ключа") from None
+    await verify_device_request(
+        session,
+        user,
+        body.challenge_id,
+        device.id,
+        device.signature_key,
+        body.proof,
+        body.current_password.get_secret_value(),
+        "action",
+        hashlib.sha256(body.payload.encode()).digest(),
+    )
+    account = await session.get(E2eeAccount, user.id, with_for_update=True)
+    previous = await session.get(AccountRoster, (user.id, account.roster_revision))
+    if previous is None:
+        raise HTTPException(409, "Сначала настрой доверенное устройство")
+    before = RosterPayload.model_validate_json(previous.payload)
+    expected_history = list(dict.fromkeys([*before.history_roots, account.recovery_public_key]))
+    if (
+        roster.account_id != user.id
+        or roster.revision != account.roster_revision + 1
+        or roster.previous_hash != previous.digest
+        or roster.devices != [body.device]
+        or roster.history_roots != expected_history
+        or payload.public_key == account.recovery_public_key
+        or roster.archive_public_key == before.archive_public_key
+    ):
+        raise HTTPException(409, "Список устройств изменился. Повтори смену ключа")
+    try:
+        public = base64.b64decode(payload.public_key, validate=True)
+        if len(public) != 32:
+            raise ValueError()
+        Ed25519PublicKey.from_public_bytes(public).verify(
+            base64.b64decode(payload.roster.signature, validate=True),
+            b"coherent/account-roster/v1\0" + payload.roster.payload.encode(),
+        )
+    except (ValueError, InvalidSignature):
+        raise HTTPException(403, "Новый ключ не подтвердил смену") from None
+    now = datetime.now(UTC)
+    await session.execute(
+        update(E2eeDevice)
+        .where(
+            E2eeDevice.user_id == user.id,
+            E2eeDevice.id != device.id,
+            E2eeDevice.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    await session.execute(delete(ContactPin).where(ContactPin.user_id == user.id))
+    await session.execute(
+        update(DeviceLink)
+        .where(
+            DeviceLink.user_id == user.id,
+            DeviceLink.status.not_in(["completed", "expired", "cancelled", "rejected"]),
+        )
+        .values(status="cancelled", request=None, response=None, finalization=None, envelope=None)
+    )
+    conversations = select(Conversation.id).where(
+        ~exists(select(ServerChannel.id).where(ServerChannel.conversation_id == Conversation.id)),
+        or_(
+            Conversation.user_low_id == user.id,
+            Conversation.user_high_id == user.id,
+            exists(
+                select(ConversationMember.user_id).where(
+                    ConversationMember.conversation_id == Conversation.id,
+                    ConversationMember.user_id == user.id,
+                )
+            ),
+        ),
+    )
+    await session.execute(
+        update(MlsState)
+        .where(MlsState.conversation_id.in_(conversations))
+        .values(
+            group_id=None,
+            epoch=0,
+            roster="[]",
+            lease_id=None,
+            lease_device_id=None,
+            lease_request_id=None,
+            lease_nonce=None,
+            lease_payload=None,
+            lease_expires_at=None,
+        )
+    )
+    account.recovery_public_key = payload.public_key
+    account.recovery_backup = payload.backup.model_dump_json()
+    account.roster_revision = roster.revision
+    account.root_revision = roster.revision
+    account.revision += 1
+    account.recovery_confirmed_at = None
+    session.add(
+        AccountRoster(
+            user_id=user.id,
+            revision=roster.revision,
+            payload=payload.roster.payload,
+            signature=payload.roster.signature,
+            digest=digest(
+                b"coherent/account-roster/v1\0"
+                + payload.roster.payload.encode()
+                + payload.roster.signature.encode()
+            ),
+            signer_public_key=payload.public_key,
+        )
+    )
+    await allocate_storage(session, request.app.state.settings, len(body.payload.encode()) + 2048)
+    user.session_version += 1
+    await session.commit()
+    set_session_cookies(response, user, request)
+    from coherent_api.models.call import Call
+    from coherent_api.models.call_member import CallMember
+    from coherent_api.services.calls import end_call
+    from coherent_api.services.livekit_media import remove_livekit_participant
+
+    active_calls = list(
+        await session.scalars(
+            select(Call.id)
+            .join(CallMember, CallMember.call_id == Call.id)
+            .where(
+                CallMember.user_id == user.id,
+                CallMember.state.in_(["joined", "invited"]),
+                Call.status.in_(["ringing", "active"]),
+            )
+        )
+    )
+    for call_id in active_calls:
+        call, _ = await end_call(session, user, call_id)
+        await remove_livekit_participant(request.app.state.settings, call_id, user.id)
+        await request.app.state.message_events.publish(
+            tuple(person.user_id for person in call.participants),
+            {"type": "call", "call": call.model_dump(mode="json")},
+        )
+    await request.app.state.message_events.disconnect(user.id, code=4001)
+    await request.app.state.message_events.publish_all({"type": "security"})
+    return {"rotated": True, "public_key": payload.public_key}

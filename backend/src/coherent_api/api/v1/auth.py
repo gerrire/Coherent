@@ -3,9 +3,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
+from sqlalchemy import select
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
-from coherent_api.core.security import create_access_token, hash_password, verify_password
+from coherent_api.core.security import (
+    create_access_token,
+    hash_password_async,
+    verify_password_async,
+)
 from coherent_api.models.registration import RegistrationChallenge
 from coherent_api.models.user import User
 from coherent_api.schemas.auth import (
@@ -26,6 +31,7 @@ from coherent_api.services.auth import (
     authenticate_user,
     register_user,
 )
+from coherent_api.services.auth_security import revoke_session, throttle, token_digest
 from coherent_api.services.email_verification import (
     EmailCodeError,
     EmailRateError,
@@ -168,6 +174,17 @@ async def login(
     response: Response,
     session: SessionDep,
 ) -> AuthResponse:
+    host = request.client.host if request.client else "unknown"
+    await throttle(session, "login-ip", host, 60, 300)
+    account_id = await session.scalar(
+        select(User.id).where(
+            User.username == body.username
+            if body.username is not None
+            else User.email == body.email
+        )
+    )
+    if account_id:
+        await throttle(session, "login-account", str(account_id), 12, 300)
     try:
         user = await authenticate_user(session, body)
     except InvalidCredentialsError as error:
@@ -182,8 +199,14 @@ async def login(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(request: Request, response: Response) -> Response:
+async def logout(request: Request, response: Response, session: SessionDep) -> Response:
     settings = request.app.state.settings
+    token = request.cookies.get(SESSION_COOKIE) or request.headers.get(
+        "authorization", ""
+    ).removeprefix("Bearer ")
+    if token:
+        await revoke_session(session, token, settings)
+        await request.app.state.message_events.disconnect_session(token_digest(token))
     response.delete_cookie(
         key=SESSION_COOKIE,
         path="/",
@@ -216,7 +239,7 @@ async def request_email_code(
 ) -> dict:
     if not request.app.state.settings.smtp_host:
         raise HTTPException(status_code=503, detail="Отправка писем ещё настраивается")
-    if not verify_password(body.current_password, user.password_hash):
+    if not await verify_password_async(body.current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Текущий пароль указан неверно")
     try:
         await request_code(session, request.app.state.settings, user, body.email)
@@ -255,9 +278,9 @@ async def change_password(
     user: CurrentUser,
     session: SessionDep,
 ) -> None:
-    if not verify_password(body.current_password, user.password_hash):
+    if not await verify_password_async(body.current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Текущий пароль указан неверно")
-    user.password_hash = hash_password(body.new_password)
+    user.password_hash = await hash_password_async(body.new_password)
     user.session_version += 1
     await session.commit()
     set_session_cookies(response, user, request)

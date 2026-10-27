@@ -1,3 +1,4 @@
+import { useModalFocus } from "../lib/useModalFocus";
 import { useEffect, useRef, useState } from "react";
 import { Activity, Database, HardDrive, MessageSquare, RefreshCw, Users, X } from "lucide-react";
 import { api, type AdminOverview, type ServerMetricSample } from "../lib/api";
@@ -13,8 +14,6 @@ function formatBytes(value: number): string {
 }
 
 export default function AdminPanel({ onClose }: AdminPanelProps) {
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
   const dialogRef = useRef<HTMLDivElement>(null);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [samples, setSamples] = useState<ServerMetricSample[]>([]);
@@ -39,19 +38,11 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
     }
   }
 
+  useModalFocus(dialogRef, onClose);
   useEffect(() => {
-    dialogRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     void refresh();
     const timer = window.setInterval(() => void refresh(), 10_000);
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.clearInterval(timer);
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
+    return () => window.clearInterval(timer);
   }, []);
 
   const storagePercent = overview
@@ -89,7 +80,7 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
               <span>CPU <strong>{latest?.cpu_count ?? "—"}</strong></span>
               <span>VPS работает <strong>{latest?.host_uptime_seconds != null ? `${Math.floor(latest.host_uptime_seconds / 3600)} ч` : "—"}</strong></span>
             </div>
-            {latest?.memory_total_bytes != null && <small>RAM: {formatBytes(latest.memory_used_bytes ?? 0)} из {formatBytes(latest.memory_total_bytes)}. Графики показывают последние 20 минут с момента запуска API.</small>}
+            {latest?.memory_total_bytes != null && <small>RAM: {formatBytes(latest.memory_used_bytes ?? 0)} из {formatBytes(latest.memory_total_bytes)}. История сохраняется после перезапуска. Показаны последние сутки; срок хранения — 7 дней.</small>}
           </section>
           <section className="admin-card">
             <div className="admin-card-title"><HardDrive size={18} /><h3>Файлы и место на диске</h3></div>
@@ -98,6 +89,9 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
             <p>{overview.attachment_count} вложений · свободно на сервере {formatBytes(overview.disk_free_bytes)} из {formatBytes(overview.disk_total_bytes)}</p>
             <small>Общий лимит для всех пользователей — {formatBytes(overview.attachment_limit_bytes)}. После его достижения загрузки приостанавливаются до освобождения места. Файлы автоматически удаляются через 3 дня; для загрузок сохраняется резерв свободного места.</small>
           </section>
+          <section className="admin-card"><h3>Защищённая переписка</h3><p>{formatBytes(overview.e2ee_storage_bytes)} из {formatBytes(overview.e2ee_storage_limit_bytes)}</p><div className="admin-storage-track"><i style={{width:`${Math.min(100,overview.e2ee_storage_bytes / overview.e2ee_storage_limit_bytes * 100)}%`}} /></div>{overview.e2ee_storage_bytes > overview.e2ee_storage_limit_bytes * .8 && <p role="alert">Хранилище E2EE близко к пределу. Проверь рост данных заранее.</p>}<small>Старых личных сообщений в облачном формате: {overview.pending_private_migration}. Их переносят устройства авторов. Просроченные служебные пакеты очищаются автоматически.</small></section>
+          <section className="admin-card"><h3>Работа API и сеть</h3><div className="admin-runtime-details"><span>Запросов за минуту <strong>{latest?.api_requests_minute ?? "—"}</strong></span><span>Ошибок сервера <strong>{latest?.api_errors_minute ?? "—"}</strong></span><span>95% запросов быстрее <strong>{latest?.api_p95_ms != null ? `${latest.api_p95_ms.toFixed(0)} мс` : "—"}</strong></span><span>Приём <strong>{latest?.network_receive_bps != null ? `${formatBytes(latest.network_receive_bps)}/с` : "—"}</strong></span><span>Передача <strong>{latest?.network_send_bps != null ? `${formatBytes(latest.network_send_bps)}/с` : "—"}</strong></span></div><small>Сетевой счётчик относится к сетевому пространству API. Он не измеряет отдельно медиатрафик LiveKit.</small></section>
+          <section className="admin-card"><h3>Резервное копирование</h3>{overview.backup?.last_success_at ? <p>Последняя копия БД: {new Date(overview.backup.last_success_at).toLocaleString("ru-RU")} · {formatBytes(overview.backup.bytes ?? 0)}</p> : <p>Нет подтверждённого отчёта о последней копии.</p>}{overview.backup?.offsite_last_success_at ? <p>Зашифрованная копия вне VPS: {new Date(overview.backup.offsite_last_success_at).toLocaleString("ru-RU")} · {formatBytes(overview.backup.offsite_bytes ?? 0)}</p> : <p>Внешняя копия ещё не подтверждена.</p>}{overview.backup?.restore_checked_at && <p>Восстановление проверено: {new Date(overview.backup.restore_checked_at).toLocaleString("ru-RU")}</p>}<small>Время внешней копии обновляется только после успешного сохранения на другом компьютере.</small></section>
           <section className="admin-card"><h3>Облачное шифрование</h3><p>{overview.cloud_encryption_enabled ? "Новые сообщения и вложения шифруются ключом вне базы данных." : "Ключ ещё не подключён. Новое шифрование пока выключено."}</p><small>Осталось перенести старых сообщений: {overview.legacy_plaintext_messages}. Старых незашифрованных вложений: {overview.legacy_plaintext_attachments}; они удаляются по сроку хранения. Сервер имеет доступ к облачной истории — это не E2EE.</small></section>
           <section className="admin-card">
             <div className="admin-card-title"><Users size={18} /><h3>Новые аккаунты</h3></div>

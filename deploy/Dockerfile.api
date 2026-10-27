@@ -5,12 +5,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app/backend
 
+COPY backend/requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 COPY backend/pyproject.toml ./
 COPY backend/src ./src
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 COPY backend/alembic.ini ./
 COPY backend/alembic ./alembic
+
+RUN groupadd --gid 10001 coherent && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin coherent
+USER 10001:10001
 
 EXPOSE 8000
 

@@ -27,7 +27,7 @@ import {
 import { ConnectionState, Track, type Room } from "livekit-client";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { api, displayName, conversationTitle, type Call, type Conversation, type FriendRequest, type User, type CommunityServer } from "../lib/api";
+import { api, displayName, conversationTitle, type Call, type Conversation, type Message, type FriendRequest, type User, type CommunityServer } from "../lib/api";
 import {
   cameraCapture,
   cameraPublish,
@@ -81,6 +81,12 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const linkedChannelOpened = useRef(false);
   channelConversationRef.current = channelConversation;
   serversRef.current = servers;
+  useEffect(() => {
+    if (!selectedServerId) return;
+    const server=servers.find(item => item.id === selectedServerId);
+    if (!server) { setSelectedServerId(null); setChannelConversation(null); setActiveConversationId(null); }
+    else if (channelConversation && !server.channels.some(item => item.conversation_id === channelConversation.id)) { setChannelConversation(null); setActiveConversationId(null); }
+  }, [servers, selectedServerId, channelConversation]);
   const refreshServers = useCallback(async () => setServers(await api.servers()), []);
   const refreshOpenChannel = useCallback(async () => {
     const channel = channelConversationRef.current;
@@ -305,8 +311,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     setOnlineIds(new Set(result.online_user_ids));
   }, []);
 
+  const deliveredNotices = useRef(new Set<string>());
   const showNotification = useCallback((id: string, title: string, body: string, conversationId: string) => {
-    if (dismissedNotificationIdsRef.current.has(id)) return;
+    if (dismissedNotificationIdsRef.current.has(id) || deliveredNotices.current.has(id)) return;
+    deliveredNotices.current.add(id);
+    if (deliveredNotices.current.size > 512) deliveredNotices.current.delete(deliveredNotices.current.values().next().value!);
     setRecentNotifications((current) => [{ id, title, conversationId }, ...current.filter((item) => item.id !== id)].slice(0, 8));
     if (popoverRef.current !== "notifications") {
       setHasNewNotifications(true);
@@ -402,6 +411,36 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     }
   }, [notifiedRequests, showNotification, user.id]);
 
+  useEffect(() => {
+    const worker = navigator.serviceWorker;
+    if (!worker) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (data?.type === "coherent-navigate") {
+        const destination = new URL(data.url, window.location.origin);
+        if (destination.origin !== window.location.origin) return;
+        const id = destination.searchParams.get("conversation");
+        setSection(id ? "messages" : "friends");
+        if (id) navigateConversation(id); else setFriendsInitialTab("requests");
+        setShowWelcome(false); event.ports[0]?.postMessage({ handled: true });
+      } else if (data?.type === "coherent-push" && data.message?.account_id === user.id) {
+        const message = data.message;
+        const id = new URL(message.url || "/", window.location.origin).searchParams.get("conversation") || "";
+        const tag = String(message.tag || "coherent-event");
+        if (tag.startsWith("call-")) void refreshCalls();
+        else if (tag.startsWith("friend-")) void refreshRequests();
+        if (document.hidden || !document.hasFocus() || !id || activeConversationRef.current !== id) {
+          showNotification(tag, String(message.title || "Когерент"), String(message.body || "Новое событие"), id);
+        }
+        void refreshConversations().catch(() => undefined);
+        if (id === activeConversationRef.current) setMessageVersion(value => value + 1);
+        event.ports[0]?.postMessage({ handled: true });
+      }
+    };
+    worker.addEventListener("message", onMessage);
+    return () => worker.removeEventListener("message", onMessage);
+  }, [user.id, showNotification, refreshCalls, refreshRequests, refreshConversations]);
+
   useEffect(() => { void refreshRequests().catch(() => undefined); }, [refreshRequests]);
 
   const incomingCallId = currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") ? currentCall.id : null;
@@ -478,8 +517,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         setMessageVersion((current) => current + 1);
       }, (data) => {
         try {
-          const payload = JSON.parse(data) as { type?: string; message?: { id: string; sender_id: string; conversation_id: string; body: string } };
+          const payload = JSON.parse(data) as { type?: string; conversation_id?: string; removed_user_id?: string; message?: Message };
           if (payload.type === "call") {
+            window.dispatchEvent(new Event("coherent-media-membership"));
             void refreshCalls().catch(() => undefined);
             void refreshConversations().catch(() => undefined);
             return;
@@ -496,6 +536,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           }
           if (payload.type === "device_link") { window.dispatchEvent(new Event("coherent-device-link")); return; }
           if (payload.type === "security") {
+            window.dispatchEvent(new Event("coherent-media-membership"));
             window.dispatchEvent(new Event("coherent-security-changed"));
             setMessageVersion(current => current + 1);
             return;
@@ -513,6 +554,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             void refreshPresence().catch(() => undefined);
             return;
           }
+          if (payload.type === "conversation" && payload.removed_user_id === user.id) {
+            setConversations(current => current.filter(item => item.id !== payload.conversation_id));
+            if (activeConversationRef.current === payload.conversation_id) setActiveConversationId(null);
+            return;
+          }
           if (payload.type !== "message" && payload.type !== "conversation") return;
           if (payload.type === "message" && payload.message && payload.message.sender_id !== user.id) {
             const message = payload.message;
@@ -521,8 +567,14 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
               showNotification(`message-${message.id}`, conversation ? conversationTitle(conversation) : "Новое сообщение", message.body, message.conversation_id);
             }
           }
-          void refreshConversations().catch(() => undefined);
-          setMessageVersion((current) => current + 1);
+          if (payload.type === "message" && payload.message && conversationsRef.current.some(item => item.id === payload.message!.conversation_id)) {
+            const message = payload.message;
+            setConversations(current => current.map(item => item.id !== message.conversation_id ? item : { ...item, last_message: message, updated_at: message.created_at, unread: message.sender_id !== user.id || item.unread }).sort((a, b) => b.updated_at.localeCompare(a.updated_at)));
+            if (activeConversationRef.current === message.conversation_id) setMessageVersion(current => current + 1);
+          } else {
+            void refreshConversations().catch(() => undefined);
+            if (!payload.conversation_id || payload.conversation_id === activeConversationRef.current) setMessageVersion(current => current + 1);
+          }
         } catch {
           // Ignore an event with an unknown payload.
         }
@@ -645,7 +697,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
           if (track) {
             try {
-              await track.mediaStreamTrack.applyConstraints(microphoneCapture(next));
+              await track.restartTrack(microphoneCapture(next));
             } catch (reason) {
               try {
                 await track.restartTrack(microphoneCapture(next));
@@ -686,7 +738,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         }
         if (microphoneCaptureChanged && next.microphoneEnabled) {
           const applied = readAudioProcessing(room);
-          if ((patch.noiseSuppression !== undefined && applied?.noiseSuppression != null
+          if (((patch.noiseSuppression !== undefined || patch.noiseProcessor !== undefined) && applied?.noiseSuppression != null
               && applied.noiseSuppression !== (next.noiseProcessor === "browser" && next.noiseSuppression))
             || (patch.echoCancellation !== undefined && applied?.echoCancellation != null
               && applied.echoCancellation !== next.echoCancellation)
@@ -801,6 +853,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     try {
       await updateMedia({ cameraEnabled: false }).catch(() => undefined);
       const call = await api.endCall(currentCall.id);
+      void messagingFor(user.id).releaseMedia(currentCall.id).catch(() => undefined);
       setCurrentCall(call.status === "active" ? call : null);
       setAvailableCalls((current) => call.status === "active"
         ? current.some((item) => item.id === call.id) ? current.map((item) => item.id === call.id ? call : item) : [call, ...current]
@@ -1287,7 +1340,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       )}
 
       {profileSettingsOpen && <ProfileSettingsDialog user={user} onUpdated={onUserChange} onClose={() => setProfileSettingsOpen(false)} />}
-      {serverDialogOpen && <ServerDialog server={serverDialogManage ? selectedServer : undefined} currentUserId={user.id} onClose={() => setServerDialogOpen(false)} onSaved={(server) => { setServers((current) => [...current.filter((item) => item.id !== server.id), server]); openServer(server); }} />}
+      {serverDialogOpen && <ServerDialog server={serverDialogManage ? selectedServer : undefined} currentUserId={user.id} onRemoved={(id) => { setServers(current => current.filter(item => item.id !== id)); setChannelConversation(null); setSelectedServerId(null); setActiveConversationId(null); setSection("messages"); }} onClose={() => setServerDialogOpen(false)} onSaved={(server) => { const existed=servers.some(item => item.id===server.id); setServers(current => [...current.filter(item => item.id !== server.id),server]); if (!existed || !server.channels.some(item => item.conversation_id===activeConversationRef.current)) openServer(server); else void refreshOpenChannel().catch(() => undefined); }} />}
       {adminPanelOpen && <AdminPanel onClose={() => setAdminPanelOpen(false)} />}
       {clientSettingsOpen && <ClientSettingsDialog
         section={clientSettingsSection}

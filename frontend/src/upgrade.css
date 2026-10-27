@@ -138,3 +138,16 @@
   .device-approval-actions { flex-wrap: wrap; }
   .device-approval-actions button { flex: 1; min-height: 42px; }
 }
+
+.management-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 0; border-bottom:1px solid var(--theme-border); }
+.management-row > span { flex:1; min-width:100px; overflow-wrap:anywhere; }
+.management-row small { display:block; color:var(--theme-muted); font-size:11px; margin-top:4px; }
+.management-row button { width:auto; font-size:11px; }
+.management-confirm { padding:14px; border:1px solid var(--theme-border); border-radius:12px; }
+.management-confirm > div { display:flex; gap:10px; margin-top:12px; }
+@media(max-width:680px) { .management-row { align-items:flex-start; } .management-row > span { flex-basis:100%; } }
+
+.group-members-button { align-self:flex-end; border:1px solid var(--theme-border); border-radius:8px; background:var(--theme-panel); color:var(--theme-text); display:inline-flex; align-items:center; gap:6px; padding:7px 10px; cursor:pointer; }
+.migration-status { margin:6px 0; padding:8px 12px; color:var(--theme-muted); font-size:11px; line-height:1.5; }
+.recovery-reset-check { display:flex; align-items:flex-start; gap:10px; line-height:1.5; margin:12px 0; }
+.recovery-reset-check input { flex:0 0 auto; width:16px; height:16px; margin-top:2px; }

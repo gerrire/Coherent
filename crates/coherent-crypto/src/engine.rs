@@ -22,6 +22,10 @@ struct LocalEngine {
     version: u8,
     mls: String,
     archive_key: String,
+    #[serde(default)]
+    archive_history: Vec<String>,
+    #[serde(default)]
+    pending_rotation: Option<PendingRotation>,
     archive_in_use: bool,
     #[serde(default)]
     recovery_phrase: Option<String>,
@@ -32,6 +36,8 @@ struct LocalEngine {
     #[serde(default)]
     cursors: std::collections::BTreeMap<String, u64>,
     #[serde(default)]
+    active_groups: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     pairings: std::collections::BTreeMap<String, Pairing>,
 }
 
@@ -39,6 +45,7 @@ impl Drop for LocalEngine {
     fn drop(&mut self) {
         self.mls.zeroize();
         self.archive_key.zeroize();
+        self.archive_history.zeroize();
         if let Some(phrase) = &mut self.recovery_phrase {
             phrase.zeroize();
         }
@@ -105,6 +112,31 @@ impl Drop for ContentKey {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Identity,
+    RetireStream {
+        stream: String,
+    },
+    MediaKey {
+        conversation_id: String,
+        call_id: String,
+    },
+    PrepareRotation {
+        previous: SignedRoster,
+    },
+    CommitRotation {
+        public_key: String,
+    },
+    ReplaceIdentity {
+        device_id: String,
+    },
+    ReplaceAccountTrust {
+        public_key: String,
+        roster: SignedRoster,
+        fingerprint: String,
+    },
+    PinHistoryRoster {
+        public_key: String,
+        roster: SignedRoster,
+    },
     LinkStart {
         id: String,
     },
@@ -265,14 +297,35 @@ pub enum Command {
     },
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingRotation {
+    phrase: String,
+    archive_key: String,
+    previous_keys: Vec<String>,
+    public_key: String,
+    backup: Envelope,
+    roster: SignedRoster,
+}
+impl Drop for PendingRotation {
+    fn drop(&mut self) {
+        self.phrase.zeroize();
+        self.archive_key.zeroize();
+        self.previous_keys.zeroize();
+    }
+}
+
 pub struct CryptoEngine {
     mls: MlsClient,
     archive_key: Zeroizing<[u8; 32]>,
+    archive_history: Vec<Zeroizing<[u8; 32]>>,
+    pending_rotation: Option<PendingRotation>,
     archive_in_use: bool,
     recovery_phrase: Option<Zeroizing<String>>,
     recovery_backup: Option<Envelope>,
     trust: TrustStore,
     cursors: std::collections::BTreeMap<String, u64>,
+    active_groups: std::collections::BTreeMap<String, String>,
     pairings: std::collections::BTreeMap<String, Pairing>,
 }
 
@@ -281,11 +334,14 @@ impl CryptoEngine {
         Ok(Self {
             mls: MlsClient::new(account_id, device_id)?,
             archive_key: envelope::random_key(),
+            archive_history: Vec::new(),
+            pending_rotation: None,
             archive_in_use: false,
             recovery_phrase: None,
             recovery_backup: None,
             trust: TrustStore::default(),
             cursors: std::collections::BTreeMap::new(),
+            active_groups: std::collections::BTreeMap::new(),
             pairings: std::collections::BTreeMap::new(),
         })
     }
@@ -296,12 +352,34 @@ impl CryptoEngine {
         }
         let command: Command =
             serde_json::from_str(command).map_err(|_| CryptoError::InvalidInput)?;
-        let before = self.snapshot_local()?;
+        let read_only = matches!(
+            &command,
+            Command::Identity
+                | Command::Members { .. }
+                | Command::GroupStatus { .. }
+                | Command::OwnFingerprint
+                | Command::InspectRoster { .. }
+                | Command::StreamCursor { .. }
+                | Command::VerifyAction { .. }
+                | Command::SignAction { .. }
+                | Command::ExportContactPins
+                | Command::LinkInfo { .. }
+                | Command::MediaKey { .. }
+                | Command::SealChunk { .. }
+                | Command::OpenChunk { .. }
+        );
+        let before = if read_only {
+            None
+        } else {
+            Some(self.snapshot_local()?)
+        };
         let result = self
             .execute(command)
             .and_then(|result| serde_json::to_string(&result).map_err(|_| CryptoError::State));
         if result.is_err() {
-            *self = Self::restore_local(&before)?;
+            if let Some(before) = before {
+                *self = Self::restore_local(&before)?;
+            }
         }
         result
     }
@@ -349,6 +427,165 @@ impl CryptoEngine {
     fn execute(&mut self, command: Command) -> Result<serde_json::Value, CryptoError> {
         use serde_json::json;
         match command {
+            Command::RetireStream { stream } => {
+                uuid_bytes(&stream)?;
+                if let Some(group) = self.active_groups.get(&stream).cloned() {
+                    self.mls.retire_group(&group)?;
+                    self.active_groups.remove(&stream);
+                }
+                self.cursors.remove(&stream);
+                Ok(json!({}))
+            }
+            Command::MediaKey {
+                conversation_id,
+                call_id,
+            } => {
+                let (key, epoch) = self.mls.media_key(&conversation_id, &call_id)?;
+                Ok(json!({"key":BASE64_STANDARD.encode(key.as_slice()),"epoch":epoch}))
+            }
+            Command::PrepareRotation { previous } => {
+                use ed25519_dalek::Signer;
+                if self.pending_rotation.is_none() {
+                    let account = self.mls.device().account_id.clone();
+                    let old_public = BASE64_STANDARD.encode(recovery::authorization_public(
+                        &account,
+                        self.recovery_phrase.as_ref().ok_or(CryptoError::State)?,
+                    )?);
+                    let old = trust::verify_roster(&old_public, &previous)?;
+                    if !old.devices.contains(self.mls.device()) {
+                        return Err(CryptoError::UntrustedDevice);
+                    }
+                    if self.archive_history.len() >= 127 {
+                        return Err(CryptoError::State);
+                    }
+                    let phrase = recovery::generate_phrase()?;
+                    let key = envelope::random_key();
+                    let mut keys = vec![*key, *self.archive_key];
+                    keys.extend(self.archive_history.iter().map(|key| **key));
+                    let backup = recovery::protect_archive_keys(&account, &phrase, &keys)?;
+                    let signer = recovery::authorization_signer(&account, &phrase)?;
+                    let public_key = BASE64_STANDARD.encode(signer.verifying_key().to_bytes());
+                    let mut roots = old.history_roots.clone();
+                    if !roots.contains(&old_public) {
+                        roots.push(old_public);
+                    }
+                    let roster = trust::AccountRoster {
+                        version: 1,
+                        account_id: account,
+                        revision: old.revision + 1,
+                        previous_hash: trust::roster_hash(&previous),
+                        archive_public_key: BASE64_STANDARD.encode(
+                            trust::archive_pair(&old.account_id, &key)?
+                                .public_key()
+                                .as_slice(),
+                        ),
+                        devices: vec![self.mls.device().clone()],
+                        history_roots: roots,
+                    };
+                    let payload = serde_json::to_string(&roster).map_err(|_| CryptoError::State)?;
+                    let mut signed = trust::ROSTER_DOMAIN.to_vec();
+                    signed.extend_from_slice(payload.as_bytes());
+                    self.pending_rotation = Some(PendingRotation {
+                        phrase: phrase.to_string(),
+                        archive_key: BASE64_STANDARD.encode(key.as_ref()),
+                        previous_keys: keys
+                            .iter()
+                            .skip(1)
+                            .map(|key| BASE64_STANDARD.encode(key))
+                            .collect(),
+                        public_key,
+                        backup,
+                        roster: SignedRoster {
+                            payload,
+                            signature: BASE64_STANDARD.encode(signer.sign(&signed).to_bytes()),
+                        },
+                    });
+                    keys.zeroize();
+                }
+                let pending = self.pending_rotation.as_ref().ok_or(CryptoError::State)?;
+                Ok(
+                    json!({"public_key":pending.public_key,"backup":pending.backup,"roster":pending.roster}),
+                )
+            }
+            Command::CommitRotation { public_key } => {
+                let pending = self.pending_rotation.as_ref().ok_or(CryptoError::State)?;
+                if pending.public_key != public_key {
+                    return Err(CryptoError::Authentication);
+                }
+                let key = trust::decode(&pending.archive_key, 32)?;
+                self.archive_key =
+                    Zeroizing::new(key.as_slice().try_into().map_err(|_| CryptoError::State)?);
+                self.archive_history = pending
+                    .previous_keys
+                    .iter()
+                    .map(|wire| {
+                        let bytes = Zeroizing::new(trust::decode(wire, 32)?);
+                        Ok(Zeroizing::new(
+                            bytes
+                                .as_slice()
+                                .try_into()
+                                .map_err(|_| CryptoError::State)?,
+                        ))
+                    })
+                    .collect::<Result<_, CryptoError>>()?;
+                self.recovery_phrase = Some(Zeroizing::new(pending.phrase.clone()));
+                self.recovery_backup = Some(pending.backup.clone());
+                let roster = pending.roster.clone();
+                let account = self.mls.device().account_id.clone();
+                self.trust.accounts.remove(&account);
+                self.trust.anchors.remove(&account);
+                self.trust.accept(
+                    &public_key,
+                    roster,
+                    Some(&trust::fingerprint(&account, &public_key)?),
+                )?;
+                self.pairings.clear();
+                self.pending_rotation = None;
+                Ok(json!({"rotated":true}))
+            }
+            Command::ReplaceIdentity { device_id } => {
+                let account = self.mls.device().account_id.clone();
+                self.mls = MlsClient::new(&account, &device_id)?;
+                self.cursors.clear();
+                self.active_groups.clear();
+                self.pairings.clear();
+                self.trust.accounts.remove(&account);
+                self.trust.anchors.remove(&account);
+                Ok(json!({"device":self.mls.device()}))
+            }
+            Command::ReplaceAccountTrust {
+                public_key,
+                roster,
+                fingerprint,
+            } => {
+                let parsed = trust::verify_roster(&public_key, &roster)?;
+                if trust::fingerprint(&parsed.account_id, &public_key)? != fingerprint {
+                    return Err(CryptoError::UntrustedDevice);
+                }
+                self.trust.accounts.remove(&parsed.account_id);
+                self.trust.anchors.remove(&parsed.account_id);
+                self.trust.accept(&public_key, roster, Some(&fingerprint))?;
+                for device in parsed.devices {
+                    self.mls.pin_device(device)?;
+                }
+                Ok(json!({}))
+            }
+            Command::PinHistoryRoster { public_key, roster } => {
+                let parsed = trust::verify_roster(&public_key, &roster)?;
+                let pin = self
+                    .trust
+                    .accounts
+                    .get(&parsed.account_id)
+                    .ok_or(CryptoError::UntrustedDevice)?;
+                let current = trust::verify_roster(&pin.public_key, &pin.roster)?;
+                if public_key != pin.public_key && !current.history_roots.contains(&public_key) {
+                    return Err(CryptoError::UntrustedDevice);
+                }
+                for device in parsed.devices {
+                    self.mls.pin_device(device)?;
+                }
+                Ok(json!({}))
+            }
             Command::LinkStart { id } => {
                 if self.pairings.contains_key(&id) {
                     return Err(CryptoError::State);
@@ -468,12 +705,17 @@ impl CryptoEngine {
                 {
                     return Err(CryptoError::Authentication);
                 }
-                let recovered =
-                    recovery::recover_archive_key(&data.device.account_id, &phrase, &data.backup)?;
-                if self.archive_in_use && *recovered != *self.archive_key {
+                let mut keys =
+                    recovery::recover_archive_keys(&data.device.account_id, &phrase, &data.backup)?;
+                let recovered = keys.remove(0);
+                if self.archive_in_use
+                    && *recovered != *self.archive_key
+                    && !keys.iter().any(|key| **key == *self.archive_key)
+                {
                     return Err(CryptoError::State);
                 }
                 self.archive_key = recovered;
+                self.archive_history = keys;
                 self.recovery_phrase = Some(phrase);
                 self.recovery_backup = Some(data.backup);
                 self.pairings.remove(&id);
@@ -491,7 +733,7 @@ impl CryptoEngine {
                 Ok(json!({}))
             }
             Command::Identity => Ok(
-                json!({ "device": self.mls.device(), "fingerprint": self.mls.device().fingerprint()? }),
+                json!({ "device": self.mls.device(), "fingerprint": self.mls.device().fingerprint()?, "pending_rotation_public_key": self.pending_rotation.as_ref().map(|rotation| &rotation.public_key) }),
             ),
             Command::StreamCursor { stream } => {
                 uuid_bytes(&stream)?;
@@ -537,6 +779,14 @@ impl CryptoEngine {
                     if actual != desired || desired.len() != expected.len() {
                         return Err(CryptoError::UntrustedDevice);
                     }
+                }
+                if let Some(group) = group_id {
+                    if let Some(previous) = self.active_groups.get(&stream).cloned() {
+                        if previous != group {
+                            self.mls.retire_group(&previous)?;
+                        }
+                    }
+                    self.active_groups.insert(stream.clone(), group);
                 }
                 self.cursors.insert(stream, sequence);
                 Ok(result)
@@ -588,16 +838,11 @@ impl CryptoEngine {
                     )?;
                     if self
                         .trust
-                        .anchors
+                        .accounts
                         .get(&pin.account_id)
-                        .is_some_and(|old| old != &pin.public_key)
-                        || self
-                            .trust
-                            .accounts
-                            .get(&pin.account_id)
-                            .is_some_and(|old| old.public_key != pin.public_key)
+                        .is_some_and(|old| old.public_key != pin.public_key)
                     {
-                        return Err(CryptoError::UntrustedDevice);
+                        self.trust.accounts.remove(&pin.account_id);
                     }
                     self.trust.anchors.insert(pin.account_id, pin.public_key);
                 }
@@ -773,24 +1018,29 @@ impl CryptoEngine {
                 {
                     return Err(CryptoError::InvalidInput);
                 }
-                let pair = trust::archive_pair(&backup.recipient, &self.archive_key)?;
                 let aad = Self::history_aad(&context, &backup.recipient)?;
-                let bytes = Zeroizing::new(
-                    trust::hpke()
-                        .open(
-                            &trust::decode(&backup.encapsulated, 32)?,
-                            pair.private_key(),
-                            b"coherent/history-hpke/v1",
-                            &aad,
-                            &BASE64_STANDARD
-                                .decode(backup.ciphertext)
-                                .map_err(|_| CryptoError::InvalidInput)?,
-                            None,
-                            None,
-                            None,
-                        )
-                        .map_err(|_| CryptoError::Authentication)?,
-                );
+                let encapsulated = trust::decode(&backup.encapsulated, 32)?;
+                let encrypted = BASE64_STANDARD
+                    .decode(&backup.ciphertext)
+                    .map_err(|_| CryptoError::InvalidInput)?;
+                let mut opened = None;
+                for key in std::iter::once(&self.archive_key).chain(self.archive_history.iter()) {
+                    let pair = trust::archive_pair(&backup.recipient, key)?;
+                    if let Ok(bytes) = trust::hpke().open(
+                        &encapsulated,
+                        pair.private_key(),
+                        b"coherent/history-hpke/v1",
+                        &aad,
+                        &encrypted,
+                        None,
+                        None,
+                        None,
+                    ) {
+                        opened = Some(Zeroizing::new(bytes));
+                        break;
+                    }
+                }
+                let bytes = opened.ok_or(CryptoError::Authentication)?;
                 let signed: SignedContentKey =
                     serde_json::from_slice(&bytes).map_err(|_| CryptoError::InvalidInput)?;
                 if signed.author.account_id != context.sender_account_id
@@ -1015,8 +1265,11 @@ impl CryptoEngine {
                 body,
                 archive,
             } => {
-                let bytes =
-                    envelope::open(&self.archive_key, &archive, &self.archive_aad(&context)?)?;
+                let aad = self.archive_aad(&context)?;
+                let bytes = std::iter::once(&self.archive_key)
+                    .chain(self.archive_history.iter())
+                    .find_map(|key| envelope::open(key, &archive, &aad).ok())
+                    .ok_or(CryptoError::Authentication)?;
                 let record: ContentKey =
                     serde_json::from_slice(&bytes).map_err(|_| CryptoError::InvalidInput)?;
                 if serde_json::to_vec(&record.context).map_err(|_| CryptoError::State)?
@@ -1099,13 +1352,20 @@ impl CryptoEngine {
             }
             Command::RecoverArchive { phrase, backup } => {
                 let phrase = Zeroizing::new(phrase);
-                let result =
-                    recovery::recover_archive_key(&self.mls.device().account_id, &phrase, &backup);
-                let recovered = result?;
-                if self.archive_in_use && *recovered != *self.archive_key {
+                let mut keys = recovery::recover_archive_keys(
+                    &self.mls.device().account_id,
+                    &phrase,
+                    &backup,
+                )?;
+                let recovered = keys.remove(0);
+                if self.archive_in_use
+                    && *recovered != *self.archive_key
+                    && !keys.iter().any(|key| **key == *self.archive_key)
+                {
                     return Err(CryptoError::State);
                 }
                 self.archive_key = recovered;
+                self.archive_history = keys;
                 self.recovery_backup = Some(backup);
                 self.recovery_phrase = Some(Zeroizing::new(
                     phrase
@@ -1145,6 +1405,12 @@ impl CryptoEngine {
             version: 1,
             mls: BASE64_STANDARD.encode(self.mls.snapshot_local()?.as_slice()),
             archive_key: BASE64_STANDARD.encode(self.archive_key.as_ref()),
+            archive_history: self
+                .archive_history
+                .iter()
+                .map(|key| BASE64_STANDARD.encode(key.as_ref()))
+                .collect(),
+            pending_rotation: self.pending_rotation.clone(),
             archive_in_use: self.archive_in_use,
             recovery_phrase: self
                 .recovery_phrase
@@ -1153,6 +1419,7 @@ impl CryptoEngine {
             recovery_backup: self.recovery_backup.clone(),
             trust: self.trust.clone(),
             cursors: self.cursors.clone(),
+            active_groups: self.active_groups.clone(),
             pairings: self.pairings.clone(),
         };
         Ok(Zeroizing::new(
@@ -1184,6 +1451,20 @@ impl CryptoEngine {
         Ok(Self {
             mls: MlsClient::restore_local(&mls_bytes)?,
             archive_key,
+            archive_history: snapshot
+                .archive_history
+                .iter()
+                .map(|wire| {
+                    let bytes = Zeroizing::new(trust::decode(wire, 32)?);
+                    Ok(Zeroizing::new(
+                        bytes
+                            .as_slice()
+                            .try_into()
+                            .map_err(|_| CryptoError::State)?,
+                    ))
+                })
+                .collect::<Result<_, CryptoError>>()?,
+            pending_rotation: snapshot.pending_rotation.clone(),
             archive_in_use: snapshot.archive_in_use,
             recovery_phrase: snapshot
                 .recovery_phrase
@@ -1192,6 +1473,7 @@ impl CryptoEngine {
             recovery_backup: snapshot.recovery_backup.clone(),
             trust: snapshot.trust.clone(),
             cursors: snapshot.cursors.clone(),
+            active_groups: snapshot.active_groups.clone(),
             pairings: snapshot.pairings.clone(),
         })
     }

@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import UTC, datetime
 from uuid import UUID
@@ -7,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from coherent_api.core.chat_crypto import cloud_message, message_text
+from coherent_api.models.call_media import CallMediaSession
 from coherent_api.models.conversation import Conversation
 from coherent_api.models.conversation_member import ConversationMember
 from coherent_api.models.conversation_read import ConversationRead
@@ -74,9 +76,15 @@ async def conversation_response(
     current_user_id: UUID,
     last_message: Message | None = None,
     last_read: ConversationRead | None = None,
+    cached_users: list[User] | None = None,
+    encrypted: bool | None = None,
 ) -> ConversationResponse:
-    member_ids = await conversation_member_ids(session, conversation)
-    users = list(await session.scalars(select(User).where(User.id.in_(member_ids))))
+    users = cached_users
+    if users is None:
+        member_ids = await conversation_member_ids(session, conversation)
+        users = list(await session.scalars(select(User).where(User.id.in_(member_ids))))
+    else:
+        member_ids = [person.id for person in users]
     by_id = {user.id: user for user in users}
     members = [
         ConversationUser(
@@ -89,7 +97,14 @@ async def conversation_response(
     return ConversationResponse(
         id=conversation.id,
         kind=conversation.kind,
-        encryption="mls" if await is_mls_conversation(session, conversation.id) else "cloud",
+        owner_id=conversation.owner_id,
+        encryption="mls"
+        if (
+            encrypted
+            if encrypted is not None
+            else await is_mls_conversation(session, conversation.id)
+        )
+        else "cloud",
         name=conversation.name,
         members=members,
         other_user=other if conversation.kind == "direct" else None,
@@ -115,13 +130,16 @@ async def create_group(
     if len(targets) != len(user_ids) or not 2 <= len(targets) <= 9:
         raise GroupMembershipError("Для группы выбери от 2 до 9 друзей")
     await validate_friends(session, current_user.id, targets)
+    from coherent_api.services.conversation_access import require_ready_accounts
+
+    await require_ready_accounts(session, targets | {current_user.id})
     users = list(await session.scalars(select(User).where(User.id.in_(targets))))
     if len(users) != len(targets):
         raise ConversationUserNotFoundError
     display_name = (name or "").strip() or "Группа: " + ", ".join(
         user.public_name for user in sorted(users, key=lambda item: item.username)
     )
-    conversation = Conversation(kind="group", name=display_name[:64])
+    conversation = Conversation(kind="group", name=display_name[:64], owner_id=current_user.id)
     session.add(conversation)
     await session.flush()
     for user_id in (current_user.id, *sorted(targets)):
@@ -135,7 +153,11 @@ async def rename_group(
     session: AsyncSession, current_user: User, conversation_id: UUID, name: str
 ) -> ConversationResponse:
     conversation = await get_conversation(session, current_user, conversation_id)
-    if await get_server_channel(session, conversation_id) is not None:
+    from coherent_api.services.conversation_access import is_call_media
+
+    if await get_server_channel(session, conversation_id) is not None or await is_call_media(
+        session, conversation_id
+    ):
         raise GroupMembershipError("Каналом управляет владелец сервера")
     clean_name = name.strip()
     if conversation.kind != "group" or not clean_name:
@@ -185,7 +207,16 @@ async def open_conversation(
     )
 
 
-async def list_conversations(session: AsyncSession, current_user: User) -> ConversationsResponse:
+async def list_conversations(
+    session: AsyncSession, current_user: User, cursor: str | None = None
+) -> ConversationsResponse:
+    position = None
+    if cursor:
+        try:
+            raw = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+            position = (datetime.fromisoformat(raw[0]), UUID(raw[1]))
+        except (ValueError, TypeError, KeyError, IndexError):
+            raise MessageCursorNotFoundError from None
     last_message_id = (
         select(Message.id)
         .where(Message.conversation_id == Conversation.id)
@@ -206,6 +237,11 @@ async def list_conversations(session: AsyncSession, current_user: User) -> Conve
             .outerjoin(Message, Message.id == last_message_id)
             .where(
                 ~exists(
+                    select(CallMediaSession.call_id).where(
+                        CallMediaSession.conversation_id == Conversation.id
+                    )
+                ),
+                ~exists(
                     select(ServerChannel.id).where(ServerChannel.conversation_id == Conversation.id)
                 ),
                 or_(
@@ -214,10 +250,61 @@ async def list_conversations(session: AsyncSession, current_user: User) -> Conve
                     group_member,
                 ),
             )
+            .where(
+                or_(
+                    Conversation.updated_at < position[0],
+                    and_(Conversation.updated_at == position[0], Conversation.id < position[1]),
+                )
+                if position
+                else True
+            )
             .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
-            .limit(100)
+            .limit(101)
         )
     ).all()
+    more = len(rows) > 100
+    rows = rows[:100]
+    ids = [conversation.id for conversation, _ in rows]
+    group_members = list(
+        (
+            await session.execute(
+                select(ConversationMember.conversation_id, ConversationMember.user_id)
+                .where(ConversationMember.conversation_id.in_(ids))
+                .order_by(ConversationMember.joined_at, ConversationMember.user_id)
+            )
+        ).all()
+    )
+    grouped = {}
+    for cid, uid in group_members:
+        grouped.setdefault(cid, []).append(uid)
+    by_conversation = {
+        c.id: (
+            list((c.user_low_id, c.user_high_id)) if c.kind == "direct" else grouped.get(c.id, [])
+        )
+        for c, _ in rows
+    }
+    people = {
+        p.id: p
+        for p in await session.scalars(
+            select(User).where(
+                User.id.in_({uid for members in by_conversation.values() for uid in members})
+            )
+        )
+    }
+    from coherent_api.models.mls import MlsState
+
+    settings = session.info.get("settings")
+    encrypted_ids = (
+        set(ids)
+        if settings and settings.e2ee_messaging_enabled
+        else set(
+            await session.scalars(
+                select(MlsState.conversation_id).where(
+                    MlsState.conversation_id.in_(ids), MlsState.group_id.is_not(None)
+                )
+            )
+        )
+    )
     reads = {
         item.conversation_id: item
         for item in await session.scalars(
@@ -230,10 +317,21 @@ async def list_conversations(session: AsyncSession, current_user: User) -> Conve
     return ConversationsResponse(
         conversations=[
             await conversation_response(
-                session, conversation, current_user.id, last_message, reads.get(conversation.id)
+                session,
+                conversation,
+                current_user.id,
+                last_message,
+                reads.get(conversation.id),
+                [people[uid] for uid in by_conversation[conversation.id] if uid in people],
+                conversation.id in encrypted_ids,
             )
             for conversation, last_message in rows
-        ]
+        ],
+        next_cursor=base64.urlsafe_b64encode(
+            json.dumps([rows[-1][0].updated_at.isoformat(), str(rows[-1][0].id)]).encode()
+        ).decode()
+        if more
+        else None,
     )
 
 

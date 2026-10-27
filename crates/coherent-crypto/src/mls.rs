@@ -380,6 +380,40 @@ impl MlsClient {
             .collect()
     }
 
+    pub fn retire_group(&mut self, conversation: &str) -> Result<(), CryptoError> {
+        if self.pending_commits.contains_key(conversation) {
+            return Err(CryptoError::State);
+        }
+        if let Some(mut group) =
+            MlsGroup::load(self.provider.storage(), &Self::group_id(conversation)?)
+                .map_err(|_| CryptoError::State)?
+        {
+            group
+                .delete(self.provider.storage())
+                .map_err(|_| CryptoError::State)?;
+        }
+        self.allowed_devices.remove(conversation);
+        Ok(())
+    }
+
+    pub fn media_key(
+        &self,
+        conversation: &str,
+        call: &str,
+    ) -> Result<(Zeroizing<Vec<u8>>, u64), CryptoError> {
+        self.check_conversation_device(conversation, &self.device)?;
+        let group = self.load_group(conversation)?;
+        let key = group
+            .export_secret(
+                self.provider.crypto(),
+                "coherent/media-call/v1",
+                &uuid_bytes(call)?,
+                32,
+            )
+            .map_err(|_| CryptoError::Mls)?;
+        Ok((Zeroizing::new(key), group.epoch().as_u64()))
+    }
+
     pub fn epoch(&self, conversation: &str) -> Result<u64, CryptoError> {
         Ok(self.load_group(conversation)?.epoch().as_u64())
     }
@@ -425,7 +459,22 @@ impl MlsClient {
         packages: &[String],
     ) -> Result<CommitBundle, CryptoError> {
         let mut group = self.load_group(conversation)?;
-        if packages.is_empty() || packages.len() + group.members().count() > MAX_MEMBERS {
+        if packages.is_empty() {
+            let epoch = group.epoch().as_u64();
+            let (commit, _, _) = group
+                .self_update(&self.provider, &self.signer, LeafNodeParameters::default())
+                .map_err(|_| CryptoError::Mls)?
+                .into_contents();
+            let commit = encode(&commit)?;
+            self.pending_commits
+                .insert(conversation.into(), commit.clone());
+            return Ok(CommitBundle {
+                commit,
+                welcome: None,
+                previous_epoch: epoch,
+            });
+        }
+        if packages.len() + group.members().count() > MAX_MEMBERS {
             return Err(CryptoError::InvalidInput);
         }
         let mut devices: BTreeSet<String> = self

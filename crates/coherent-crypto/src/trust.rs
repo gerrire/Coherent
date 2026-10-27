@@ -30,6 +30,8 @@ pub struct AccountRoster {
     pub previous_hash: String,
     pub archive_public_key: String,
     pub devices: Vec<DeviceBinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history_roots: Vec<String>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TrustStore {
@@ -95,8 +97,12 @@ pub fn verify_roster(public: &str, signed: &SignedRoster) -> Result<AccountRoste
         || roster.revision == 0
         || roster.devices.is_empty()
         || roster.devices.len() > 16
+        || roster.history_roots.len() > 128
     {
         return Err(CryptoError::InvalidInput);
+    }
+    for root in &roster.history_roots {
+        decode(root, 32)?;
     }
     let mut ids = BTreeSet::new();
     let mut keys = BTreeSet::new();
@@ -226,6 +232,7 @@ impl TrustStore {
                 previous_hash: B64.encode([0u8; 32]),
                 archive_public_key,
                 devices: Vec::new(),
+                history_roots: Vec::new(),
             }
         };
         roster.devices.push(device.clone());

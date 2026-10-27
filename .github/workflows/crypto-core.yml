@@ -1,12 +1,8 @@
 name: Compile shared cryptography
 
 on:
-  push:
-    branches: ["**"]
-    paths: ["crates/**", "frontend/src/lib/crypto/**", "frontend/scripts/*crypto.mjs", "frontend/src-tauri/src/e2ee.rs", "frontend/src-tauri/Cargo.*", ".github/workflows/crypto-core.yml"]
-  pull_request:
-    branches: [main]
-    paths: ["crates/**", "frontend/src/lib/crypto/**", "frontend/scripts/*crypto.mjs", "frontend/src-tauri/src/e2ee.rs", "frontend/src-tauri/Cargo.*", ".github/workflows/crypto-core.yml"]
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read

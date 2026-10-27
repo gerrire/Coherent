@@ -1,3 +1,4 @@
+import { useModalFocus } from "../lib/useModalFocus";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Bell, Check, Monitor, Settings2, SlidersHorizontal, X } from "lucide-react";
@@ -92,22 +93,8 @@ export default function ClientSettingsDialog({
 }: ClientSettingsDialogProps) {
   const [theme, setTheme] = useState(loadTheme);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
 
-  useEffect(() => {
-    dialogRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
+  useModalFocus(dialogRef, onClose);
 
   return <div className="client-settings-backdrop" onMouseDown={(event) => {
     if (event.target === event.currentTarget) onClose();

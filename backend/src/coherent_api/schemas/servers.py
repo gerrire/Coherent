@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -48,3 +49,11 @@ class ServerInviteResponse(BaseModel):
     code: str
     expires_at: datetime
     max_uses: int
+
+
+class MemberRoleRequest(BaseModel):
+    role: Literal["member", "moderator"]
+
+
+class OwnershipRequest(BaseModel):
+    user_id: UUID

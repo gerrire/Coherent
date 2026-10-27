@@ -187,3 +187,68 @@ async def get_join_token(
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
     except CallStateError as error:
         raise HTTPException(status_code=409, detail="Этот вызов уже недоступен") from error
+
+
+@router.post("/calls/media-events")
+async def media_events(request: Request, session: SessionDep):
+    """Only LiveKit's signed, body-bound webhook can enter this endpoint."""
+    from livekit import api as livekit_api
+
+    from coherent_api.models.call import Call
+    from coherent_api.models.call_member import CallMember
+    from coherent_api.services.calls import is_expired
+    from coherent_api.services.livekit_media import ROOM_PREFIX
+
+    settings = request.app.state.settings
+    if not livekit_ready(settings):
+        raise HTTPException(503, "Медиа-сервер недоступен")
+    try:
+        receiver = livekit_api.WebhookReceiver(
+            livekit_api.TokenVerifier(
+                settings.livekit_api_key, settings.livekit_api_secret.get_secret_value()
+            )
+        )
+        raw = await request.body()
+        if len(raw) > 65536:
+            raise ValueError("size")
+        event = receiver.receive(raw.decode(), request.headers.get("authorization", ""))
+    except Exception:
+        raise HTTPException(401, "Подпись события недействительна") from None
+    if event.event == "participant_joined" and event.room.name.startswith(ROOM_PREFIX):
+        try:
+            call_id = UUID(event.room.name.removeprefix(ROOM_PREFIX))
+            user_id = UUID(event.participant.identity)
+        except ValueError:
+            raise HTTPException(400, "Неверный участник") from None
+        call = await session.get(Call, call_id)
+        member = await session.get(CallMember, (call_id, user_id))
+        if (
+            call is None
+            or call.status != "active"
+            or is_expired(call)
+            or member is None
+            or member.state != "joined"
+        ):
+            await remove_livekit_participant(settings, call_id, user_id)
+    return {"received": True}
+
+
+@router.get("/calls/{call_id}/crypto")
+async def call_crypto(call_id: UUID, user: CurrentUser, session: SessionDep):
+    from coherent_api.models.call_member import CallMember
+    from coherent_api.models.conversation import Conversation
+    from coherent_api.services.call_media import sync_members
+    from coherent_api.services.calls import get_call, is_expired
+    from coherent_api.services.messages import conversation_response
+
+    try:
+        call = await get_call(session, user, call_id)
+    except CallNotFoundError:
+        raise HTTPException(404, "Звонок недоступен") from None
+    member = await session.get(CallMember, (call_id, user.id))
+    if call.status != "active" or is_expired(call) or member.state != "joined":
+        raise HTTPException(403, "Войди в звонок перед настройкой шифрования")
+    media_id = await sync_members(session, call)
+    await session.commit()
+    conversation = await session.get(Conversation, media_id)
+    return await conversation_response(session, conversation, user.id)

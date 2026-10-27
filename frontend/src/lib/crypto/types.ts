@@ -16,6 +16,13 @@ export interface MessageContext {
 }
 export interface SignedRoster { payload: string; signature: string }
 export type CryptoCommand =
+  | { operation: "retire_stream"; stream: string }
+  | { operation: "media_key"; conversation_id: string; call_id: string }
+  | { operation: "prepare_rotation"; previous: SignedRoster }
+  | { operation: "commit_rotation"; public_key: string }
+  | { operation: "replace_identity"; device_id: string }
+  | { operation: "replace_account_trust"; public_key: string; roster: SignedRoster; fingerprint: string }
+  | { operation: "pin_history_roster"; public_key: string; roster: SignedRoster }
   | { operation: "link_prune"; ids: string[] }
   | { operation: "link_start" | "link_info" | "link_cancel"; id: string }
   | { operation: "link_offer"; id: string; device: DeviceBinding; code: string }
@@ -81,5 +88,5 @@ export type ApproveLinkRequest = { type: "approve_link"; current_password: strin
 
 /** These commands do not change keys, trust, ratchets or archive-use markers. */
 export function readOnlyCommand(command: CryptoCommand): boolean {
-  return ["identity", "group_status", "members", "own_fingerprint", "inspect_roster", "stream_cursor", "verify_action", "sign_action", "export_contact_pins", "link_info"].includes(command.operation);
+  return ["identity", "group_status", "members", "own_fingerprint", "inspect_roster", "stream_cursor", "verify_action", "sign_action", "export_contact_pins", "link_info", "media_key", "seal_chunk", "open_chunk"].includes(command.operation);
 }

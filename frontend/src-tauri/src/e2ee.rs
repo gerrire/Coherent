@@ -35,14 +35,7 @@ pub async fn desktop_crypto_request(
                 .map_err(|_| "Защищённое хранилище ОС недоступно".to_string())?;
             vault
                 .request(&account_id, &request.to_string())
-                .map_err(|error| {
-                    if matches!(error, coherent_crypto::CryptoError::WelcomeTreeMissing) {
-                        "MLS_WELCOME_TREE_MISSING".to_string()
-                    } else {
-                        "Не удалось выполнить действие с защищённой перепиской. Данные не отправлены."
-                            .to_string()
-                    }
-                })
+                .map_err(|error| error.to_string())
         })
         .await
         .map_err(|_| "Защищённое хранилище недоступно".to_string())?

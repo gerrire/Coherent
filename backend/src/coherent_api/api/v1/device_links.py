@@ -127,7 +127,7 @@ async def start_link(body: LinkAction, request: Request, user: CurrentUser, sess
     user = await session.scalar(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     if user.session_version != version:
@@ -227,7 +227,7 @@ async def step_link(
     user = await session.scalar(
         select(User)
         .where(User.id == user.id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     link = await session.get(DeviceLink, identity, with_for_update=True)

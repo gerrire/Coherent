@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from coherent_api.core.config import Settings
-from coherent_api.core.security import hash_password, verify_password
+from coherent_api.core.security import hash_password_async, verify_password_async
 from coherent_api.models.user import User
 from coherent_api.schemas.auth import LoginRequest, RegisterRequest
 from coherent_api.services.registration import claim_registration
@@ -35,7 +35,7 @@ async def register_user(
     user = User(
         email=request.email,
         username=request.username,
-        password_hash=hash_password(request.password),
+        password_hash=await hash_password_async(request.password),
         email_verified_at=datetime.now(UTC),
     )
     session.add(user)
@@ -58,6 +58,6 @@ async def authenticate_user(session: AsyncSession, request: LoginRequest) -> Use
         else User.email == request.email
     )
     user = await session.scalar(select(User).where(identifier))
-    if user is None or not verify_password(request.password, user.password_hash):
+    if user is None or not await verify_password_async(request.password, user.password_hash):
         raise InvalidCredentialsError
     return user

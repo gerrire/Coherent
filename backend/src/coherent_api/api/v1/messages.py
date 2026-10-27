@@ -18,6 +18,7 @@ from starlette.background import BackgroundTask
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.schemas.messages import (
+    AddGroupMembersRequest,
     ConversationResponse,
     ConversationsResponse,
     CreateGroupRequest,
@@ -45,6 +46,7 @@ from coherent_api.services.messages import (
     MessageCursorNotFoundError,
     ReadMessageNotFoundError,
     SelfConversationError,
+    conversation_response,
     create_group,
     list_conversations,
     list_messages,
@@ -60,8 +62,15 @@ router = APIRouter(prefix="/conversations", tags=["Сообщения"])
 
 
 @router.get("", response_model=ConversationsResponse)
-async def get_conversations(user: CurrentUser, session: SessionDep) -> ConversationsResponse:
-    return await list_conversations(session, user)
+async def get_conversations(
+    user: CurrentUser, session: SessionDep, cursor: str | None = None
+) -> ConversationsResponse:
+    if cursor and len(cursor) > 256:
+        raise HTTPException(400, "Неверная позиция списка бесед")
+    try:
+        return await list_conversations(session, user, cursor)
+    except MessageCursorNotFoundError:
+        raise HTTPException(400, "Неверная позиция списка бесед") from None
 
 
 @router.post("", response_model=ConversationResponse)
@@ -296,3 +305,81 @@ async def get_single_message(
     return visible_message(
         session, message, [AttachmentResponse.model_validate(a) for a in attachments]
     )
+
+
+@router.post("/{conversation_id}/members", response_model=ConversationResponse)
+async def add_members(
+    conversation_id: UUID,
+    body: AddGroupMembersRequest,
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+):
+    from coherent_api.services.conversation_access import add_group_members, get_conversation
+
+    try:
+        conversation = await get_conversation(session, user, conversation_id)
+        await add_group_members(session, user, conversation, set(body.user_ids))
+        await session.commit()
+    except GroupMembershipError as error:
+        raise HTTPException(409, str(error)) from error
+    except ConversationNotFoundError:
+        raise HTTPException(404, "Группа недоступна") from None
+    result = await conversation_response(session, conversation, user.id)
+    await request.app.state.message_events.publish(
+        tuple(m.id for m in result.members),
+        {"type": "conversation", "conversation_id": str(conversation_id)},
+    )
+    return result
+
+
+@router.delete("/{conversation_id}/members/{target_id}", status_code=204)
+async def remove_member(
+    conversation_id: UUID, target_id: UUID, request: Request, user: CurrentUser, session: SessionDep
+):
+    from coherent_api.services.conversation_access import remove_group_member
+
+    try:
+        members, call_id = await remove_group_member(session, user, conversation_id, target_id)
+    except GroupMembershipError as error:
+        raise HTTPException(403, str(error)) from error
+    except ConversationNotFoundError:
+        raise HTTPException(404, "Группа недоступна") from None
+    if call_id:
+        from coherent_api.services.livekit_media import remove_livekit_participant
+
+        await remove_livekit_participant(request.app.state.settings, call_id, target_id)
+    await request.app.state.message_events.publish(
+        members,
+        {
+            "type": "conversation",
+            "conversation_id": str(conversation_id),
+            "removed_user_id": str(target_id),
+        },
+    )
+
+
+@router.get("/{conversation_id}/migration")
+async def migration_status(conversation_id: UUID, user: CurrentUser, session: SessionDep):
+    from sqlalchemy import func, select
+
+    from coherent_api.models.message import Message
+    from coherent_api.services.conversation_access import get_conversation
+
+    try:
+        await get_conversation(session, user, conversation_id)
+    except ConversationNotFoundError:
+        raise HTTPException(404, "Беседа недоступна") from None
+    rows = (
+        await session.execute(
+            select(Message.sender_id, func.count())
+            .where(Message.conversation_id == conversation_id, Message.mls_payload.is_(None))
+            .group_by(Message.sender_id)
+        )
+    ).all()
+    own = sum(count for uid, count in rows if uid == user.id)
+    return {
+        "remaining": sum(count for _, count in rows),
+        "own_remaining": own,
+        "other_remaining": sum(count for uid, count in rows if uid != user.id),
+    }

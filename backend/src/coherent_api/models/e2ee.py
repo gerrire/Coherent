@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from coherent_api.db.base import Base
@@ -16,6 +16,7 @@ class E2eeAccount(Base):
     recovery_backup: Mapped[str] = mapped_column(Text)
     recovery_public_key: Mapped[str] = mapped_column(String(44))
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    root_revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     roster_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
@@ -38,7 +39,6 @@ class E2eeDevice(Base):
 
 class DeviceChallenge(Base):
     __tablename__ = "e2ee_device_challenges"
-    __table_args__ = (UniqueConstraint("user_id", "purpose", name="uq_device_challenge_purpose"),)
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     purpose: Mapped[str] = mapped_column(String(24))
@@ -56,6 +56,7 @@ class AccountRoster(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signer_public_key: Mapped[str | None] = mapped_column(String(44), nullable=True)
     payload: Mapped[str] = mapped_column(Text)
     signature: Mapped[str] = mapped_column(String(88))
     digest: Mapped[str] = mapped_column(String(44))

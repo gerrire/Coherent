@@ -101,7 +101,14 @@ def test_join_token_requires_call_membership(
     assert claims["sub"] == alice_id
     assert claims["video"]["room"] == f"coherent-call-{call_id}"
     assert 0 < claims["exp"] - datetime.now(UTC).timestamp() <= 121
-    assert allowed.json()["e2ee_key"]
+    assert "e2ee_key" not in allowed.json()
+    crypto = client.get(
+        f"/api/v1/calls/{call_id}/crypto", headers=_headers(alice_token, csrf_token)
+    )
+    assert crypto.status_code == 200
+    assert crypto.json()["id"] == allowed.json()["media_conversation_id"]
+    listed = client.get("/api/v1/conversations", headers=_headers(alice_token, csrf_token)).json()
+    assert all(item["id"] != crypto.json()["id"] for item in listed["conversations"])
 
 
 def test_cancelling_ringing_call_closes_room(

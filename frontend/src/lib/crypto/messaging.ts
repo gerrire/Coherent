@@ -1,17 +1,17 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { attachmentObjectUrl, api, apiRequest, ApiError, type Conversation, type Message } from "../api";
 import { CryptoClient } from "./client";
-import { enrollCurrentDevice } from "./access";
+import { enrollCurrentDevice, withDeviceState } from "./access";
 import { CryptoOperationError } from "./errors";
 import { cachedCipher, forgetCipher, openCipherFile, sealFiles, type PublicCipherFile, type SecureFile } from "./files";
 import type { ContactPin, CryptoCommand, DeliveryItem, DeviceBinding, Envelope, HistoryBackup, MessageContext, SignedRoster } from "./types";
 
-interface AccountDirectory { account_id: string; public_key: string | null; ready: boolean; rosters: SignedRoster[] }
+interface AccountDirectory { account_id: string; public_key: string | null; ready: boolean; rosters: SignedRoster[]; history_rosters?: Array<{public_key:string; roster:SignedRoster}> }
 interface GroupState { group_id: string | null; sequence: number; epoch: number; generation: number; roster: string[] }
-interface Directory { accounts: AccountDirectory[]; state: GroupState; eligible_devices: string[] }
+interface Directory { accounts: AccountDirectory[]; history_accounts?: AccountDirectory[]; state: GroupState; eligible_devices: string[] }
 interface Lease {
   accepted: boolean; event?: SecureEvent; lease_id: string; nonce: string; request_id: string;
-  operation: "init" | "add" | "reset" | "message"; group_id: string; expected_sequence: number; previous_epoch: number;
+  operation: "init" | "add" | "remove" | "reset" | "message"; group_id: string; expected_sequence: number; previous_epoch: number;
   roster: string[]; targets: string[]; packages: Array<{ id: string; device_id: string; wire: string }>;
 }
 interface Hint { conversation_id: string; lease: Lease; files: PublicCipherFile[]; migration?: { source_files: string[] } }
@@ -41,17 +41,19 @@ export class MlsMessaging {
   private device: DeviceBinding | null = null;
   private initialization: Promise<void> | null = null;
   private acquired = new Map<string, { conversation: Conversation; lease: Lease }>();
+  private callStreams = new Map<string,string>();
   private migrations = new Map<string, Promise<void>>();
   private migrated = new Set<string>();
   private decoded = new Map<string, { signature: string; message: Message }>();
   private savedPins = new Map<string, string>();
   constructor(readonly account: string) { this.crypto = new CryptoClient(account); }
   close() { this.crypto.close(); this.decoded.clear(); }
-  private async lock<T>(work: () => Promise<T>): Promise<T> {
+  private async lock<T>(work: () => Promise<T>, scope = "account"): Promise<T> {
     const guarded = async () => {
       try { return await work(); }
       finally {
-        const leases = [...this.acquired.values()]; this.acquired.clear();
+        const leases = [...this.acquired.values()].filter(entry => entry.conversation.id === scope);
+        for (const entry of leases) this.acquired.delete(entry.lease.lease_id);
         if (leases.length) {
           const pending = await this.crypto.pendingDeliveries().catch(() => null);
           if (pending) for (const entry of leases) {
@@ -60,7 +62,7 @@ export class MlsMessaging {
         }
       }
     };
-    if (navigator.locks) return navigator.locks.request(`coherent-transport-v1-${this.account}`, { mode: "exclusive" }, guarded);
+    if (navigator.locks) return withDeviceState(this.account,"shared",() => navigator.locks.request(`coherent-transport-v2-${this.account}-${scope}`, { mode: "exclusive" }, guarded));
     if (!isTauri()) throw new MessagingAccessError("device", "Для защищённой переписки нужен современный браузер и HTTPS");
     return guarded();
   }
@@ -86,6 +88,10 @@ export class MlsMessaging {
     return this.initialization;
   }
   private async packages(): Promise<void> {
+    if (navigator.locks) return navigator.locks.request(`coherent-key-packages-v1-${this.account}`, {mode:"exclusive"}, () => this.publishPackages());
+    return this.publishPackages();
+  }
+  private async publishPackages(): Promise<void> {
     const device = this.device!;
     const count = await apiRequest<{ available: number }>(`/api/v1/security/key-packages/count?device_id=${device.device_id}`);
     let pending = (await this.crypto.pendingDeliveries()).filter(item => item.operation === "key_package").slice(0, 16);
@@ -108,8 +114,14 @@ export class MlsMessaging {
     let waiting = false;
     for (const account of directory.accounts) {
       if (!account.ready || !account.public_key || !account.rosters.length) { waiting = true; continue; }
-      const checked = await this.crypto.execute({ operation: "inspect_roster", public_key: account.public_key, roster: account.rosters.at(-1)! });
-      if (checked.result.account_id !== account.account_id || checked.result.changed) throw new MessagingAccessError("changed", "Сверочный ключ участника изменился. Отправка остановлена");
+      let checked = await this.crypto.execute({ operation: "inspect_roster", public_key: account.public_key, roster: account.rosters.at(-1)! });
+      if (checked.result.account_id !== account.account_id) throw new MessagingAccessError("changed", "Аккаунт ключа не совпадает");
+      if (checked.result.changed) {
+        const fingerprint = checked.result.fingerprint as string;
+        if (!confirmed?.some(review => review.account_id === account.account_id && review.fingerprint === fingerprint)) throw new MessagingAccessError("verify", "Участник сменил ключ восстановления. Сравните новый сверочный код перед продолжением.", [{account_id:account.account_id,fingerprint}]);
+        await this.crypto.execute({operation:"replace_account_trust",public_key:account.public_key,roster:account.rosters.at(-1)!,fingerprint});
+        checked = await this.crypto.execute({operation:"inspect_roster",public_key:account.public_key,roster:account.rosters.at(-1)!});
+      }
       // Pin the first observed identity; later root changes still fail closed.
       // Out-of-band fingerprint comparison is available without blocking first contact.
       if (confirmed?.some(item => item.account_id === account.account_id && item.fingerprint !== checked.result.fingerprint)) throw new MessagingAccessError("changed", "Сверочный код изменился");
@@ -120,6 +132,14 @@ export class MlsMessaging {
         const revision = Number(JSON.parse(roster.payload).revision);
         if (revision > known || revision === latest) await this.crypto.execute({ operation: "accept_roster", public_key: account.public_key, roster, fingerprint: checked.result.pinned ? null : checked.result.fingerprint as string });
       }
+      for (const historical of account.history_rosters ?? []) await this.crypto.execute({operation:"pin_history_roster", public_key:historical.public_key, roster:historical.roster});
+    }
+    // Former members authenticate old records, without authorizing new membership.
+    for (const account of directory.history_accounts ?? []) for (const historical of account.history_rosters ?? []) {
+      const checked = await this.crypto.execute({operation:"inspect_roster",public_key:historical.public_key,roster:historical.roster});
+      if (checked.result.changed) continue;
+      if (Number(checked.result.revision) > Number(checked.result.known_revision)) await this.crypto.execute({operation:"accept_roster",public_key:historical.public_key,roster:historical.roster,fingerprint:checked.result.pinned ? null : checked.result.fingerprint as string});
+      await this.crypto.execute({operation:"pin_history_roster",public_key:historical.public_key,roster:historical.roster});
     }
     const exported = await this.crypto.execute({ operation: "export_contact_pins" });
     const pins = exported.result.pins as ContactPin[];
@@ -140,7 +160,7 @@ export class MlsMessaging {
         codes.push({ account_id: account.account_id, fingerprint: inspected.result.fingerprint as string });
       }
       return codes;
-    });
+    }, conversation.id);
   }
   private payload(item: DeliveryItem): string {
     const transport = hint(item); if (!transport) throw new Error("Неполный пакет в очереди");
@@ -192,7 +212,7 @@ export class MlsMessaging {
   }
   private devices(directory: Directory): Map<string, DeviceBinding> {
     const result = new Map<string, DeviceBinding>();
-    for (const account of directory.accounts) for (const device of JSON.parse(account.rosters.at(-1)!.payload).devices as DeviceBinding[]) result.set(device.device_id, device);
+    for (const account of [...directory.accounts,...(directory.history_accounts ?? [])]) for (const roster of [...account.rosters,...(account.history_rosters ?? []).map(item => item.roster)]) for (const device of JSON.parse(roster.payload).devices as DeviceBinding[]) result.set(device.device_id,device);
     return result;
   }
   private async pull(conversation: Conversation, directory: Directory): Promise<void> {
@@ -237,20 +257,18 @@ export class MlsMessaging {
     }
   }
   private async acquire(conversation: Conversation, operation: Lease["operation"], recoveryGroup: string | null = null): Promise<Lease> {
+    const requestId = crypto.randomUUID();
     for (let attempt = 0; ; attempt++) {
       try {
-        const requestId = crypto.randomUUID();
-        let authorization = {};
-        if (recoveryGroup) {
-          const challenge = await this.challenge();
-          const payload = canonical({operation:"recover_session", conversation_id:conversation.id, device_id:this.device!.device_id, request_id:requestId, group_id:recoveryGroup});
-          const signed = await this.crypto.execute({operation:"sign_action", nonce:challenge.nonce, payload});
-          authorization = {challenge_id:challenge.challenge_id, proof:signed.result.proof, recovery_group_id:recoveryGroup};
-        }
-        const lease = await apiRequest<Lease>(`/api/v1/conversations/${conversation.id}/secure/lease`, { method: "POST", body: JSON.stringify({ device_id: this.device!.device_id, request_id: requestId, operation, recover:!!recoveryGroup, ...authorization }) });
+        const challenge = await this.challenge();
+        const payload = canonical({operation:"acquire_lease", conversation_id:conversation.id,
+          device_id:this.device!.device_id, request_id:requestId, kind:operation,
+          recover:!!recoveryGroup, recovery_group_id:recoveryGroup});
+        const signed = await this.crypto.execute({operation:"sign_action", nonce:challenge.nonce, payload});
+        const lease = await apiRequest<Lease>(`/api/v1/conversations/${conversation.id}/secure/lease`, { method: "POST", body: JSON.stringify({ device_id:this.device!.device_id, request_id:requestId, operation, recover:!!recoveryGroup, recovery_group_id:recoveryGroup, challenge_id:challenge.challenge_id, proof:signed.result.proof }) });
         this.acquired.set(lease.lease_id, { conversation, lease }); return lease;
       }
-      catch (error) { if (!(error instanceof ApiError) || error.status !== 409 || !error.message.includes("Другая отправка") || attempt >= 3) throw error; await pause(1100); }
+      catch (error) { const retry = !(error instanceof ApiError) || error.status >= 500 || (error.status === 409 && error.message.includes("Другая отправка")); if (!retry || attempt >= 3) throw error; await pause(1100); }
     }
   }
   private async ensureGroup(conversation: Conversation, directory: Directory, repair = false): Promise<void> {
@@ -258,20 +276,33 @@ export class MlsMessaging {
     const local = state.group_id ? await this.crypto.execute({ operation: "group_status", conversation_id: state.group_id }) : null;
     const recover = !!state.group_id && state.roster.includes(this.device!.device_id) && (repair || !local?.result.exists);
     if (!recover && state.group_id && state.roster.includes(this.device!.device_id) && same(state.roster, desired)) return;
-    const operation = !state.group_id ? "init" : recover || !state.roster.includes(this.device!.device_id) ? "reset" : "add";
+    const operation = !state.group_id ? "init" : recover || !state.roster.includes(this.device!.device_id) ? "reset" : state.roster.some(id => !desired.includes(id)) ? "remove" : "add";
     const lease = await this.acquire(conversation, operation, recover ? state.group_id : null);
     const fresh = await this.checkDirectory(conversation);
     directory.accounts = fresh.accounts;
     directory.eligible_devices = fresh.eligible_devices;
     await this.crypto.execute({ operation: "authorize_conversation", conversation_id: lease.group_id, device_ids: lease.roster });
     if (operation === "init" || operation === "reset") await this.crypto.execute({ operation: "create_group", conversation_id: lease.group_id });
-    const result = await this.crypto.execute({ operation: "add_members", conversation_id: lease.group_id, key_packages: lease.packages.map(p => p.wire) }, undefined, { conversation_id: conversation.id, lease, files: [] });
+    const result = await this.crypto.execute(operation === "remove"
+      ? { operation: "remove_members", conversation_id: lease.group_id, device_ids: lease.targets }
+      : { operation: "add_members", conversation_id: lease.group_id, key_packages: lease.packages.map(p => p.wire) }, undefined, { conversation_id: conversation.id, lease, files: [] });
     const item = (await this.crypto.pendingDeliveries()).find(p => p.id === result.delivery_id)!;
     await this.post(item);
     directory.state = (await apiRequest<Directory>(`/api/v1/conversations/${conversation.id}/secure`)).state;
     await this.pull(conversation, directory);
+    if (!same(directory.state.roster, directory.eligible_devices)) await this.ensureGroup(conversation, directory);
   }
   private async prepare(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
+    for (let attempt=0;;attempt++) {
+      try { return await this.prepareOnce(conversation,confirmed); }
+      catch (error) {
+        const race=error instanceof ApiError && (error.status >= 500 || (error.status === 409 && ["Защищённая сессия уже создана","Состав или версия беседы изменились","Сначала синхронизируй новые устройства","Состав защищённой сессии изменился","Состав защищённой сессии уже обновлён","Для этого устройства нужна новая защищённая сессия"].some(text => error.message.includes(text))));
+        if (!race || attempt>=3) throw error;
+        await pause(300*(attempt+1));
+      }
+    }
+  }
+  private async prepareOnce(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     await this.ready();
     const directory = await this.checkDirectory(conversation, confirmed);
     await this.resolveCandidates(conversation);
@@ -296,7 +327,7 @@ export class MlsMessaging {
     }
     return directory;
   }
-  async synchronize(conversation: Conversation, confirmed?: KeyReview[]): Promise<void> { return this.lock(async () => { await this.prepare(conversation, confirmed); }); }
+  async synchronize(conversation: Conversation, confirmed?: KeyReview[]): Promise<void> { return this.lock(async () => { await this.prepare(conversation, confirmed); }, conversation.id); }
   async hasPending(messageId: string): Promise<boolean> { return (await this.crypto.pendingDeliveries()).some(item => item.operation === "send" && (item.payload.context as MessageContext)?.message_id === messageId); }
   async cancelPending(conversation: Conversation): Promise<void> {
     return this.lock(async () => {
@@ -305,12 +336,12 @@ export class MlsMessaging {
       for (const item of await this.crypto.pendingDeliveries()) {
         if (hint(item)?.conversation_id !== conversation.id) continue;
         const result = await this.cancel(item); if (result.accepted) continue;
-        if (item.operation === "add_members") await this.crypto.execute({ operation: "discard_commit", conversation_id: hint(item)!.lease.group_id, commit: item.payload.commit as string }, item.id);
+        if (item.operation === "add_members" || item.operation === "remove_members") await this.crypto.execute({ operation: "discard_commit", conversation_id: hint(item)!.lease.group_id, commit: item.payload.commit as string }, item.id);
         else await this.crypto.delivered(item.id);
         await forgetCipher(this.account, hint(item)!.files.map(f => f.id)).catch(() => {});
       }
       await this.pull(conversation, directory);
-    });
+    }, conversation.id);
   }
   async send(conversation: Conversation, body: string, files: File[], messageId: string): Promise<Message> {
     return this.lock(async () => {
@@ -319,13 +350,20 @@ export class MlsMessaging {
       catch (error) { if (!(error instanceof ApiError) || error.status !== 404) throw error; }
       const fileContext: MessageContext = { conversation_id: conversation.id, message_id: messageId, sender_account_id: this.account, sender_device_id: this.device!.device_id };
       const sealed = await sealFiles(this.crypto, this.account, fileContext, files);
+      let queued = false;
+      try {
       const lease = await this.acquire(conversation, "message");
       await this.pull(conversation, directory);
       const sent = await this.crypto.execute({ operation: "send", conversation_id: lease.group_id, message_id: messageId, content: canonical({ version: 1, body, files: sealed.metadata }), archive_accounts: directory.accounts.map(a => a.account_id) }, undefined, { conversation_id: conversation.id, lease, files: sealed.publicFiles });
+      queued = true;
       await this.post((await this.crypto.pendingDeliveries()).find(p => p.id === sent.delivery_id)!);
       await this.pull(conversation, directory);
       return this.decrypt(await apiRequest<Message>(`/api/v1/conversations/${conversation.id}/messages/${messageId}`));
-    });
+      } catch (error) {
+        if (!queued) await forgetCipher(this.account, sealed.publicFiles.map(file => file.id)).catch(() => {});
+        throw error;
+      }
+    }, conversation.id);
   }
   async migrateOwnHistory(conversation: Conversation, progress: (done: number, total: number) => void): Promise<void> {
     if (this.migrated.has(conversation.id)) return;
@@ -360,7 +398,7 @@ export class MlsMessaging {
           const result = await this.crypto.execute({ operation: "send", conversation_id: lease.group_id, message_id: old.id, content: canonical({ version: 1, body: current.body, files: sealed.metadata }), archive_accounts: directory.accounts.map(account => account.account_id) }, undefined, { conversation_id: conversation.id, lease, files: sealed.publicFiles, migration });
           await this.post((await this.crypto.pendingDeliveries()).find(item => item.id === result.delivery_id)!);
           await this.pull(conversation, directory);
-        });
+        }, conversation.id);
         progress(++done, legacy.length); await pause(20);
       }
       this.migrated.add(conversation.id);
@@ -387,6 +425,19 @@ export class MlsMessaging {
     const result: Message = { ...message, body: content.body, attachments };
     if (this.decoded.size >= 500) this.decoded.delete(this.decoded.keys().next().value!);
     this.decoded.set(message.id, { signature, message: result }); return result;
+  }
+  async mediaKey(callId: string): Promise<{key: string; epoch: number; group: string}> {
+    const conversation = await api.callCrypto(callId);
+    this.callStreams.set(callId,conversation.id);
+    return this.lock(async () => {
+      const directory = await this.prepare(conversation);
+      const result = await this.crypto.execute({operation:"media_key",conversation_id:directory.state.group_id!,call_id:callId});
+      return {key:result.result.key as string,epoch:Number(result.result.epoch),group:directory.state.group_id!};
+    }, conversation.id);
+  }
+  async releaseMedia(callId: string): Promise<void> {
+    const stream=this.callStreams.get(callId); if (!stream) return;
+    await this.lock(async () => { await this.crypto.execute({operation:"retire_stream",stream}); this.callStreams.delete(callId); },stream);
   }
   async openAttachment(path: string, attachment: SecureFile): Promise<string> { return openCipherFile(this.crypto, path, attachment); }
 }

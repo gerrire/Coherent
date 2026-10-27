@@ -1,4 +1,4 @@
-import { BrowserVault } from "./browserVault";
+import { BrowserVault, type VaultVersion } from "./browserVault";
 import { UUID_PATTERN, deliveryPayload, needsOutbox, readOnlyCommand, type CryptoReply, type VaultRequest, type RevealRequest, type ApproveLinkRequest } from "./types";
 import { publicCryptoError } from "./errors";
 
@@ -11,6 +11,10 @@ interface CoreModule {
   default(options: {module_or_path: string}): Promise<unknown>;
   BrowserCrypto: { new(account: string, device: string): Core; restore(bytes: Uint8Array<ArrayBuffer>): Core };
 }
+
+interface CachedCore { core: Core; key: CryptoKey; state: VaultVersion; outbox: import("./types").DeliveryItem[] }
+const cachedCores = new Map<string, CachedCore>();
+function forgetCore(account: string) { cachedCores.get(account)?.core.free(); cachedCores.delete(account); }
 
 let modulePromise: Promise<CoreModule> | null = null;
 let moduleAttempt = 0;
@@ -33,16 +37,26 @@ async function perform(account: string, request: VaultRequest | RevealRequest | 
     let core: Core | null = null;
     let local: Uint8Array<ArrayBuffer> | null = null;
     let snapshot: Uint8Array<ArrayBuffer> | null = null;
-    let engine: number[] | null = null;
+    let engine: Uint8Array<ArrayBuffer> | null = null;
     try {
-      const { key, state, content } = await vault.load();
-      if ((request.type === "reveal_recovery" || request.type === "approve_link") && !content) throw new Error("Это устройство ещё не подтверждено");
-      if (request.type === "pending") return content?.outbox || [];
-      const outbox = content?.outbox || [];
-      const device = state?.device || crypto.randomUUID();
-      const module = await coreModule();
-      if (content) { local = new Uint8Array(content.engine); content.engine.fill(0); core = module.BrowserCrypto.restore(local); }
-      else { core = new module.BrowserCrypto(account, device); }
+      const version = await vault.version();
+      let cached = cachedCores.get(account);
+      if (cached && (!version || cached.state.revision !== version.revision || cached.state.device !== version.device)) { forgetCore(account); cached = undefined; }
+      const loaded = cached ? null : await vault.load();
+      const key = cached?.key ?? loaded!.key;
+      let state: VaultVersion | null = cached?.state ?? loaded!.state;
+      const content = loaded?.content;
+      if ((request.type === "reveal_recovery" || request.type === "approve_link") && !state) throw new Error("Это устройство ещё не подтверждено");
+      const outbox = cached?.outbox ?? content?.outbox ?? [];
+      if (request.type === "pending") return outbox;
+      let device = state?.device || crypto.randomUUID();
+      if (cached) core = cached.core;
+      else {
+        const module = await coreModule();
+        if (content) { local = new Uint8Array(content.engine); content.engine.fill(0); core = module.BrowserCrypto.restore(local); }
+        else core = new module.BrowserCrypto(account, device);
+      }
+      const remember = () => { if (core && state) cachedCores.set(account, { core, key, state, outbox }); };
       if (request.type === "reveal_recovery" || request.type === "approve_link") {
         async function post(path: string, body: unknown): Promise<Record<string, unknown>> {
           if (request.type !== "reveal_recovery" && request.type !== "approve_link") throw new Error("Недоступно");
@@ -59,8 +73,8 @@ async function perform(account: string, request: VaultRequest | RevealRequest | 
         let result: Record<string, unknown>;
         try { result = JSON.parse(core.execute(JSON.stringify(request.command))) as Record<string, unknown>; }
         catch { throw new Error("PAIRING_CODE_FAILED"); }
-        snapshot = core.snapshot_local(); engine = Array.from(snapshot);
-        await vault.save(key, state, device, { engine, outbox });
+        snapshot = core.snapshot_local(); engine = snapshot.slice();
+        state = await vault.save(key, state, device, { engine, outbox }); remember();
         return { result, delivery_id: null } satisfies CryptoReply;
       }
       let reply: CryptoReply = { result: {}, delivery_id: null };
@@ -80,6 +94,7 @@ async function perform(account: string, request: VaultRequest | RevealRequest | 
         if (request.command.operation === "acknowledge_commit" && !delivered) throw new Error("Отсутствует подтверждение доставки");
         if (needsOutbox(request.command.operation) && outbox.length >= 100) throw new Error("Сначала дождись отправки сообщений из очереди");
         const result = JSON.parse(core.execute(JSON.stringify(request.command))) as Record<string, unknown>;
+        if (request.command.operation === "replace_identity") device = request.command.device_id;
         let id: string | null = null;
         const payload = deliveryPayload(request.command.operation, result);
         if (payload) {
@@ -87,15 +102,20 @@ async function perform(account: string, request: VaultRequest | RevealRequest | 
           outbox.push({ id, operation: request.command.operation, payload: request.transport ? { ...payload, transport: request.transport } : payload });
         }
         reply = { result, delivery_id: id };
-        if (content && !delivered && readOnlyCommand(request.command)) return reply;
+        if (state && !delivered && readOnlyCommand(request.command)) { remember(); return reply; }
       }
       snapshot = core.snapshot_local();
-      engine = Array.from(snapshot);
-      await vault.save(key, state, device, { engine, outbox });
+      engine = snapshot.slice();
+      state = await vault.save(key, state, device, { engine, outbox }); remember();
       return reply;
+    } catch (error) {
+      if (cachedCores.get(account)?.core === core) cachedCores.delete(account);
+      core?.free(); core = null;
+      throw error;
     } finally {
       local?.fill(0); snapshot?.fill(0); engine?.fill(0);
-      core?.free(); vault.close();
+      if (core && cachedCores.get(account)?.core !== core) core.free();
+      vault.close();
       if (request.type === "reveal_recovery" || request.type === "approve_link") request.current_password = "";
     }
   });
