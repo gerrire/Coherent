@@ -32,7 +32,11 @@ from coherent_api.services.conversation_access import (
     get_server_channel,
     validate_friends,
 )
-from coherent_api.services.crypto_policy import is_mls_conversation, require_cloud_write
+from coherent_api.services.crypto_policy import (
+    cloud_chats,
+    is_mls_conversation,
+    require_cloud_write,
+)
 
 
 class ConversationUserNotFoundError(Exception):
@@ -296,7 +300,9 @@ async def list_conversations(
     settings = session.info.get("settings")
     encrypted_ids = (
         set(ids)
-        if settings and settings.e2ee_messaging_enabled
+        if settings and settings.e2ee_messaging_enabled and not await cloud_chats(session)
+        else set()
+        if await cloud_chats(session)
         else set(
             await session.scalars(
                 select(MlsState.conversation_id).where(

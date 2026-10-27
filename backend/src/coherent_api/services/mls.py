@@ -55,8 +55,28 @@ def action_signature(device: E2eeDevice, nonce: str, payload: str, proof: str) -
         ) from error
 
 
-async def active_device(session, user, device_id: UUID) -> E2eeDevice:
+async def active_device(session, user, device_id: UUID, conversation_id=None) -> E2eeDevice:
     device = await session.get(E2eeDevice, device_id)
+    if device is not None and device.call_id is not None:
+        if device.user_id != user.id or device.revoked_at is not None:
+            raise HTTPException(403, "Одноразовый ключ звонка недоступен")
+        from coherent_api.services.call_devices import joined_call
+
+        await joined_call(session, user, device.call_id)
+        if conversation_id is not None:
+            from coherent_api.models.call_media import CallMediaSession
+
+            link = await session.get(CallMediaSession, device.call_id)
+            if link is None or link.conversation_id != conversation_id:
+                raise HTTPException(403, "Ключ относится к другому звонку")
+        return device
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if await cloud_chats(session):
+        raise HTTPException(
+            409,
+            "Обнови клиент: звонки используют одноразовые ключи, переписка — облачное шифрование",
+        )
     account = await session.get(E2eeAccount, user.id)
     if (
         device is None
@@ -79,6 +99,11 @@ async def active_device(session, user, device_id: UUID) -> E2eeDevice:
 
 async def secure_conversation(session, user, conversation_id: UUID, lock: bool = False):
     conversation = await get_conversation(session, user, conversation_id)
+    from coherent_api.services.conversation_access import is_call_media
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if not await is_call_media(session, conversation_id) and await cloud_chats(session, lock=lock):
+        raise HTTPException(409, "Переписка использует облачное шифрование. Обнови клиент")
     if await get_server_channel(session, conversation_id) is not None:
         raise HTTPException(
             status_code=409, detail="Каналы серверов используют облачное шифрование"
@@ -109,6 +134,31 @@ async def allocate_storage(session, settings, amount: int) -> None:
 async def directory(session, user, conversation_id: UUID) -> dict:
     conversation = await secure_conversation(session, user, conversation_id)
     member_ids = set(await conversation_member_ids(session, conversation))
+    from coherent_api.services.call_devices import call_devices
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if await cloud_chats(session):
+        devices = await call_devices(session, conversation_id, include_retired=True)
+        if devices is not None:
+            desired = await desired_devices(session, conversation)
+            return {
+                "accounts": [],
+                "state": state_view(await session.get(MlsState, conversation_id)),
+                "eligible_devices": [str(x) for x in await eligible_devices(session, conversation)],
+                "call_devices": [
+                    {
+                        "version": 1,
+                        "account_id": str(d.user_id),
+                        "device_id": str(d.id),
+                        "signature_key": d.signature_key,
+                    }
+                    for d in devices
+                ],
+                "ready": {
+                    str(uid): any(d.user_id == uid and d.id in desired for d in devices)
+                    for uid in member_ids
+                },
+            }
 
     async def account_view(uid):
         account = await session.get(E2eeAccount, uid)
@@ -177,6 +227,13 @@ def state_view(state: MlsState | None) -> dict:
 
 
 async def desired_devices(session, conversation) -> list[UUID]:
+    from coherent_api.services.call_devices import call_devices
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if await cloud_chats(session):
+        devices = await call_devices(session, conversation.id)
+        if devices is not None:
+            return sorted(d.id for d in devices)
     result = []
     for uid in await conversation_member_ids(session, conversation):
         account = await session.get(E2eeAccount, uid)
@@ -225,7 +282,13 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
         raise HTTPException(
             status_code=400, detail="Восстановление требует новой защищённой сессии"
         )
-    await active_device(session, user, body.device_id)
+    device = await active_device(session, user, body.device_id)
+    from coherent_api.models.call_media import CallMediaSession
+
+    if device.call_id is not None:
+        link = await session.get(CallMediaSession, device.call_id)
+        if link is None or link.conversation_id != conversation_id:
+            raise HTTPException(403, "Ключ предназначен для другого звонка")
     conversation = await secure_conversation(session, user, conversation_id, lock=True)
     accepted = await session.get(MlsEvent, body.request_id)
     if accepted:
@@ -384,7 +447,7 @@ async def event_view(session, event: MlsEvent) -> dict:
 
 
 async def events(session, user, conversation_id: UUID, device_id: UUID, after: int) -> dict:
-    await active_device(session, user, device_id)
+    await active_device(session, user, device_id, conversation_id)
     await secure_conversation(session, user, conversation_id)
     page = list(
         await session.scalars(
@@ -484,6 +547,12 @@ async def publish(
     if body.conversation_id != conversation_id:
         raise HTTPException(status_code=400, detail="Беседа не совпадает")
     device = await active_device(session, user, device_id)
+    if device.call_id is not None:
+        from coherent_api.models.call_media import CallMediaSession
+
+        link = await session.get(CallMediaSession, device.call_id)
+        if link is None or link.conversation_id != conversation_id:
+            raise HTTPException(403, "Ключ предназначен для другого звонка")
     conversation = await secure_conversation(session, user, conversation_id, lock=True)
     existing = await session.get(MlsEvent, body.request_id)
     request_hash = digest(payload.encode() + proof.encode())

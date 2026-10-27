@@ -42,12 +42,18 @@ class AdminOverview(BaseModel):
     e2ee_storage_bytes: int = 0
     e2ee_storage_limit_bytes: int = 0
     pending_private_migration: int = 0
+    chat_encryption_mode: str = "cloud_v1"
+    history_reset_at: datetime | None = None
     backup: dict | None = None
 
 
 @router.get("/overview", response_model=AdminOverview)
 async def overview(request: Request, user: AdminUser, session: SessionDep) -> AdminOverview:
     settings = request.app.state.settings
+    from coherent_api.services.crypto_policy import chat_policy, cloud_chats
+
+    policy = await chat_policy(session)
+    cloud = await cloud_chats(session)
 
     directory = Path(settings.attachment_dir)
     disk = shutil.disk_usage(directory if directory.exists() else directory.parent)
@@ -78,9 +84,13 @@ async def overview(request: Request, user: AdminUser, session: SessionDep) -> Ad
     except (OSError, ValueError, TypeError):
         backup = None
     return AdminOverview(
+        chat_encryption_mode="cloud_v1" if cloud else "legacy_mls",
+        history_reset_at=policy.reset_at if policy else None,
         e2ee_storage_bytes=storage.allocated_bytes if storage else 0,
         e2ee_storage_limit_bytes=settings.e2ee_storage_limit_mb * 1024 * 1024,
-        pending_private_migration=await session.scalar(
+        pending_private_migration=0
+        if cloud
+        else await session.scalar(
             select(func.count())
             .select_from(Message)
             .where(

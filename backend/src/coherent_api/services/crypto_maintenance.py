@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 
 async def prune(session, settings):
     from coherent_api.models.auth_security import AuthSession, AuthThrottle, RevokedSession
+    from coherent_api.models.e2ee import DeviceChallenge, E2eeDevice
 
     now = datetime.now(UTC)
+    await session.execute(delete(DeviceChallenge).where(DeviceChallenge.expires_at < now))
     stale = list(
         await session.scalars(
             select(AuthThrottle.key)
@@ -78,6 +80,28 @@ async def prune(session, settings):
         )
         reclaimed += sum(len(event.payload.encode()) + 4096 for event in events)
         await session.execute(delete(Conversation).where(Conversation.id.in_(retired)))
+        await session.flush()
+    from sqlalchemy import exists
+
+    old_devices = list(
+        await session.scalars(
+            select(E2eeDevice.id)
+            .join(Call, Call.id == E2eeDevice.call_id)
+            .where(
+                Call.status.not_in(["ringing", "active"]),
+                Call.ended_at < now - timedelta(days=1),
+                ~exists(select(MlsEvent.id).where(MlsEvent.device_id == E2eeDevice.id)),
+            )
+            .limit(100)
+        )
+    )
+    if old_devices:
+        wire = await session.scalars(
+            select(MlsPackage.wire).where(MlsPackage.device_id.in_(old_devices))
+        )
+        reclaimed += sum(len(value) + 1024 for value in wire)
+        await session.execute(delete(MlsPackage).where(MlsPackage.device_id.in_(old_devices)))
+        await session.execute(delete(E2eeDevice).where(E2eeDevice.id.in_(old_devices)))
     if reclaimed:
         await allocate_storage(session, settings, -reclaimed)
     await session.commit()

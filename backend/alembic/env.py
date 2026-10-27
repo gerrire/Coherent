@@ -10,6 +10,7 @@ from coherent_api.models import auth_security as auth_security_model  # noqa: F4
 from coherent_api.models import call as call_model  # noqa: F401
 from coherent_api.models import call_media as call_media_model  # noqa: F401
 from coherent_api.models import call_member as call_member_model  # noqa: F401
+from coherent_api.models import chat_policy as chat_policy_model  # noqa: F401
 from coherent_api.models import conversation as conversation_model  # noqa: F401
 from coherent_api.models import conversation_member as conversation_member_model  # noqa: F401
 from coherent_api.models import conversation_read as conversation_read_model  # noqa: F401

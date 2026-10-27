@@ -10,6 +10,7 @@ from coherent_api.schemas.calls import (
     CurrentCallsResponse,
     InviteCallRequest,
 )
+from coherent_api.schemas.e2ee import CallDeviceRequest
 from coherent_api.services.calls import (
     CallBusyError,
     CallForbiddenError,
@@ -33,6 +34,18 @@ from coherent_api.services.livekit_media import (
 from coherent_api.services.push import send_to_users
 
 router = APIRouter(tags=["Звонки"])
+
+
+@router.post("/calls/{call_id}/crypto/devices")
+async def register_media_device(
+    call_id: UUID, body: CallDeviceRequest, user: CurrentUser, session: SessionDep
+):
+    from coherent_api.services.call_devices import register_call_device
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if not await cloud_chats(session):
+        raise HTTPException(409, "Этот звонок использует прежний протокол")
+    return await register_call_device(session, user, call_id, body)
 
 
 async def publish_call(request: Request, call: CallResponse) -> None:
@@ -179,6 +192,17 @@ async def invite_call_participants(
 async def get_join_token(
     call_id: UUID, request: Request, user: CurrentUser, session: SessionDep
 ) -> CallJoinResponse:
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    agent = request.headers.get("user-agent", "")
+    if agent.startswith("CoherentDesktop/") and await cloud_chats(session):
+        import re
+
+        version = re.match(r"CoherentDesktop/(\d+)\.(\d+)\.(\d+)", agent)
+        if version and tuple(map(int, version.groups())) < (0, 1, 4):
+            raise HTTPException(
+                426, "Обнови приложение до 0.1.4 для защищённых звонков с одноразовыми ключами"
+            )
     if not livekit_ready(request.app.state.settings):
         raise HTTPException(status_code=503, detail="Сервер звонков пока не настроен")
     try:

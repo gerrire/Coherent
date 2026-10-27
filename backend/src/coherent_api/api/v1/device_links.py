@@ -5,19 +5,23 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field, ValidationError
 from sqlalchemy import func, select
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
-from coherent_api.api.v1.e2ee import require_available
+from coherent_api.api.v1.e2ee import legacy_security_gate, require_available
 from coherent_api.models.device_link import DeviceLink
 from coherent_api.models.e2ee import E2eeAccount, E2eeDevice
 from coherent_api.models.user import User
 from coherent_api.schemas.e2ee import DeviceBinding, StrictModel
 from coherent_api.services.mls import action_signature, active_device, allocate_storage
 
-router = APIRouter(prefix="/security/device-links", tags=["Подтверждение устройств"])
+router = APIRouter(
+    prefix="/security/device-links",
+    tags=["Подтверждение устройств"],
+    dependencies=[Depends(legacy_security_gate)],
+)
 
 
 class LinkAction(StrictModel):

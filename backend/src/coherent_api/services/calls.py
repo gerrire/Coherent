@@ -400,6 +400,11 @@ async def join_call(
     member.session_digest = session_digest
     media_id = await sync_members(session, call)
     await session.commit()
+    from coherent_api.services.crypto_policy import cloud_chats
+
     return CallJoinResponse(
-        server_url=settings.livekit_url, token=token, media_conversation_id=media_id
+        crypto_protocol="ephemeral_mls_v1" if await cloud_chats(session) else "account_mls_v1",
+        server_url=settings.livekit_url,
+        token=token,
+        media_conversation_id=media_id,
     )

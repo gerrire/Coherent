@@ -38,6 +38,9 @@ def test_unconfirmed_recovery_and_empty_offline_device_do_not_lock_chat(
         from coherent_api.models.user import User
 
         async with client.app.state.session_factory() as session:
+            from coherent_api.models.chat_policy import ChatPolicy
+
+            session.add(ChatPolicy(id=1, write_mode="legacy_mls", history_revision=uuid4()))
             conversation = Conversation(user_low_id=min(ids), user_high_id=max(ids))
             session.add(conversation)
             for uid in ids:

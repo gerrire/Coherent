@@ -154,6 +154,13 @@ def cloud_message(
 ) -> Message:
     message_id = uuid4()
     cipher = session_cipher(session)
+    settings = session.info.get("settings")
+    if (
+        not cipher.enabled
+        and settings
+        and (settings.app_env == "production" or settings.cloud_encryption_required)
+    ):
+        raise RuntimeError("Cloud encryption is required; refusing plaintext storage")
     return Message(
         id=message_id,
         conversation_id=conversation_id,

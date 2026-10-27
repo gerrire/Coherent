@@ -54,6 +54,8 @@ def safe_name(value: str | None) -> str:
 
 
 INLINE_TYPES = {
+    "image/heic",
+    "image/heif",
     "image/jpeg",
     "image/png",
     "image/gif",

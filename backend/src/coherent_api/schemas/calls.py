@@ -36,6 +36,7 @@ class CurrentCallsResponse(BaseModel):
 
 
 class CallJoinResponse(BaseModel):
+    crypto_protocol: str = "account_mls_v1"
     server_url: str
     token: str
     media_conversation_id: UUID

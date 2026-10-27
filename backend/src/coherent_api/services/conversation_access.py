@@ -172,7 +172,10 @@ async def add_group_members(
 
 async def require_ready_accounts(session, targets: set[UUID]) -> None:
     from coherent_api.models.e2ee import E2eeAccount
+    from coherent_api.services.crypto_policy import cloud_chats
 
+    if await cloud_chats(session):
+        return
     settings = session.info.get("settings")
     if not settings or not settings.e2ee_messaging_enabled:
         return

@@ -37,6 +37,9 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Сессия недействительна"
         )
     await remember_session(session, token, user, settings, request.headers.get("user-agent", ""))
+    from coherent_api.services.auth_security import token_digest
+
+    session.info["auth_session_digest"] = token_digest(token)
     return user
 
 

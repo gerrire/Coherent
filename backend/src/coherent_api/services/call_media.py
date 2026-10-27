@@ -38,6 +38,16 @@ async def sync_members(session, call):
             )
         )
     )
+    from datetime import UTC, datetime
+
+    from coherent_api.models.e2ee import E2eeDevice
+
+    devices = await session.scalars(
+        select(E2eeDevice).where(E2eeDevice.call_id == call.id, E2eeDevice.revoked_at.is_(None))
+    )
+    for device in devices:
+        if device.user_id not in joined:
+            device.revoked_at = datetime.now(UTC)
 
     await remember_accounts(session, link.conversation_id, current | joined)
     await session.execute(

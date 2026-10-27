@@ -43,6 +43,7 @@ class DeviceBinding(StrictModel):
 
 class ChallengeRequest(StrictModel):
     purpose: Literal["bootstrap", "recovery_view", "confirm_recovery", "action"]
+    call_id: UUID | None = None
 
 
 class BootstrapRequest(StrictModel):
@@ -113,12 +114,20 @@ class EnrollPayload(StrictModel):
 
 
 class EnrollRequest(StrictModel):
+    call_id: UUID | None = None
     link_id: UUID | None = None
     challenge_id: UUID
     device: DeviceBinding
     proof: str = Field(min_length=88, max_length=88)
     payload: str = Field(min_length=1, max_length=49152)
     current_password: SecretStr = Field(default=SecretStr(""), max_length=128)
+
+
+class CallDeviceRequest(StrictModel):
+    challenge_id: UUID
+    device: DeviceBinding
+    proof: str = Field(min_length=88, max_length=88)
+    platform: Literal["browser", "windows", "macos", "linux", "android", "ios"]
 
 
 class ContactPinPayload(StrictModel):

@@ -48,6 +48,8 @@ async def publish_packages(
     body: EnrollRequest, request: Request, user: CurrentUser, session: SessionDep
 ) -> dict:
     device = await mls.active_device(session, user, body.device.device_id)
+    if device.call_id != body.call_id:
+        raise HTTPException(403, "Ключ относится к другому звонку")
     if body.device.account_id != user.id or body.device.signature_key != device.signature_key:
         raise HTTPException(status_code=403, detail="Ключ устройства не совпадает")
     try:
@@ -65,6 +67,7 @@ async def publish_packages(
         "action",
         hashlib.sha256(body.payload.encode()).digest(),
         require_password=False,
+        call_id=device.call_id,
     )
     now = datetime.now(UTC)
     added = []
@@ -133,7 +136,7 @@ async def acquire_lease(
             raise HTTPException(
                 status_code=409, detail="Новая защищённая переписка ещё не включена"
             )
-    device = await mls.active_device(session, user, body.device_id)
+    device = await mls.active_device(session, user, body.device_id, conversation_id)
     if not body.challenge_id or not body.proof:
         raise HTTPException(status_code=403, detail="Подтверди отправку ключом устройства")
     payload = json.dumps(
@@ -160,6 +163,7 @@ async def acquire_lease(
         "action",
         hashlib.sha256(payload.encode()).digest(),
         require_password=False,
+        call_id=device.call_id,
     )
     # Consume proof even when a later lease conflict rolls back the request.
     await session.commit()
@@ -182,7 +186,7 @@ async def secure_events(
 async def operation_status(
     conversation_id: UUID, identity: UUID, device_id: UUID, user: CurrentUser, session: SessionDep
 ) -> dict:
-    await mls.active_device(session, user, device_id)
+    await mls.active_device(session, user, device_id, conversation_id)
     await mls.secure_conversation(session, user, conversation_id)
     event = await session.get(MlsEvent, identity)
     if event and event.conversation_id == conversation_id and event.device_id == device_id:
@@ -287,7 +291,7 @@ async def cancel_candidate(
         raise HTTPException(status_code=400, detail="Неверный запрос отмены") from error
     if payload.conversation_id != conversation_id:
         raise HTTPException(status_code=400, detail="Беседа не совпадает")
-    device = await mls.active_device(session, user, body.device_id)
+    device = await mls.active_device(session, user, body.device_id, conversation_id)
     await mls.secure_conversation(session, user, conversation_id, lock=True)
     mls.action_signature(device, body.nonce, body.payload, body.proof)
     event = await session.get(MlsEvent, payload.request_id)

@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -30,7 +30,23 @@ from coherent_api.schemas.e2ee import (
 from coherent_api.services.auth_security import throttle
 from coherent_api.services.email_verification import send_recovery_notice
 
-router = APIRouter(prefix="/security", tags=["Устройства и восстановление"])
+
+async def legacy_security_gate(request: Request, user: CurrentUser, session: SessionDep):
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if request.url.path.endswith(("/security/status", "/security/challenges")):
+        return
+    if await cloud_chats(session):
+        raise HTTPException(
+            409, "Обнови клиент: ключ восстановления для облачной переписки не требуется"
+        )
+
+
+router = APIRouter(
+    prefix="/security",
+    tags=["Устройства и восстановление"],
+    dependencies=[Depends(legacy_security_gate)],
+)
 
 
 def require_available(request: Request) -> None:
@@ -42,19 +58,29 @@ def require_available(request: Request) -> None:
 
 @router.get("/status")
 async def security_status(request: Request, user: CurrentUser, session: SessionDep) -> dict:
+    from coherent_api.services.crypto_policy import chat_policy, cloud_chats
+
+    cloud = await cloud_chats(session)
+    policy = await chat_policy(session)
     account = await session.get(E2eeAccount, user.id)
     devices = list(
         await session.scalars(
-            select(E2eeDevice).where(E2eeDevice.user_id == user.id, E2eeDevice.revoked_at.is_(None))
+            select(E2eeDevice).where(
+                E2eeDevice.user_id == user.id,
+                E2eeDevice.revoked_at.is_(None),
+                E2eeDevice.call_id.is_(None),
+            )
         )
     )
     return {
-        "setup_available": request.app.state.settings.e2ee_setup_enabled,
+        "setup_available": request.app.state.settings.e2ee_setup_enabled and not cloud,
+        "history_revision": str(policy.history_revision) if policy else None,
+        "call_encryption": "ephemeral_mls_v1" if cloud else "account_mls_v1",
         "configured": account is not None,
         "recovery_confirmed": bool(account and account.recovery_confirmed_at),
         "chat_encryption": "mls"
-        if request.app.state.settings.e2ee_messaging_enabled
-        else "legacy_cloud",
+        if request.app.state.settings.e2ee_messaging_enabled and not cloud
+        else "cloud_v1",
         "roster_revision": account.roster_revision if account else 0,
         "devices": [
             {
@@ -72,7 +98,18 @@ async def security_status(request: Request, user: CurrentUser, session: SessionD
 async def device_challenge(
     body: ChallengeRequest, request: Request, user: CurrentUser, session: SessionDep
 ) -> dict:
-    require_available(request)
+    from coherent_api.services.crypto_policy import cloud_chats
+
+    if body.call_id:
+        from coherent_api.services.call_devices import joined_call
+
+        if body.purpose != "action":
+            raise HTTPException(400, "Ключ звонка разрешает только действия звонка")
+        await joined_call(session, user, body.call_id)
+    elif await cloud_chats(session):
+        raise HTTPException(409, "Переписка использует облачное шифрование; обнови клиент")
+    else:
+        require_available(request)
     await session.scalar(select(User).where(User.id == user.id).with_for_update(key_share=True))
     await throttle(session, "device-challenges", str(user.id), 240, 60)
     now = datetime.now(UTC)
@@ -86,6 +123,7 @@ async def device_challenge(
         attempts=0,
         created_at=now,
         expires_at=now + timedelta(minutes=5),
+        call_id=body.call_id,
     )
     session.add(challenge)
     await session.commit()
@@ -103,6 +141,7 @@ async def verify_device_request(
     purpose: str,
     payload_hash: bytes = bytes(32),
     require_password: bool = True,
+    call_id: UUID | None = None,
 ) -> None:
     await session.scalar(
         select(User)
@@ -126,6 +165,7 @@ async def verify_device_request(
         or challenge.expires_at.replace(tzinfo=UTC) <= now
         or challenge.session_version != user.session_version
         or challenge.attempts >= 5
+        or challenge.call_id != call_id
     ):
         raise HTTPException(
             status_code=403, detail="Подтверждение устройства истекло. Повтори действие"

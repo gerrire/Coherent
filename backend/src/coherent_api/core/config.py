@@ -52,6 +52,10 @@ class Settings(BaseSettings):
             raise ValueError("LIVEKIT_URL must use ws:// or wss://")
 
         if self.app_env == "production":
+            if not self.cloud_encryption_required or not self.chat_master_key_path:
+                raise ValueError(
+                    "Production requires cloud encryption and an existing master key file"
+                )
             secret = self.secret_key.get_secret_value()
             if len(secret) < 32 or secret.startswith("development-only-"):
                 raise ValueError("SECRET_KEY must contain at least 32 characters in production")

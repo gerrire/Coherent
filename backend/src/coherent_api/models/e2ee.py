@@ -35,6 +35,9 @@ class E2eeDevice(Base):
     platform: Mapped[str] = mapped_column(String(16))
     approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    call_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("calls.id", ondelete="CASCADE"), nullable=True
+    )
 
 
 class DeviceChallenge(Base):
@@ -48,6 +51,9 @@ class DeviceChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    call_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("calls.id", ondelete="CASCADE"), nullable=True
+    )
 
 
 class AccountRoster(Base):
