@@ -112,13 +112,13 @@ def test_join_token_requires_call_membership(
 
 
 def test_ending_login_removes_the_call_joined_from_that_session(client, csrf_token, monkeypatch):
-    call_id, alice_id, _, first, _ = _active_call(client, csrf_token)
     settings = client.app.state.settings
     monkeypatch.setattr(settings, "livekit_url", "ws://localhost:7880")
     monkeypatch.setattr(settings, "livekit_api_key", "session-test-key")
     monkeypatch.setattr(
         settings, "livekit_api_secret", SecretStr("session-test-secret-32-characters")
     )
+    call_id, alice_id, _, first, _ = _active_call(client, csrf_token)
     remove = AsyncMock()
     monkeypatch.setattr(calls_api, "remove_livekit_participant", remove)
     assert (
