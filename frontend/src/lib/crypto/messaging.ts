@@ -8,7 +8,7 @@ import type { ContactPin, CryptoCommand, DeliveryItem, DeviceBinding, Envelope, 
 
 interface AccountDirectory { account_id: string; public_key: string | null; ready: boolean; rosters: SignedRoster[]; history_rosters?: Array<{public_key:string; roster:SignedRoster}> }
 interface GroupState { group_id: string | null; sequence: number; epoch: number; generation: number; roster: string[] }
-interface Directory { accounts: AccountDirectory[]; history_accounts?: AccountDirectory[]; state: GroupState; eligible_devices: string[] }
+interface Directory { accounts: AccountDirectory[]; history_accounts?: AccountDirectory[]; state: GroupState; eligible_devices: string[]; call_devices?: DeviceBinding[]; ready?: Record<string,boolean> }
 interface Lease {
   accepted: boolean; event?: SecureEvent; lease_id: string; nonce: string; request_id: string;
   operation: "init" | "add" | "remove" | "reset" | "message"; group_id: string; expected_sequence: number; previous_epoch: number;
@@ -37,6 +37,7 @@ function hint(item: DeliveryItem): Hint | null { return (item.payload.transport 
 const pause = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms));
 
 export class MlsMessaging {
+  private closed = false;
   readonly crypto: CryptoClient;
   private device: DeviceBinding | null = null;
   private initialization: Promise<void> | null = null;
@@ -46,8 +47,8 @@ export class MlsMessaging {
   private migrated = new Set<string>();
   private decoded = new Map<string, { signature: string; message: Message }>();
   private savedPins = new Map<string, string>();
-  constructor(readonly account: string) { this.crypto = new CryptoClient(account); }
-  close() { this.crypto.close(); this.decoded.clear(); }
+  constructor(readonly account: string, readonly callId?:string) { this.crypto = new CryptoClient(account,callId); }
+  close() { this.closed=true; this.crypto.close(); this.decoded.clear(); }
   private async lock<T>(work: () => Promise<T>, scope = "account"): Promise<T> {
     const guarded = async () => {
       try { return await work(); }
@@ -68,13 +69,22 @@ export class MlsMessaging {
   }
   private async challenge() {
     for (let attempt = 0; ; attempt++) {
-      try { return await api.deviceChallenge("action"); }
+      try { return await api.deviceChallenge("action", this.callId); }
       catch (error) { if (!(error instanceof ApiError) || error.status !== 429 || attempt >= 2) throw error; await pause(2100); }
     }
   }
   private async ready(): Promise<void> {
     if (this.initialization) return this.initialization;
     this.initialization = (async () => {
+      if (this.callId) {
+        const identity = await this.crypto.execute({operation:"identity"}); this.device=identity.result.device as DeviceBinding;
+        const challenge = await this.challenge();
+        const payload = `coherent/call-device/v1:${this.callId}:${this.device.device_id}:${this.device.signature_key}`;
+        const signed = await this.crypto.execute({operation:"sign_action",nonce:challenge.nonce,payload});
+        if(this.closed) throw new Error("Звонок уже закрыт");
+        await apiRequest(`/api/v1/calls/${this.callId}/crypto/devices`,{method:"POST",body:JSON.stringify({challenge_id:challenge.challenge_id,device:this.device,proof:signed.result.proof,platform:isTauri()?"windows":"browser"})});
+        await this.packages(); return;
+      }
       const status = await api.securityStatus();
       if (!status.configured) throw new MessagingAccessError("setup", "Настрой ключ восстановления в профиле, чтобы открыть защищённую переписку");
       const identity = await this.crypto.execute({ operation: "identity" }); this.device = identity.result.device as DeviceBinding;
@@ -102,7 +112,7 @@ export class MlsMessaging {
     if (!pending.length) return;
     const payload = canonical({ operation: "publish_packages", packages: pending.map(item => item.payload.key_package) });
     const challenge = await this.challenge(); const signed = await this.crypto.execute({ operation: "sign_action", nonce: challenge.nonce, payload });
-    try { await apiRequest("/api/v1/security/key-packages", { method: "POST", body: JSON.stringify({ challenge_id: challenge.challenge_id, device, proof: signed.result.proof, payload }) }); }
+    try { await apiRequest("/api/v1/security/key-packages", { method: "POST", body: JSON.stringify({ challenge_id: challenge.challenge_id, device, proof: signed.result.proof, payload, call_id:this.callId??null }) }); }
     catch (error) { if (error instanceof ApiError && error.status === 409 && error.message.includes("заполнен")) return; throw error; }
     for (const item of pending) await this.crypto.delivered(item.id);
   }
@@ -117,6 +127,15 @@ export class MlsMessaging {
   }
   private async checkDirectory(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     const directory = await this.directory(conversation.id);
+    if (this.callId) {
+      if (!directory.call_devices || !directory.ready || !same(Object.keys(directory.ready),conversation.members.map(m=>m.id))) throw new MessagingAccessError("changed","Состав звонка изменился. Повторяем подключение");
+      for (const device of directory.call_devices) {
+        if (device.device_id === this.device!.device_id && device.signature_key !== this.device!.signature_key) throw new Error("Ключ текущего устройства не совпадает");
+        await this.crypto.execute({operation:"pin_device",device});
+      }
+      if (Object.values(directory.ready).some(ready=>!ready)) throw new MessagingAccessError("waiting","Подключаем защищённый звук участников…");
+      return directory;
+    }
     if (!same(directory.accounts.map(a => a.account_id), conversation.members.map(m => m.id))) throw new MessagingAccessError("changed", "Состав беседы изменился. Обнови её перед отправкой");
     let waiting = false;
     for (const account of directory.accounts) {
@@ -219,6 +238,7 @@ export class MlsMessaging {
   }
   private devices(directory: Directory): Map<string, DeviceBinding> {
     const result = new Map<string, DeviceBinding>();
+    for (const device of directory.call_devices ?? []) result.set(device.device_id,device);
     for (const account of [...directory.accounts,...(directory.history_accounts ?? [])]) for (const roster of [...account.rosters,...(account.history_rosters ?? []).map(item => item.roster)]) for (const device of JSON.parse(roster.payload).devices as DeviceBinding[]) result.set(device.device_id,device);
     return result;
   }
@@ -321,6 +341,7 @@ export class MlsMessaging {
   }
   private async prepareOnce(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     await this.ready();
+    if(this.callId) await this.packages();
     const directory = await this.checkDirectory(conversation, confirmed);
     await this.resolveCandidates(conversation);
     try { await this.pull(conversation, directory); }
@@ -444,10 +465,19 @@ export class MlsMessaging {
     this.decoded.set(message.id, { signature, message: result }); return result;
   }
   async mediaKey(callId: string): Promise<{key: string; epoch: number; group: string}> {
-    const conversation = await api.callCrypto(callId);
+    let conversation = await api.callCrypto(callId);
     this.callStreams.set(callId,conversation.id);
     return this.lock(async () => {
-      const directory = await this.prepare(conversation);
+      let directory:Directory;
+      for (let attempt=0;;attempt++) {
+        try { directory=await this.prepare(conversation); break; }
+        catch (error) {
+          const retryable = error instanceof MessagingAccessError && ["waiting","changed"].includes(error.kind) || error instanceof ApiError && error.status===409;
+          if (!this.callId || attempt>=29 || !retryable || this.closed) throw error;
+          await pause(500);
+          conversation=await api.callCrypto(callId);
+        }
+      }
       const result = await this.crypto.execute({operation:"media_key",conversation_id:directory.state.group_id!,call_id:callId});
       return {key:result.result.key as string,epoch:Number(result.result.epoch),group:directory.state.group_id!};
     }, conversation.id);
@@ -460,5 +490,19 @@ export class MlsMessaging {
 }
 
 const instances = new Map<string, MlsMessaging>();
+const calls = new Map<string,MlsMessaging>();
+export function callMessagingFor(account:string,callId:string,protocol="ephemeral_mls_v1"):MlsMessaging {
+  if (protocol!=="ephemeral_mls_v1") return messagingFor(account);
+  const key=`${account}:${callId}`; let value=calls.get(key);
+  if (!value) { value=new MlsMessaging(account,callId); calls.set(key,value); }
+  return value;
+}
+export function closeCallMessaging(account:string,callId:string):void {
+  const key=`${account}:${callId}`; calls.get(key)?.close(); calls.delete(key);
+  const legacy=instances.get(account); if(legacy) void legacy.releaseMedia(callId).catch(()=>{});
+}
 export function messagingFor(account: string): MlsMessaging { let value = instances.get(account); if (!value) { value = new MlsMessaging(account); instances.set(account, value); } return value; }
-export function closeMessaging(account: string): void { instances.get(account)?.close(); instances.delete(account); }
+export function closeMessaging(account: string): void {
+  instances.get(account)?.close(); instances.delete(account);
+  for(const [key,value] of calls) if(key.startsWith(`${account}:`)) { value.close(); calls.delete(key); }
+}

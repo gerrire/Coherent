@@ -1,0 +1,9 @@
+# Automatically generated - DO NOT EDIT!
+[[permission]]
+identifier = "allow-desktop-call-crypto-request"
+description = "Allows volatile call cryptography on the main local window."
+commands.allow = ["desktop_call_crypto_request"]
+[[permission]]
+identifier = "deny-desktop-call-crypto-request"
+description = "Denies volatile call cryptography."
+commands.deny = ["desktop_call_crypto_request"]

@@ -1,0 +1,9 @@
+# Automatically generated - DO NOT EDIT!
+[[permission]]
+identifier = "allow-desktop-call-crypto-close"
+description = "Allows discarding volatile call cryptography."
+commands.allow = ["desktop_call_crypto_close"]
+[[permission]]
+identifier = "deny-desktop-call-crypto-close"
+description = "Denies discarding volatile call cryptography."
+commands.deny = ["desktop_call_crypto_close"]

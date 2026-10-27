@@ -3,6 +3,28 @@ use zeroize::Zeroize;
 
 use crate::engine::CryptoEngine;
 
+#[wasm_bindgen]
+pub struct EphemeralCallCrypto {
+    client: crate::ephemeral_call::EphemeralCall,
+}
+
+#[wasm_bindgen]
+impl EphemeralCallCrypto {
+    #[wasm_bindgen(constructor)]
+    pub fn new(account_id: &str, call_id: &str) -> Result<EphemeralCallCrypto, JsError> {
+        Ok(Self {
+            client: crate::ephemeral_call::EphemeralCall::new(account_id, call_id)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        })
+    }
+    pub fn request(&mut self, mut input: String) -> Result<String, JsError> {
+        let result = self.client.request(&input);
+        input.zeroize();
+        serde_json::to_string(&result.map_err(|e| JsError::new(&e.to_string()))?)
+            .map_err(|_| JsError::new("Invalid call response"))
+    }
+}
+
 /// Instantiate only inside the browser crypto Worker. Local snapshots are
 /// sealed with a nonextractable Web Crypto key before writing IndexedDB.
 #[wasm_bindgen]

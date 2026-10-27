@@ -3,6 +3,7 @@
 
 pub mod engine;
 pub mod envelope;
+pub mod ephemeral_call;
 pub mod mls;
 pub mod pairing;
 pub mod recovery;

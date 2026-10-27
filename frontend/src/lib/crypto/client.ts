@@ -8,15 +8,18 @@ export class CryptoClient {
   private worker: Worker | null = null;
   private pending = new Map<string, { resolve(value: unknown): void; reject(reason: Error): void; timer: ReturnType<typeof setTimeout> }>();
   private closed = false;
+  private readonly clientId = crypto.randomUUID();
 
-  constructor(private readonly account: string) {
+  constructor(private readonly account: string, private readonly callId?: string) {
     if (!UUID_PATTERN.test(account)) throw new Error("Неверный аккаунт");
     this.startWorker();
   }
 
   private startWorker(): void {
     if (!isTauri() && !this.worker && !this.closed) {
-      this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "coherent-crypto" });
+      this.worker = this.callId
+        ? new Worker(new URL("./callWorker.ts", import.meta.url), { type: "module", name: "coherent-call-crypto" })
+        : new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "coherent-crypto" });
       this.worker.onmessage = (event: MessageEvent<{ id: string; result?: unknown; error?: string; code?: string }>) => {
         const request = this.pending.get(event.data.id);
         if (!request) return;
@@ -30,6 +33,8 @@ export class CryptoClient {
   }
 
   private call<T>(request: VaultRequest | RevealRequest | ApproveLinkRequest): Promise<T> {
+    if (this.closed) return Promise.reject(new Error("Защищённое хранилище закрыто"));
+    if (isTauri() && this.callId) return invoke<T>("desktop_call_crypto_request", { accountId:this.account, callId:this.callId, clientId:this.clientId, request });
     if (isTauri() && request.type === "approve_link") return invoke<T>("desktop_crypto_approve_link", { accountId: this.account, currentPassword: request.current_password, command: request.command });
     if (isTauri() && request.type === "reveal_recovery") return invoke<T>("desktop_crypto_reveal", { accountId: this.account, currentPassword: request.current_password });
     if (isTauri()) return invoke<T>("desktop_crypto_request", { accountId: this.account, request }).catch(reason => {
@@ -43,7 +48,7 @@ export class CryptoClient {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => this.resetWorker(new CryptoOperationError("CRYPTO_TIMEOUT", "Защищённая операция не ответила вовремя. Повтори действие; очередь отправки сохранена.")), 60_000);
       this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
-      worker.postMessage({ id, account: this.account, request });
+      worker.postMessage({ id, account: this.account, callId:this.callId, request });
     });
   }
 
@@ -65,5 +70,9 @@ export class CryptoClient {
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
     this.pending.clear();
   }
-  close(): void { this.closed = true; this.resetWorker(new Error("Защищённое хранилище закрыто")); }
+  close(): void {
+    this.closed = true;
+    if (isTauri() && this.callId) void invoke("desktop_call_crypto_close", {accountId:this.account,callId:this.callId,clientId:this.clientId}).catch(() => {});
+    this.resetWorker(new Error("Защищённое хранилище закрыто"));
+  }
 }

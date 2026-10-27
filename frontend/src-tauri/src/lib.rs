@@ -1,4 +1,5 @@
 mod audio;
+mod call_crypto;
 mod capture_windows;
 mod desktop;
 mod diagnostics;
@@ -14,6 +15,9 @@ use tauri::Manager;
 use tauri::webview::{PermissionKind, PermissionResponse};
 
 pub(crate) fn stop_media(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<call_crypto::CallCryptoState>() {
+        state.clear();
+    }
     if let Some(state) = app.try_state::<audio::AudioState>() {
         let _ = state.stop(None);
     }
@@ -72,6 +76,8 @@ pub fn run() {
             e2ee::desktop_crypto_request,
             e2ee::desktop_crypto_reveal,
             e2ee::desktop_crypto_approve_link,
+            call_crypto::desktop_call_crypto_request,
+            call_crypto::desktop_call_crypto_close,
             permissions::desktop_media_permissions_get,
             permissions::desktop_media_permissions_set,
             network::api_request,
@@ -105,6 +111,7 @@ pub fn run() {
             screen_capture::desktop_screen_self_check,
         ])
         .setup(|app| {
+            app.manage(call_crypto::CallCryptoState::default());
             if let Some(directory) = diagnostics::profile_directory() {
                 if let Some(main) = app.get_webview_window("main") {
                     diagnostics::event("qa.profile", serde_json::json!({"isolated": true}));

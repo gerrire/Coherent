@@ -3,6 +3,8 @@ pub const COMMANDS: &[&str] = &[
     "desktop_crypto_request",
     "desktop_crypto_reveal",
     "desktop_crypto_approve_link",
+    "desktop_call_crypto_request",
+    "desktop_call_crypto_close",
     "desktop_media_permissions_get",
     "desktop_media_permissions_set",
     "api_request",
