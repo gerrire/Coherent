@@ -1,0 +1,59 @@
+name: Publish Windows manual installer
+
+on:
+  push:
+    branches: [windows-release]
+    paths: [.github/workflows/publish-windows-manual.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the previously built installer
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 40519616154
+          name: coherent-windows-manual-55764b2cdd9d03cc09226161a4eb8e936372ea93
+          path: release
+      - name: Verify installer
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          installer = Path('release/Coherent_0.1.2_x64-setup.exe')
+          expected = '92a593b48227fc2ab0e07673e562614a41345dc3e30c228c9a2f37edbe6cbdac'
+          actual = hashlib.sha256(installer.read_bytes()).hexdigest()
+          manifest = Path('release/SHA256SUMS.txt').read_text(encoding='utf-8-sig')
+          if actual != expected or expected not in manifest.lower():
+              raise SystemExit('Installer checksum mismatch')
+          print('Installer checksum verified')
+          PY
+      - name: Publish prerelease for manual installation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view desktop-v0.1.2-manual >/dev/null 2>&1; then
+            echo 'Release already exists; leaving it untouched.'
+            exit 0
+          fi
+          cat > release/notes.md <<'EOF'
+          Coherent для Windows, версия 0.1.2. Скачайте файл Coherent_0.1.2_x64-setup.exe и запустите его на Windows для ручной установки.
+
+          Этот установщик не предназначен для автоматического обновления: исходный ключ подписи обновлений недоступен. SHA256SUMS.txt содержит контрольную сумму установщика.
+
+          Сборка создана из исходников 55764b2cdd9d03cc09226161a4eb8e936372ea93. Установщик собран в GitHub Actions; установка, микрофон и демонстрация экрана на реальном компьютере с Windows ещё требуют проверки.
+          EOF
+          gh release create desktop-v0.1.2-manual \
+            release/Coherent_0.1.2_x64-setup.exe release/SHA256SUMS.txt \
+            --target 55764b2cdd9d03cc09226161a4eb8e936372ea93 \
+            --prerelease --latest=false \
+            --title 'Coherent 0.1.2 — ручная установка для Windows' \
+            --notes-file release/notes.md
