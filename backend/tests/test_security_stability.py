@@ -11,6 +11,33 @@ from starlette.websockets import WebSocketDisconnect
 from coherent_api.models.auth_security import AuthThrottle
 
 
+def test_cloud_key_allows_only_private_or_root_service_group(tmp_path, monkeypatch):
+    import os
+    from types import SimpleNamespace
+
+    from coherent_api.core.chat_crypto import ChatCipher
+
+    key = tmp_path / "service.key"
+    key.write_bytes(os.urandom(32))
+    key.chmod(0o640)
+    real_fstat = os.fstat
+    monkeypatch.setattr(os, "getegid", lambda: 10001)
+
+    def metadata(descriptor):
+        info = real_fstat(descriptor)
+        return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_gid=10001)
+
+    monkeypatch.setattr(os, "fstat", metadata)
+    assert ChatCipher.from_file(str(key)).enabled
+    monkeypatch.setattr(os, "getegid", lambda: 10002)
+    with pytest.raises(ValueError):
+        ChatCipher.from_file(str(key))
+    monkeypatch.setattr(os, "getegid", lambda: 10001)
+    key.chmod(0o660)
+    with pytest.raises(ValueError):
+        ChatCipher.from_file(str(key))
+
+
 def signup(client, csrf, name):
     response = verified_signup(
         client, {"X-CSRF-Token": csrf}, {"username": name, "password": "Security-QA-only-2026!"}

@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 from pathlib import Path
 from urllib.error import HTTPError
@@ -143,6 +144,54 @@ def image_environment(sha: str) -> dict[str, str]:
     return {**os.environ, "COHERENT_IMAGE_TAG": sha}
 
 
+def image_config_digest(reference: str) -> str:
+    # Hash the actual OCI config from Docker's portable export. Image .Id and
+    # container .Image may refer to different nodes in containerd's OCI index.
+    saved = subprocess.Popen(
+        ["docker", "image", "save", reference],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        configs = {}
+        manifest = None
+        with tarfile.open(fileobj=saved.stdout, mode="r|") as archive:
+            for member in archive:
+                if member.isfile() and member.size <= 2 * 1024**2:
+                    data = archive.extractfile(member).read()
+                    configs[member.name] = "sha256:" + hashlib.sha256(data).hexdigest()
+                    if member.name == "manifest.json":
+                        manifest = json.loads(data)
+        if saved.wait(timeout=60) != 0 or not manifest or len(manifest) != 1:
+            raise RuntimeError("Could not verify exported image config")
+        return configs[manifest[0]["Config"]]
+    finally:
+        if saved.poll() is None:
+            saved.kill()
+            saved.wait()
+
+
+def selected_image(reference: str) -> str:
+    probe = run("docker", "create", "--pull", "never", "--network", "none", reference)
+    try:
+        descriptor = json.loads(
+            run(
+                "docker",
+                "inspect",
+                probe,
+                "--format",
+                "{{json .ImageManifestDescriptor}}",
+            )
+        )
+        return (
+            descriptor["digest"]
+            if descriptor
+            else run("docker", "inspect", probe, "--format", "{{.Image}}")
+        )
+    finally:
+        run("docker", "rm", probe)
+
+
 def load_verified_images(sha: str) -> None:
     """Download the workflow's exact images, check archive and loaded image IDs."""
     base = f"https://github.com/gerrire/Coherent/releases/download/deployment-{sha}"
@@ -183,9 +232,7 @@ def load_verified_images(sha: str) -> None:
     for name, expected in manifest["images"].items():
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", expected):
             raise RuntimeError("Invalid image digest")
-        actual = run(
-            "docker", "image", "inspect", f"{name}:{sha}", "--format", "{{.Id}}"
-        )
+        actual = image_config_digest(f"{name}:{sha}")
         if actual != expected:
             raise RuntimeError(f"Image digest mismatch: {name}")
 
@@ -199,11 +246,27 @@ def preserve_running_images(sha: str) -> None:
         container = run(*COMPOSE, "ps", "--quiet", service)
         if not container:
             raise RuntimeError(f"No running image to roll back: {service}")
-        image = run("docker", "inspect", container, "--format", "{{.Image}}")
-        run("docker", "tag", image, f"{name}:{sha}")
+        expected, reference = run(
+            "docker", "inspect", container, "--format", "{{.Image}}\n{{.Config.Image}}"
+        ).splitlines()
+        descriptor = json.loads(
+            run(
+                "docker",
+                "inspect",
+                container,
+                "--format",
+                "{{json .ImageManifestDescriptor}}",
+            )
+        )
+        expected = descriptor["digest"] if descriptor else expected
+        if selected_image(reference) != expected:
+            raise RuntimeError(
+                f"Running image reference was replaced; cannot preserve {service} safely"
+            )
+        run("docker", "tag", reference, f"{name}:{sha}")
 
 
-def prepare_private_storage() -> None:
+def prepare_private_storage(*, root_api: bool = False) -> None:
     # API runs as an unprivileged UID. Keys remain root-owned and read-only.
     for name in ("attachments", "vapid"):
         directory = ROOT / "data" / name
@@ -217,13 +280,13 @@ def prepare_private_storage() -> None:
                     os.chown(path, 10001, 10001)
     keys = Path("/etc/coherent/keys")
     if keys.is_dir():
-        os.chown(keys, 0, 10001)
-        keys.chmod(0o750)
+        os.chown(keys, 0, 0 if root_api else 10001)
+        keys.chmod(0o700 if root_api else 0o750)
         for key in keys.glob("*.key"):
             if key.is_symlink():
                 raise RuntimeError("Unexpected key link")
-            os.chown(key, 0, 10001)
-            key.chmod(0o640)
+            os.chown(key, 0, 0 if root_api else 10001)
+            key.chmod(0o600 if root_api else 0o640)
 
 
 def main() -> None:
@@ -259,6 +322,14 @@ def main() -> None:
         )
         load_verified_images(target)
         preserve_running_images(deployed)
+        previous_user = run(
+            "docker",
+            "image",
+            "inspect",
+            f"coherent-api:{deployed}",
+            "--format",
+            "{{.Config.User}}",
+        )
         run("sh", str(ROOT / "deploy/backup.sh"))
         git("merge", "--ff-only", target)
         try:
@@ -283,6 +354,7 @@ def main() -> None:
                 "Deployment failed; restoring previous application images", flush=True
             )
             git("switch", "--detach", deployed)
+            prepare_private_storage(root_api=previous_user in ("", "root", "0", "0:0"))
             run(*COMPOSE, "up", "-d", "--no-build", env=image_environment(deployed))
             healthy()
             raise

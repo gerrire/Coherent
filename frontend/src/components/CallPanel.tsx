@@ -158,6 +158,10 @@ export default function CallPanel({
   const [viewOpen, setViewOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
 
+  useEffect(() => () => {
+    void messagingFor(currentUserId).releaseMedia(call.id).catch(() => undefined);
+  }, [call.id, currentUserId]);
+
   useEffect(() => {
     const syncFullscreen = () => setIsFullscreen(document.fullscreenElement === panelRef.current);
     document.addEventListener("fullscreenchange", syncFullscreen);

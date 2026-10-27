@@ -36,10 +36,19 @@ async def realtime_events(websocket: WebSocket) -> None:
 
     await websocket.accept()
     events = websocket.app.state.message_events
-    if events.add(user_id, websocket, token_digest(token)):
-        await events.publish_all({"type": "presence"})
+    first = events.add(user_id, websocket, token_digest(token))
     expires = access_token_expiry(token, settings)
     try:
+        # Logout can finish between the first DB read and socket registration.
+        # Once registered, the normal revocation path can close this socket.
+        async with session_factory() as session:
+            current = await valid_session(session, token, settings)
+            fresh_user = await session.get(User, user_id)
+        if current != identity or fresh_user is None or fresh_user.session_version != identity[1]:
+            await websocket.close(code=4001)
+            return
+        if first:
+            await events.publish_all({"type": "presence"})
         async with asyncio.timeout(max(0, (expires - datetime.now(UTC)).total_seconds())):
             while True:
                 await websocket.receive_text()

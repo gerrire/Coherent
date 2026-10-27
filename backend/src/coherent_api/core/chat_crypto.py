@@ -38,8 +38,14 @@ class ChatCipher:
         descriptor = os.open(Path(path), os.O_RDONLY | os.O_NOFOLLOW)
         try:
             info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
-                raise ValueError("Cloud chat key must be a private regular file (0600 or 0400)")
+            private = info.st_mode & 0o077 == 0
+            service_group = (
+                info.st_uid == 0 and info.st_gid == os.getegid() and info.st_mode & 0o077 == 0o040
+            )
+            if not stat.S_ISREG(info.st_mode) or not (private or service_group):
+                raise ValueError(
+                    "Cloud chat key must be private or root-owned with service-group read access"
+                )
             key = os.read(descriptor, 33)
         finally:
             os.close(descriptor)

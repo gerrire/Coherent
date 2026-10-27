@@ -424,6 +424,9 @@ export default function MessagesPanel({
           <div className="messages-intro-heading">
             <h1>{title}</h1>
             {conversation.kind === "group" && !conversation.server_id && (
+              <button className="chat-friend-button" title="Участники группы" onClick={() => setMembersOpen(true)}><UsersRound size={16} /> Участники</button>
+            )}
+            {conversation.kind === "group" && !conversation.server_id && (
               <button className="chat-friend-button" onClick={() => { setGroupName(title); setRenaming(true); }} title="Изменить название группы" aria-label="Изменить название группы"><Pencil size={14} /> Изменить</button>
             )}
             {peer && relationship && (
@@ -449,7 +452,6 @@ export default function MessagesPanel({
             : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent. Файлы хранятся только 3 дня.`}</p>
         </div>
       </div>
-      {conversation.kind === "group" && !conversation.server_id && <button className="group-members-button" title="Участники группы" onClick={() => setMembersOpen(true)}><UsersRound size={16} /> Участники</button>}
       {membersOpen && <GroupMembersDialog conversation={conversation} account={currentUserId} onClose={() => setMembersOpen(false)} onUpdated={() => { setMembersOpen(false); onSent(); }} onLeft={() => { setMembersOpen(false); onSent(); }} />}
       {secure && !!migrationInfo?.remaining && <p className="migration-status">Старая облачная история: {migrationInfo.remaining} сообщений. {migrationInfo.own_remaining ? `Твоих осталось перенести: ${migrationInfo.own_remaining}.` : "Твои сообщения перенесены."} {migrationInfo.other_remaining ? "Остальные перенесутся, когда авторы откроют беседу." : ""}</p>}
       {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>

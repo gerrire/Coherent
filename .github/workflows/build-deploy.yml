@@ -84,10 +84,14 @@ jobs:
           mkdir -p release
           docker save "coherent-api:$DEPLOY_SHA" "coherent-web:$DEPLOY_SHA" "coherent-monitor-bot:$DEPLOY_SHA" | gzip -1 > release/images.tar.gz
           python3 - <<'PY'
-          import hashlib,json,os,subprocess
+          import hashlib,importlib.util,json,os
           from pathlib import Path
+          spec=importlib.util.spec_from_file_location('deployment','deploy/auto-deploy.py')
+          deployment=importlib.util.module_from_spec(spec);spec.loader.exec_module(deployment)
           sha=os.environ['DEPLOY_SHA']
-          images={name:subprocess.check_output(['docker','image','inspect',f'{name}:{sha}','--format','{{.Id}}'],text=True).strip() for name in ('coherent-api','coherent-web','coherent-monitor-bot')}
+          images={}
+          for name in ('coherent-api','coherent-web','coherent-monitor-bot'):
+              images[name]=deployment.image_config_digest(f'{name}:{sha}')
           with Path('release/images.tar.gz').open('rb') as source: digest=hashlib.file_digest(source,'sha256').hexdigest()
           Path('release/manifest.json').write_text(json.dumps({'commit':sha,'archive_sha256':digest,'images':images}))
           PY
