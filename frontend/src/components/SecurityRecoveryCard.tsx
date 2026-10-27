@@ -164,6 +164,7 @@ export default function SecurityRecoveryCard({ user, initialPassword = "", onCom
     setNotice("Файл сохранён на твоём устройстве. Перенеси его в надёжное место.");
   }
 
+  if (!status?.setup_available) return null;
   return <section className="profile-settings-card security-recovery-card" aria-label="Ключ восстановления">
     <div className="profile-settings-section-heading"><ShieldCheck size={18} /><h3>{status?.configured && !trusted ? "Подтверждение устройства" : "Ключ восстановления"}</h3></div>
     {(!status?.configured || trusted) && <p>12 случайных слов для доступа к защищённой истории при потере устройств. Храни их отдельно от пароля. Сервер и почта этих слов не получают.</p>}

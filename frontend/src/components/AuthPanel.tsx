@@ -65,7 +65,11 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
       const result = mode === "register"
         ? await api.register({ username, password, email: email.trim(), verification_id: verificationId!, code })
         : await api.login({ username, password });
-      if (mode === "register") setCreatedUser(result.user);
+      if (mode === "register") {
+        const security = await api.securityStatus();
+        if (security.chat_encryption === "mls") setCreatedUser(result.user);
+        else { onAuthenticated(result.user); setPassword(""); }
+      }
       else { onAuthenticated(result.user, password); setPassword(""); }
     } catch (requestError) {
       setError(

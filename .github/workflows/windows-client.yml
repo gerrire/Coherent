@@ -92,7 +92,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Signed installer build failed' }
           Pop-Location
           ./scripts/clean-desktop-artifacts.ps1
-          ./scripts/prepare-desktop-release.ps1 -Notes 'Исправления звонков после переподключения, полноэкранная демонстрация и управление сессиями устройств.'
+          ./scripts/prepare-desktop-release.ps1 -Notes 'Облачные чаты без Recovery Key и сквозное шифрование звонков с одноразовыми ключами.'
           $bundle = 'frontend/src-tauri/target/release/bundle/nsis'
           Push-Location frontend/src-tauri
           try {
@@ -131,3 +131,14 @@ jobs:
             gh release delete $tag --yes
             if ($LASTEXITCODE -ne 0) { throw "Cannot remove obsolete release $tag" }
           }
+
+      - name: Keep the current and previous signed desktop installers
+        if: startsWith(github.ref, 'refs/tags/desktop-v') && github.ref == 'refs/tags/desktop-v0.1.4'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $old = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/desktop-v0.1.2" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $old.id -ne 425620223) { throw 'Review the previous desktop release before cleanup' }
+          gh release delete desktop-v0.1.2 --yes
+          if ($LASTEXITCODE -ne 0) { throw 'Could not remove superseded desktop release' }

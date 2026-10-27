@@ -457,6 +457,7 @@ export default function MessagesPanel({
         </div>
       </div>
       {membersOpen && <GroupMembersDialog conversation={conversation} account={currentUserId} onClose={() => setMembersOpen(false)} onUpdated={() => { setMembersOpen(false); onSent(); }} onLeft={() => { setMembersOpen(false); onSent(); }} />}
+      {!secure && !inCall && <div className="chat-security-notice" title="Сервер расшифровывает историю для участников беседы. Это не сквозное шифрование."><span>Защита при передаче (TLS) и шифрование при хранении на сервере</span></div>}
       {secure && !!migrationInfo?.remaining && <p className="migration-status">Старая облачная история: {migrationInfo.remaining} сообщений. {migrationInfo.own_remaining ? `Твоих осталось перенести: ${migrationInfo.own_remaining}.` : "Твои сообщения перенесены."} {migrationInfo.other_remaining ? "Остальные перенесутся, когда авторы откроют беседу." : ""}</p>}
       {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>
         <input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={64} aria-label="Название группы" autoFocus />

@@ -12,6 +12,8 @@ export interface User {
 }
 
 export interface AdminOverview {
+  chat_encryption_mode?: string;
+  history_reset_at?: string | null;
   e2ee_storage_bytes: number;
   e2ee_storage_limit_bytes: number;
   pending_private_migration: number;
@@ -158,6 +160,7 @@ export interface Call {
 }
 
 export interface CallJoin {
+  crypto_protocol?: "account_mls_v1" | "ephemeral_mls_v1";
   server_url: string;
   token: string;
   media_conversation_id: string;
@@ -274,8 +277,8 @@ export async function attachmentObjectUrl(path: string): Promise<string> {
 export const api = {
   registrationCode: (email: string) => request<{ verification_id: string; expires_in_seconds: number; retry_after_seconds: number }>("/api/v1/auth/registration/code", { method: "POST", body: JSON.stringify({ email }) }),
   registrationDelivery: (id: string) => request<{ delivery: "pending" | "sent" | "failed" }>(`/api/v1/auth/registration/${id}`),
-  securityStatus: () => request<{ setup_available: boolean; configured: boolean; recovery_confirmed: boolean; chat_encryption: string; roster_revision: number; devices: Array<{ id: string; label: string; platform: string; approved_at: string }> }>("/api/v1/security/status"),
-  deviceChallenge: (purpose: "bootstrap" | "confirm_recovery" | "action") => request<{ challenge_id: string; nonce: string }>("/api/v1/security/challenges", { method: "POST", body: JSON.stringify({ purpose }) }),
+  securityStatus: () => request<{ setup_available: boolean; configured: boolean; recovery_confirmed: boolean; chat_encryption: string; history_revision?:string|null; roster_revision: number; devices: Array<{ id: string; label: string; platform: string; approved_at: string }> }>("/api/v1/security/status"),
+  deviceChallenge: (purpose: "bootstrap" | "confirm_recovery" | "action", call_id?:string) => request<{ challenge_id: string; nonce: string }>("/api/v1/security/challenges", { method: "POST", body: JSON.stringify({ purpose,call_id:call_id??null }) }),
   recoveryMaterial: () => request<{ public_key: string; backup: import("./crypto/types").Envelope; rosters: import("./crypto/types").SignedRoster[] }>("/api/v1/security/recovery/material"),
   enrollDevice: (body: unknown) => request<{ approved: boolean; device_id: string; revision: number }>("/api/v1/security/devices/enroll", { method: "POST", body: JSON.stringify(body) }),
   bootstrapSecurity: (body: unknown) => request<{ configured: boolean }>("/api/v1/security/bootstrap", { method: "POST", body: JSON.stringify(body) }),

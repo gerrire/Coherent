@@ -1,4 +1,4 @@
-import { messagingFor, MessagingAccessError } from "../lib/crypto/messaging";
+import { callMessagingFor, closeCallMessaging, MessagingAccessError } from "../lib/crypto/messaging";
 import { CryptoOperationError } from "../lib/crypto/errors";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
@@ -162,7 +162,7 @@ export default function CallPanel({
   const [inviteOpen, setInviteOpen] = useState(false);
 
   useEffect(() => () => {
-    void messagingFor(currentUserId).releaseMedia(call.id).catch(() => undefined);
+    closeCallMessaging(currentUserId,call.id);
   }, [call.id, currentUserId]);
 
   useEffect(() => {
@@ -387,7 +387,7 @@ function CallRoom({
     async function prepareEncryption() {
       if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
       if (!join?.media_conversation_id) throw new Error("Обнови клиент для защищённых звонков.");
-      const mediaKey = await messagingFor(currentUserId).mediaKey(call.id);
+      const mediaKey = await callMessagingFor(currentUserId,call.id,join?.crypto_protocol??"account_mls_v1").mediaKey(call.id);
       if (!active) return;
       const provider = new ExternalE2EEKeyProvider();
       worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
@@ -400,7 +400,7 @@ function CallRoom({
       let previousKey = mediaKey.key, refreshing = false, failureSince = 0;
       refreshKey = () => {
         if (!active || refreshing) return; refreshing = true;
-        void messagingFor(currentUserId).mediaKey(call.id).then(async next => {
+        void callMessagingFor(currentUserId,call.id,join?.crypto_protocol??"account_mls_v1").mediaKey(call.id).then(async next => {
           if (active) { failureSince = 0; setKeyNotice(""); }
           if (!active || next.key === previousKey) return;
           await provider.setKey(next.key); previousKey = next.key;
@@ -436,6 +436,7 @@ function CallRoom({
   }, [join, roomOptions, call.id, currentUserId]);
 
   function retryConnection() {
+    closeCallMessaging(currentUserId,call.id);
     setError("");
     setKeyNotice("");
     setJoin(null);

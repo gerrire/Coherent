@@ -64,15 +64,16 @@ function MainApp() {
   useEffect(() => {
     if (!user) return;
     let active = true;
-    const client = new CryptoClient(user.id);
+    let client:CryptoClient|null = null;
     void api.securityStatus().then(async status => {
-      if (!status.configured || !status.setup_available) { if (active) setUnlockPassword(""); return; }
+      if (!status.configured || !status.setup_available || status.chat_encryption!=="mls") { if (active) setUnlockPassword(""); return; }
+      client = new CryptoClient(user.id);
       const identity = await client.execute({ operation: "identity" });
       const device = identity.result.device as { device_id: string };
       if (active && !status.devices.some(item => item.id === device.device_id)) setUnlockUser(user);
       else if (active) setUnlockPassword("");
-    }).catch(() => { if (active) setUnlockPassword(""); }).finally(() => client.close());
-    return () => { active = false; client.close(); };
+    }).catch(() => { if (active) setUnlockPassword(""); }).finally(() => client?.close());
+    return () => { active = false; client?.close(); };
   }, [user?.id]);
 
   function authenticated(next: User, password = "") { setUnlockPassword(password); setUser(next); }

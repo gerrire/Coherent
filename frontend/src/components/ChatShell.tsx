@@ -46,7 +46,7 @@ import MediaSettingsPanel from "./MediaSettingsPanel";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
 import IncomingCallCard from "./IncomingCallCard";
 import DeviceApprovalPanel from "./DeviceLinkPanel";
-import { messagingFor, closeMessaging } from "../lib/crypto/messaging";
+import { messagingFor, closeMessaging, closeCallMessaging } from "../lib/crypto/messaging";
 import MessagesPanel from "./MessagesPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
@@ -135,11 +135,20 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const [onlineIds, setOnlineIds] = useState<Set<string>>(() => new Set());
   const [showProfile, setShowProfile] = useState(false);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  const [legacySecurity, setLegacySecurity] = useState(false);
+  const historyRevision = useRef<string|null>(null);
   useEffect(() => {
-    const refresh = () => { void messagingFor(user.id).refreshKeys().then(() => setMessageVersion(n => n + 1)).catch(() => {}); };
+    const refresh = () => { void api.securityStatus().then(status=> {
+      if(historyRevision.current && status.history_revision && historyRevision.current !== status.history_revision) {
+        closeMessaging(user.id); window.location.reload(); return;
+      }
+      historyRevision.current = status.history_revision ?? null;
+      setLegacySecurity(status.setup_available && status.chat_encryption === "mls");
+      if(status.chat_encryption === "mls") return messagingFor(user.id).refreshKeys();
+    }).then(() => setMessageVersion(n => n + 1)).catch(() => {}); };
     const profile = () => setProfileSettingsOpen(true);
     refresh();
-    const timer = window.setInterval(() => { void messagingFor(user.id).refreshKeys().catch(() => {}); }, 60000);
+    const timer = window.setInterval(refresh, 60000);
     window.addEventListener("coherent-security-changed", refresh);
     window.addEventListener("coherent-open-profile", profile);
     return () => { window.clearInterval(timer); window.removeEventListener("coherent-security-changed", refresh); window.removeEventListener("coherent-open-profile", profile); closeMessaging(user.id); };
@@ -855,7 +864,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     try {
       await updateMedia({ cameraEnabled: false }).catch(() => undefined);
       const call = await api.endCall(currentCall.id);
-      void messagingFor(user.id).releaseMedia(currentCall.id).catch(() => undefined);
+      closeCallMessaging(user.id,currentCall.id);
       setCurrentCall(call.status === "active" ? call : null);
       setAvailableCalls((current) => call.status === "active"
         ? current.some((item) => item.id === call.id) ? current.map((item) => item.id === call.id ? call : item) : [call, ...current]
@@ -1408,7 +1417,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           onClose={() => setShowGroupPicker(false)}
         />
       )}
-      <DeviceApprovalPanel accountId={user.id} />
+      {legacySecurity && <DeviceApprovalPanel accountId={user.id} />}
     </main>
   );
 }
