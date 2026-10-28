@@ -24,7 +24,7 @@ pub struct NetworkState {
     base_url: String,
     session_file: PathBuf,
     session: Mutex<Session>,
-    event_task: Mutex<Option<JoinHandle<()>>>,
+    event_task: Mutex<Option<(String, JoinHandle<()>)>>,
 }
 
 #[derive(Serialize)]
@@ -290,7 +290,7 @@ pub async fn api_request(
             state.update_cookies(&mut session, &response)?;
         }
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = read_limited(response, 8 * 1024 * 1024).await?;
     let body = if bytes.is_empty() {
         Value::Null
     } else {
@@ -318,6 +318,15 @@ pub async fn api_upload(
     }
     if files.is_empty() || files.len() > 10 {
         return Err("Invalid number of attachments".into());
+    }
+    let max_file = 25 * 1024 * 1024 + 4096;
+    if files
+        .iter()
+        .any(|file| file.data.len() > 4 * ((max_file + 2) / 3))
+        || files.iter().map(|file| file.data.len()).sum::<usize>()
+            > 4 * ((50 * 1024 * 1024 + 16384 + 2) / 3)
+    {
+        return Err("До 25 МБ на файл и 50 МБ на сообщение".into());
     }
     let secure = path.ends_with("/secure/files");
     let mut form = if secure {
@@ -362,7 +371,7 @@ pub async fn api_upload(
             state.update_cookies(&mut session, &response)?;
         }
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = read_limited(response, 8 * 1024 * 1024).await?;
     let body = if bytes.is_empty() {
         Value::Null
     } else {
@@ -405,14 +414,28 @@ pub async fn api_attachment(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    if bytes.len() > 25 * 1024 * 1024 + 4096 {
-        return Err("Attachment exceeds 25 MiB".into());
-    }
+    let bytes = read_limited(response, 25 * 1024 * 1024 + 4096).await?;
     Ok(AttachmentReply {
         media_type,
         data: STANDARD.encode(bytes),
     })
+}
+
+async fn read_limited(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > limit as u64)
+    {
+        return Err("Ответ сервера превышает допустимый размер".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err("Ответ сервера превышает допустимый размер".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 #[tauri::command]
@@ -420,7 +443,15 @@ pub async fn events_connect(
     app: AppHandle,
     state: State<'_, Arc<NetworkState>>,
     user_id: String,
+    connection_id: String,
 ) -> Result<(), String> {
+    if connection_id.len() != 36
+        || !connection_id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return Err("Invalid event connection".into());
+    }
     let token = state
         .session
         .lock()
@@ -429,7 +460,7 @@ pub async fn events_connect(
         .clone()
         .ok_or("Sign in before opening events")?;
     let mut task = state.event_task.lock().await;
-    if let Some(old) = task.take() {
+    if let Some((_, old)) = task.take() {
         old.abort();
     }
     let url = state
@@ -442,47 +473,61 @@ pub async fn events_connect(
     } else {
         state.base_url.clone()
     };
-    *task = Some(tokio::spawn(async move {
-        let result = async {
-            let mut request = url.into_client_request().map_err(|e| e.to_string())?;
-            request.headers_mut().insert(
-                "Origin",
-                HeaderValue::from_str(&origin).map_err(|e| e.to_string())?,
-            );
-            request.headers_mut().insert(
-                "Cookie",
-                HeaderValue::from_str(&format!("coherent_session={token}"))
-                    .map_err(|e| e.to_string())?,
-            );
-            let (socket, _) = connect_async(request).await.map_err(|e| e.to_string())?;
-            let _ = app.emit("coherent:event-open", ());
-            let (_, mut read) = socket.split();
-            while let Some(message) = read.next().await {
-                match message {
-                    Ok(message) if message.is_text() => {
-                        let text = message.into_text().map_err(|e| e.to_string())?.to_string();
-                        if let Ok(event) = serde_json::from_str::<Value>(&text) {
-                            crate::desktop::notify_background_message(&app, &event, &user_id);
+    let task_id = connection_id.clone();
+    *task = Some((
+        connection_id,
+        tokio::spawn(async move {
+            let result = async {
+                let mut request = url.into_client_request().map_err(|e| e.to_string())?;
+                request.headers_mut().insert(
+                    "Origin",
+                    HeaderValue::from_str(&origin).map_err(|e| e.to_string())?,
+                );
+                request.headers_mut().insert(
+                    "Cookie",
+                    HeaderValue::from_str(&format!("coherent_session={token}"))
+                        .map_err(|e| e.to_string())?,
+                );
+                let (socket, _) = connect_async(request).await.map_err(|e| e.to_string())?;
+                let _ = app.emit_to("main", &format!("coherent:event-open-{task_id}"), ());
+                let (_, mut read) = socket.split();
+                while let Some(message) = read.next().await {
+                    match message {
+                        Ok(message) if message.is_text() => {
+                            let text = message.into_text().map_err(|e| e.to_string())?.to_string();
+                            if let Ok(event) = serde_json::from_str::<Value>(&text) {
+                                crate::desktop::notify_background_message(&app, &event, &user_id);
+                            }
+                            let _ = app.emit_to("main", &format!("coherent:event-{task_id}"), text);
                         }
-                        let _ = app.emit("coherent:event", text);
+                        Ok(message) if message.is_close() => break,
+                        Err(error) => return Err(error.to_string()),
+                        _ => {}
                     }
-                    Ok(message) if message.is_close() => break,
-                    Err(error) => return Err(error.to_string()),
-                    _ => {}
                 }
+                Ok::<(), String>(())
             }
-            Ok::<(), String>(())
-        }
-        .await;
-        let _ = app.emit("coherent:event-close", result.err().unwrap_or_default());
-    }));
+            .await;
+            let _ = app.emit_to(
+                "main",
+                &format!("coherent:event-close-{task_id}"),
+                result.err().unwrap_or_default(),
+            );
+        }),
+    ));
     Ok(())
 }
 
 #[tauri::command]
-pub async fn events_disconnect(state: State<'_, Arc<NetworkState>>) -> Result<(), String> {
-    if let Some(task) = state.event_task.lock().await.take() {
-        task.abort();
+pub async fn events_disconnect(
+    state: State<'_, Arc<NetworkState>>,
+    connection_id: String,
+) -> Result<(), String> {
+    let mut current = state.event_task.lock().await;
+    if current.as_ref().is_some_and(|(id, _)| id == &connection_id) {
+        if let Some((_, task)) = current.take() {
+            task.abort();
+        }
     }
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 Мессенджер для личного общения, групповых бесед и сообществ: сообщения, звонки и демонстрация экрана в браузере и приложении для Windows. Проект находится в разработке.
 
-**[Открыть веб-версию](https://coherent-web.ru/)** · **[Скачать для Windows](https://github.com/gerrire/Coherent/releases/download/desktop-v0.1.4/Coherent-setup.exe)** · **[Все выпуски](https://github.com/gerrire/Coherent/releases)**
+**[Открыть веб-версию](https://coherent-web.ru/)** · **[Скачать для Windows](https://github.com/gerrire/Coherent/releases/latest/download/Coherent-setup.exe)** · **[Все выпуски](https://github.com/gerrire/Coherent/releases)**
 
 ## Возможности
 
@@ -22,9 +22,9 @@
 
 ## Приложение для Windows
 
-Нужны Windows x64 и Microsoft Edge WebView2. Скачайте [установщик 0.1.4](https://github.com/gerrire/Coherent/releases/tag/desktop-v0.1.4) или обновитесь из настроек установленного Coherent. Сборка подготовлена в GitHub Actions и подписана исходным ключом обновлений; работу новых функций и устройств на физическом ПК с Windows ещё необходимо проверить.
+Нужны Windows x64 и Microsoft Edge WebView2. Скачайте [актуальный установщик](https://github.com/gerrire/Coherent/releases/latest) или обновитесь из настроек установленного Coherent. Сборка подготовлена в GitHub Actions и подписана исходным ключом обновлений; работу новых функций и устройств на физическом ПК с Windows ещё необходимо проверить.
 
-Версия 0.1.4 поддерживает встроенное обновление с предыдущих публичных версий. Исходный ключ доступен сборкам через GitHub Actions secrets; [расположение локального ключа и настройка подписи](docs/desktop-signing.md). Для передачи системного звука при демонстрации экрана требуется Windows build 20348 или новее. [Устройство и сборка Windows-клиента](frontend/src-tauri/README.md).
+Клиент поддерживает встроенное обновление с предыдущих публичных версий. Исходный ключ доступен сборкам через GitHub Actions secrets; [расположение локального ключа и настройка подписи](docs/desktop-signing.md). Для передачи системного звука при демонстрации экрана требуется Windows build 20348 или новее. [Устройство и сборка Windows-клиента](frontend/src-tauri/README.md).
 
 ## Устройство проекта
 

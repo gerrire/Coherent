@@ -58,6 +58,8 @@ class MessageResponse(BaseModel):
     attachments_expired: bool = False
     attachments: list[AttachmentResponse] = Field(default_factory=list)
     created_at: datetime
+    edited_at: datetime | None = None
+    deleted_at: datetime | None = None
 
 
 class ConversationUser(BaseModel):

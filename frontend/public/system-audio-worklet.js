@@ -6,26 +6,33 @@ class CoherentSystemAudioProcessor extends AudioWorkletProcessor {
     this.frames = 0;
     this.peak = 0;
     this.underruns = 0;
+    this.stopped = false;
     this.port.onmessage = (event) => {
+      if (event.data.type === "stop") { this.stopped = true; this.queue = []; return; }
       this.queue.push(event.data);
       // Bound the queue if the WebView falls behind the native capture thread.
       if (this.queue.length > 20) {
-        this.queue.shift();
+        this.ack(this.queue.shift());
         this.offset = 0;
       }
     };
   }
 
+  ack(packet) {
+    this.port.postMessage({ type: "ack", captureId: packet.captureId, sequence: packet.sequence });
+  }
+
   process(_inputs, outputs) {
+    if (this.stopped) return false;
     const output = outputs[0];
     if (!output || output.length < 2) return true;
     for (let frame = 0; frame < output[0].length; frame++) {
-      while (this.queue.length && this.offset >= this.queue[0].length) {
-        this.queue.shift();
+      while (this.queue.length && this.offset >= this.queue[0].samples.length) {
+        this.ack(this.queue.shift());
         this.offset = 0;
       }
       if (this.queue.length) {
-        const packet = this.queue[0];
+        const packet = this.queue[0].samples;
         output[0][frame] = packet[this.offset] / 32768;
         output[1][frame] = packet[this.offset + 1] / 32768;
         this.peak = Math.max(this.peak, Math.abs(output[0][frame]), Math.abs(output[1][frame]));

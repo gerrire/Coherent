@@ -1,6 +1,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use serde_json::json;
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -53,6 +54,7 @@ struct Capture {
     native: *mut c_void,
     context: *mut CallbackContext,
     pump: Option<JoinHandle<()>>,
+    pending: Arc<Mutex<HashSet<u64>>>,
 }
 unsafe impl Send for Capture {}
 
@@ -81,6 +83,7 @@ pub struct AudioState {
 #[serde(rename_all = "camelCase")]
 struct AudioPacket {
     capture_id: u64,
+    sequence: u64,
     pcm: String,
 }
 
@@ -153,11 +156,13 @@ pub async fn start_system_audio(
             return Err("Не удалось запустить захват системного звука.".into());
         }
         // Establish RAII ownership before any task can fail.
-        let mut capture = Capture { id, native, context, pump: None };
+        let pending = Arc::new(Mutex::new(HashSet::new()));
+        let mut capture = Capture { id, native, context, pump: None, pending: pending.clone() };
         let cleanup = state.clone();
         capture.pump = Some(spawn_pump(async move {
             let mut packets = 0_u64;
             let mut peak = 0_i32;
+            let mut sequence = 0_u64;
             loop {
                 let code = error.load(Ordering::Acquire);
                 if code != 0 {
@@ -172,9 +177,20 @@ pub async fn start_system_audio(
                     _ = wake.notified() => continue,
                     samples = receiver.recv() => {
                         let Some(samples) = samples else { break; };
+                        sequence += 1;
+                        // The native channel alone does not bound WebView IPC or
+                        // MessagePort queues. Credit returns only after playback.
+                        {
+                            let Ok(mut waiting) = pending.lock() else { break; };
+                            if waiting.len() >= 8 {
+                                dropped.fetch_add(1, Ordering::Relaxed);
+                                continue;
+                            }
+                            waiting.insert(sequence);
+                        }
                         peak = peak.max(samples.iter().map(|sample| i32::from(*sample).abs()).max().unwrap_or(0));
                         let bytes = unsafe { std::slice::from_raw_parts(samples.as_ptr().cast::<u8>(), samples.len() * 2) };
-                        if app.emit_to("main", "coherent:system-audio", AudioPacket { capture_id: id, pcm: STANDARD.encode(bytes) }).is_err() { break; }
+                        if app.emit_to("main", "coherent:system-audio", AudioPacket { capture_id: id, sequence, pcm: STANDARD.encode(bytes) }).is_err() { break; }
                         packets += 1;
                         if packets == 1 || packets.is_multiple_of(500) {
                             // Only a scalar level, never PCM samples or media content.
@@ -190,6 +206,17 @@ pub async fn start_system_audio(
         *active = Some(capture);
         Ok(id)
     }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn desktop_audio_ack(state: State<'_, AudioState>, capture_id: u64, sequence: u64) {
+    if let Ok(active) = state.capture.lock() {
+        if let Some(capture) = active.as_ref().filter(|capture| capture.id == capture_id) {
+            if let Ok(mut pending) = capture.pending.lock() {
+                pending.remove(&sequence);
+            }
+        }
+    }
 }
 
 impl AudioState {

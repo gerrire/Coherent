@@ -41,6 +41,7 @@ fn enabled_by_default() -> bool {
 
 pub struct DesktopState {
     close_to_tray: AtomicBool,
+    media_active: AtomicBool,
     incoming_call_id: Mutex<Option<String>>,
     file: PathBuf,
     overlay_operation: tokio::sync::Mutex<()>,
@@ -76,11 +77,16 @@ impl DesktopState {
         }
         Ok(Self {
             close_to_tray: AtomicBool::new(settings.close_to_tray),
+            media_active: AtomicBool::new(false),
             incoming_call_id: Mutex::new(None),
             file,
             overlay_operation: tokio::sync::Mutex::new(()),
             dragging: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    pub fn media_active(&self) -> bool {
+        self.media_active.load(Ordering::Acquire)
     }
 
     fn read(&self) -> DesktopSettings {
@@ -100,6 +106,22 @@ impl DesktopState {
             .store(settings.close_to_tray, Ordering::SeqCst);
         Ok(())
     }
+}
+
+#[tauri::command]
+pub fn desktop_set_media_active(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    active: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Недоступно для этого окна".into());
+    }
+    state.media_active.store(active, Ordering::Release);
+    if active {
+        crate::webview_health::set_low_memory(&window, false);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -384,19 +406,23 @@ async fn build_call_overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
         .app_local_data_dir()
         .map_err(|e| e.to_string())?
         .join("webview-call-overlay");
-    let window = WebviewWindowBuilder::new(app, "call-overlay", WebviewUrl::App("index.html?window=incoming-call".into()))
-        .title("Coherent")
-        .inner_size(340.0, 226.0)
-        .resizable(false)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .shadow(true)
-        .visible(false)
-        .data_directory(data_dir)
-        .additional_browser_args("--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding")
-        .build()
-        .map_err(|e| e.to_string())?;
+    let window = WebviewWindowBuilder::new(
+        app,
+        "call-overlay",
+        WebviewUrl::App("index.html?window=incoming-call".into()),
+    )
+    .title("Coherent")
+    .inner_size(340.0, 226.0)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(true)
+    .visible(false)
+    .data_directory(data_dir)
+    .additional_browser_args("--autoplay-policy=no-user-gesture-required")
+    .build()
+    .map_err(|e| e.to_string())?;
     crate::webview_health::install(&window).map_err(|e| e.to_string())?;
     Ok(window)
 }

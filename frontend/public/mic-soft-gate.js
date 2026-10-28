@@ -5,10 +5,15 @@ class CoherentSoftGate extends AudioWorkletProcessor {
     this.gain = 1;
     this.speechHold = 0;
     this.speechFrames = 0;
-    this.port.onmessage = (event) => { this.mode = event.data.mode || "soft"; };
+    this.stopped = false;
+    this.port.onmessage = (event) => {
+      if (event.data.type === "stop") this.stopped = true;
+      else this.mode = event.data.mode || "soft";
+    };
   }
 
   process(inputs, outputs) {
+    if (this.stopped) return false;
     const input = inputs[0];
     const output = outputs[0];
     if (!input?.length) {

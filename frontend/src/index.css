@@ -3889,3 +3889,25 @@ a {
 .incoming-call-actions button:disabled { opacity: .6; cursor: wait; }
 .incoming-call-decline { background: #af4056; }
 .incoming-call-accept { background: #259f70; }
+
+/* Message actions stay accessible on touch screens and follow every theme. */
+.message-actions { position: relative; margin-left: auto; align-self: center; }
+.message-actions > button { display: flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 4px; border: 0; border-radius: 6px; color: var(--theme-muted); background: transparent; cursor: pointer; }
+.message-actions > button:hover, .message-actions > button:focus-visible { background: var(--theme-hover); color: var(--theme-text); }
+.message-actions-menu { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; width: max-content; max-width: 210px; padding: 5px; border: 1px solid var(--theme-border); border-radius: 9px; background: var(--theme-raised); box-shadow: 0 6px 20px #0004; }
+.message-actions-menu button { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 0; border-radius: 5px; background: transparent; color: var(--theme-text); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.message-actions-menu button:hover { background: var(--theme-hover); }
+.message-edited { color: var(--theme-faint); font-size: 9px; }
+.message-deleted .message-entry p { color: var(--theme-muted); font-style: italic; }
+.message-meta { flex-wrap: wrap; }
+.message-edit-form { width: min(360px, 65vw); }
+.message-edit-form textarea { display: block; box-sizing: border-box; width: 100%; min-height: 70px; max-height: 200px; padding: 9px; resize: none; border: 1px solid var(--theme-border); border-radius: 7px; color: var(--theme-text); background: var(--theme-panel); font: inherit; font-size: 13px; }
+.message-edit-form > div, .message-delete-confirm > div { display: flex; gap: 8px; margin-top: 7px; }
+.message-edit-form button, .message-delete-confirm button, .message-jump-latest { padding: 7px 10px; border: 1px solid var(--theme-border); border-radius: 7px; color: var(--theme-accent-text); background: var(--theme-raised); font: inherit; font-size: 12px; cursor: pointer; }
+.message-delete-confirm { margin-top: 8px; font-size: 12px; color: var(--theme-muted); }
+.message-jump-latest { align-self: center; margin: 6px; }
+.message-attachment:has(.message-image-preview) { min-height: 80px; }
+.microphone-check { display: grid; gap: 8px; }
+.microphone-check button { justify-self: start; padding: 8px 12px; border: 1px solid var(--theme-border); border-radius: 7px; color: var(--theme-accent-text); background: var(--theme-raised); cursor: pointer; }
+.microphone-check meter { width: 100%; height: 12px; accent-color: var(--theme-accent); }
+.microphone-check small { color: var(--theme-muted); font-size: 12px; line-height: 1.4; }

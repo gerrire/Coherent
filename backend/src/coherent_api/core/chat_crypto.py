@@ -152,7 +152,17 @@ def cloud_message(
     body: str,
     attachment_count: int = 0,
 ) -> Message:
-    message_id = uuid4()
+    message = Message(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        sender_id=sender_id,
+        attachment_count=attachment_count,
+    )
+    set_cloud_body(session, message, body)
+    return message
+
+
+def set_cloud_body(session: AsyncSession, message: Message, body: str) -> None:
     cipher = session_cipher(session)
     settings = session.info.get("settings")
     if (
@@ -161,15 +171,9 @@ def cloud_message(
         and (settings.app_env == "production" or settings.cloud_encryption_required)
     ):
         raise RuntimeError("Cloud encryption is required; refusing plaintext storage")
-    return Message(
-        id=message_id,
-        conversation_id=conversation_id,
-        sender_id=sender_id,
-        body="" if cipher.enabled else body,
-        body_ciphertext=cipher.encrypt(body, conversation_id, message_id)
-        if cipher.enabled
-        else None,
-        attachment_count=attachment_count,
+    message.body = "" if cipher.enabled else body
+    message.body_ciphertext = (
+        cipher.encrypt(body, message.conversation_id, message.id) if cipher.enabled else None
     )
 
 

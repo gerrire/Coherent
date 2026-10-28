@@ -10,31 +10,39 @@ export async function connectAppEvents(
   if (!isTauri()) {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/conversations/events`);
+    let active = true;
     socket.onopen = onOpen;
     socket.onmessage = (event) => onMessage(event.data);
-    socket.onclose = (event) => onClose(event.code);
+    socket.onclose = (event) => { if (active) { active = false; onClose(event.code); } };
     socket.onerror = () => socket.close();
-    return () => socket.close();
+    return () => { active = false; socket.onopen = null; socket.onmessage = null; socket.onerror = null; socket.onclose = null; socket.close(); };
   }
 
+  // Each connection owns its listeners. A stale close/cleanup must never stop
+  // its replacement, or reconnects multiply listeners and requests indefinitely.
+  const connectionId = crypto.randomUUID();
   const unlisten: UnlistenFn[] = [];
   let active = true;
+  const cleanup = () => {
+    if (!active) return;
+    active = false;
+    unlisten.splice(0).forEach((remove) => remove());
+    void invoke("events_disconnect", { connectionId }).catch(() => undefined);
+  };
   try {
-    unlisten.push(await listen("coherent:event-open", () => { if (active) onOpen(); }));
-    unlisten.push(await listen<string>("coherent:event", (event) => {
+    unlisten.push(await listen(`coherent:event-open-${connectionId}`, () => { if (active) onOpen(); }));
+    unlisten.push(await listen<string>(`coherent:event-${connectionId}`, (event) => {
       if (active) onMessage(event.payload);
     }));
-    unlisten.push(await listen("coherent:event-close", () => {
-      if (active) onClose(0);
+    unlisten.push(await listen(`coherent:event-close-${connectionId}`, () => {
+      if (!active) return;
+      cleanup();
+      onClose(0);
     }));
-    await invoke("events_connect", { userId: userId ?? "" });
+    await invoke("events_connect", { userId: userId ?? "", connectionId });
   } catch (error) {
-    unlisten.forEach((remove) => remove());
+    cleanup();
     throw error;
   }
-  return () => {
-    active = false;
-    unlisten.forEach((remove) => remove());
-    void invoke("events_disconnect");
-  };
+  return cleanup;
 }

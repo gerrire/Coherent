@@ -4,6 +4,7 @@ import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.j
 import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
 import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
 import type { NoiseProcessor, RnnoisePreset } from "./media";
+import { resumeAudioContext } from "./audioContext";
 
 const loadedWorklets = new WeakMap<AudioContext, Promise<void>>();
 const loadedRnnoiseWorklets = new WeakMap<AudioContext, Promise<void>>();
@@ -64,9 +65,11 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     if (this.engine === "rnnoise" && audioContext.sampleRate !== 48000) {
       this.ownedContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
       audioContext = this.ownedContext;
-      await audioContext.resume();
     }
     this.context = audioContext;
+    // WebView2 can supply a suspended host context, even with a live USB input.
+    // Publishing its MediaStreamDestination would otherwise send silent audio.
+    await this.resume();
     this.source = audioContext.createMediaStreamSource(new MediaStream([track]));
     this.highpass = audioContext.createBiquadFilter();
     this.highpass.type = "highpass";
@@ -152,18 +155,27 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
 
   getEngine(): NoiseProcessor { return this.engine; }
 
+  async resume(): Promise<void> {
+    const context = this.context;
+    if (!context) throw new Error("Звуковой движок недоступен.");
+    await resumeAudioContext(context);
+  }
+
   async destroy(): Promise<void> {
     this.source?.disconnect();
     this.highpass?.disconnect();
+    this.gate?.port.postMessage({ type: "stop" });
+    this.gate?.port.close();
     this.gate?.disconnect();
     this.rnnoise?.disconnect();
     this.rnnoise?.destroy();
+    this.rnnoise?.port.close();
     this.gain?.disconnect();
     this.compressor?.disconnect();
     this.limiter?.disconnect();
     this.destination?.disconnect();
     this.processedTrack?.stop();
-    if (this.ownedContext) await this.ownedContext.close();
+    if (this.ownedContext && this.ownedContext.state !== "closed") await this.ownedContext.close();
     this.processedTrack = undefined;
     this.source = undefined;
     this.highpass = undefined;
@@ -175,6 +187,7 @@ class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     this.destination = undefined;
     this.ownedContext = undefined;
     this.hostContext = undefined;
+    this.context = undefined;
   }
 }
 
@@ -183,6 +196,7 @@ export async function applyMicrophoneProcessing(room: Room, volume: number, gate
   if (!(track instanceof LocalAudioTrack)) return;
   const processor = track.getProcessor();
   if (processor instanceof MicrophoneProcessor && processor.getEngine() === engine) {
+    await processor.resume();
     processor.setVolume(volume);
     processor.setGateMode(gateMode);
     processor.setRnnoisePreset(preset);

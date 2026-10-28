@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Coherent",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "com.coherent.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +22,7 @@
         "shadow": true,
         "fullscreen": false,
         "dataDirectory": "webview-v2",
-        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding"
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {

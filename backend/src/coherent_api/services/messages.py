@@ -3,11 +3,11 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, delete, exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from coherent_api.core.chat_crypto import cloud_message, message_text
+from coherent_api.core.chat_crypto import cloud_message, message_text, set_cloud_body
 from coherent_api.models.call_media import CallMediaSession
 from coherent_api.models.conversation import Conversation
 from coherent_api.models.conversation_member import ConversationMember
@@ -55,9 +55,23 @@ class ReadMessageNotFoundError(Exception):
     pass
 
 
+class MessageChangeError(Exception):
+    pass
+
+
 def visible_message(
     session: AsyncSession, message: Message, attachments: list[AttachmentResponse] | None = None
 ) -> MessageResponse:
+    if message.deleted_at is not None:
+        return MessageResponse.model_validate(message).model_copy(
+            update={
+                "body": "Сообщение удалено",
+                "crypto": None,
+                "attachments": [],
+                "attachment_count": 0,
+                "attachments_expired": False,
+            }
+        )
     body = "Зашифрованное сообщение" if message.mls_payload else message_text(session, message)
     result = MessageResponse.model_validate(message).model_copy(update={"body": body})
     if message.mls_payload:
@@ -443,3 +457,60 @@ async def send_message(
     await session.commit()
     await session.refresh(message)
     return message, conversation
+
+
+async def change_message(
+    session: AsyncSession,
+    current_user: User,
+    conversation_id: UUID,
+    message_id: UUID,
+    body: str | None,
+) -> tuple[MessageResponse, tuple[UUID, ...], list[UUID]]:
+    """Only the author can change a message; tombstones keep pagination stable."""
+    conversation = await get_conversation(session, current_user, conversation_id)
+    await require_cloud_write(session, conversation_id)
+    message = await session.scalar(
+        select(Message)
+        .where(Message.id == message_id, Message.conversation_id == conversation_id)
+        .with_for_update()
+    )
+    if message is None:
+        raise ReadMessageNotFoundError
+    if message.sender_id != current_user.id:
+        raise MessageChangeError("Можно изменять и удалять только свои сообщения")
+    if message.mls_payload:
+        raise MessageChangeError("Изменение старых E2EE-сообщений недоступно")
+    attachments = list(
+        await session.scalars(
+            select(MessageAttachment).where(MessageAttachment.message_id == message.id)
+        )
+    )
+    removed_files: list[UUID] = []
+    if body is None:
+        if message.deleted_at is None:
+            removed_files = [item.id for item in attachments]
+            await session.execute(
+                delete(MessageAttachment).where(MessageAttachment.message_id == message.id)
+            )
+            # Erase the ciphertext itself, not merely its visible presentation.
+            message.body = "Сообщение удалено"
+            message.body_ciphertext = None
+            message.attachment_count = 0
+            message.attachments_expired = False
+            message.deleted_at = datetime.now(UTC)
+        attachments = []
+    else:
+        if message.deleted_at is not None:
+            raise MessageChangeError("Удалённое сообщение нельзя редактировать")
+        # Reuse the same authenticated conversation/message identity and a new nonce.
+        set_cloud_body(session, message, body)
+        message.edited_at = datetime.now(UTC)
+    member_ids = tuple(await conversation_member_ids(session, conversation))
+    await session.commit()
+    return (
+        visible_message(
+            session, message, [AttachmentResponse.model_validate(a) for a in attachments]
+        ),
+        member_ids,
+        removed_files,
+    )

@@ -1,6 +1,7 @@
 import { useModalFocus } from "../lib/useModalFocus";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import type { Room } from "livekit-client";
 import { Bell, Check, Monitor, Settings2, SlidersHorizontal, X } from "lucide-react";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import { type AudioProcessingState, type MediaPreferences } from "../lib/media";
@@ -80,6 +81,7 @@ function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettings
 }
 
 interface ClientSettingsDialogProps {
+  room?: Room | null;
   section: ClientSettingsSection;
   onSectionChange: (section: ClientSettingsSection) => void;
   onClose: () => void;
@@ -89,7 +91,7 @@ interface ClientSettingsDialogProps {
 }
 
 export default function ClientSettingsDialog({
-  section, onSectionChange, onClose, media, audioProcessingState, onMediaChange,
+  section, onSectionChange, onClose, media, audioProcessingState, onMediaChange, room,
 }: ClientSettingsDialogProps) {
   const [theme, setTheme] = useState(loadTheme);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -135,7 +137,7 @@ export default function ClientSettingsDialog({
             </button>)}
           </div>
         </div> : section === "desktop" ? <DesktopSettingsPanel onMediaChange={onMediaChange} /> : <div className="client-settings-media">
-          <MediaSettingsPanel embedded media={media} audioProcessingState={audioProcessingState} onChange={onMediaChange} onClose={onClose} />
+          <MediaSettingsPanel embedded room={room} media={media} audioProcessingState={audioProcessingState} onChange={onMediaChange} onClose={onClose} />
         </div>}
       </div>
     </div>

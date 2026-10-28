@@ -43,9 +43,11 @@ from coherent_api.services.conversation_access import (
 )
 from coherent_api.services.messages import (
     ConversationUserNotFoundError,
+    MessageChangeError,
     MessageCursorNotFoundError,
     ReadMessageNotFoundError,
     SelfConversationError,
+    change_message,
     conversation_response,
     create_group,
     list_conversations,
@@ -59,6 +61,71 @@ from coherent_api.services.messages import (
 from coherent_api.services.push import send_to_users
 
 router = APIRouter(prefix="/conversations", tags=["Сообщения"])
+
+
+async def publish_message_change(
+    conversation_id: UUID,
+    message_id: UUID,
+    body: str | None,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+) -> MessageResponse:
+    try:
+        result, members, files = await change_message(
+            session, user, conversation_id, message_id, body
+        )
+    except ConversationNotFoundError:
+        raise HTTPException(404, "Беседа не найдена") from None
+    except ReadMessageNotFoundError:
+        raise HTTPException(404, "Сообщение не найдено") from None
+    except MessageChangeError as error:
+        raise HTTPException(403, str(error)) from error
+    if files:
+        from coherent_api.services.attachment_cleanup import remove_files
+
+        background_tasks.add_task(
+            remove_files, Path(request.app.state.settings.attachment_dir), files
+        )
+    await request.app.state.message_events.publish(
+        members,
+        {
+            "type": "message_updated",
+            "conversation_id": str(conversation_id),
+            "message": result.model_dump(mode="json"),
+        },
+    )
+    return result
+
+
+@router.patch("/{conversation_id}/messages/{message_id}", response_model=MessageResponse)
+async def patch_message(
+    conversation_id: UUID,
+    message_id: UUID,
+    body: SendMessageRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+) -> MessageResponse:
+    return await publish_message_change(
+        conversation_id, message_id, body.body, request, background_tasks, user, session
+    )
+
+
+@router.delete("/{conversation_id}/messages/{message_id}", response_model=MessageResponse)
+async def delete_message(
+    conversation_id: UUID,
+    message_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+) -> MessageResponse:
+    return await publish_message_change(
+        conversation_id, message_id, None, request, background_tasks, user, session
+    )
 
 
 @router.get("", response_model=ConversationsResponse)

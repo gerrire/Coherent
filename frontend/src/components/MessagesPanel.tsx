@@ -1,6 +1,6 @@
 import GroupMembersDialog from "./GroupMembersDialog";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Send, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
+import { Check, Clock3, FilePlus2, MessageCircle, MoreHorizontal, Pencil, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
 import { messagingFor, MessagingAccessError, type KeyReview } from "../lib/crypto/messaging";
 import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
@@ -20,11 +20,18 @@ interface MessagesPanelProps {
 }
 
 function mergeMessages(first: Message[], second: Message[]): Message[] {
-  const unique = new Map([...first, ...second].map((message) => [message.id, message]));
+  const unique = new Map(first.map(message => [message.id, message]));
+  for (const message of second) {
+    const previous = unique.get(message.id);
+    const revision = (value: Message) => value.deleted_at || value.edited_at || value.created_at;
+    if (!previous || revision(message) >= revision(previous)) unique.set(message.id, message);
+  }
   return [...unique.values()].sort((a, b) =>
     a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
   );
 }
+
+const MAX_VISIBLE_MESSAGES = 200;
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" })
@@ -145,6 +152,13 @@ export default function MessagesPanel({
   const [groupName, setGroupName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [changingId, setChangingId] = useState<string | null>(null);
+  const [browsingHistory, setBrowsingHistory] = useState(false);
+  const browsingHistoryRef = useRef(false);
   const [now, setNow] = useState(Date.now);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -261,6 +275,8 @@ export default function MessagesPanel({
       setError("");
       setLoadError("");
       setRenaming(false);
+      setActionId(null); setEditingId(null); setDeletingId(null); setChangingId(null);
+      browsingHistoryRef.current = false; setBrowsingHistory(false);
     }
 
     let active = true;
@@ -271,7 +287,16 @@ export default function MessagesPanel({
       }
       const decoded = await decodePage(page.messages);
       if (!active) return;
-      setMessages((current) => changed ? decoded : mergeMessages(current, decoded));
+      setMessages((current) => {
+        if (changed || !hasLoadedPage.current) return decoded;
+        if (browsingHistoryRef.current) {
+          const ids = new Set(current.map(message => message.id));
+          return mergeMessages(current, decoded.filter(message => ids.has(message.id)));
+        }
+        const merged = mergeMessages(current, decoded);
+        if (merged.length > MAX_VISIBLE_MESSAGES) setHasMore(true);
+        return merged.slice(-MAX_VISIBLE_MESSAGES);
+      });
       if (!hasLoadedPage.current) {
         setHasMore(page.has_more);
         hasLoadedPage.current = true;
@@ -285,6 +310,46 @@ export default function MessagesPanel({
     });
     return () => { active = false; };
   }, [conversation.id, conversation.encryption, version, retry]);
+
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const message = (event as CustomEvent<Message>).detail;
+      if (message.conversation_id !== conversation.id) return;
+      setMessages(current => mergeMessages(current, current.some(item => item.id === message.id) ? [message] : []));
+      if (message.deleted_at) {
+        setEditingId(current => current === message.id ? null : current);
+        setDeletingId(current => current === message.id ? null : current);
+        setPreview(null);
+      }
+    };
+    window.addEventListener("coherent-message-updated", updated);
+    return () => window.removeEventListener("coherent-message-updated", updated);
+  }, [conversation.id]);
+
+  async function changeMessage(messageId: string, remove: boolean) {
+    if (changingId || (!remove && !editBody.trim())) return;
+    const target = conversation.id;
+    setChangingId(messageId); setError("");
+    try {
+      const result = remove ? await api.deleteMessage(target, messageId)
+        : await api.editMessage(target, messageId, editBody.trim());
+      if (conversationRef.current !== target) return;
+      setMessages(current => mergeMessages(current, [result]));
+      setEditingId(null); setDeletingId(null); setActionId(null);
+      if (remove) setPreview(null);
+      onSent();
+    } catch (reason) {
+      if (conversationRef.current === target) setError(reason instanceof Error ? reason.message : "Не удалось изменить сообщение");
+    } finally {
+      if (conversationRef.current === target) setChangingId(null);
+    }
+  }
+
+  function returnToLatest() {
+    browsingHistoryRef.current = false; setBrowsingHistory(false);
+    hasLoadedPage.current = false; nearBottom.current = true;
+    setMessages([]); setLoading(true); setRetry(current => current + 1);
+  }
 
   useEffect(() => {
     if (!secure || securityReady || securityProblem?.kind !== "waiting") return;
@@ -311,8 +376,18 @@ export default function MessagesPanel({
       if (event.key === "Escape") setPreview(null);
     };
     window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    const hidden = () => { if (document.hidden) setPreview(null); };
+    document.addEventListener("visibilitychange", hidden);
+    return () => { window.removeEventListener("keydown", close); document.removeEventListener("visibilitychange", hidden); };
   }, [preview]);
+
+  useEffect(() => {
+    if (!actionId) return;
+    const close = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest(".message-actions")) setActionId(null); };
+    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") setActionId(null); };
+    document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+  }, [actionId]);
 
   useEffect(() => {
     if (incomingFiles?.files.length && incomingFiles.conversationId === conversation.id
@@ -365,15 +440,21 @@ export default function MessagesPanel({
     const list = listRef.current;
     const oldHeight = list?.scrollHeight ?? 0;
     const oldTop = list?.scrollTop ?? 0;
+    const anchor = list?.querySelector<HTMLElement>(`[data-message-id="${first.id}"]`);
+    const anchorTop = anchor?.getBoundingClientRect().top;
     try {
       const page = await api.messages(conversation.id, first.id);
       if (conversationRef.current !== conversation.id) return;
       nearBottom.current = false;
       const decoded = await decodePage(page.messages);
-      setMessages((current) => mergeMessages(decoded, current));
+      browsingHistoryRef.current = true; setBrowsingHistory(true);
+      setMessages((current) => mergeMessages(decoded, current).slice(0, MAX_VISIBLE_MESSAGES));
       setHasMore(page.has_more);
       requestAnimationFrame(() => {
-        if (list) list.scrollTop = oldTop + list.scrollHeight - oldHeight;
+        const retained = list?.querySelector<HTMLElement>(`[data-message-id="${first.id}"]`);
+        if (list) list.scrollTop = retained && anchorTop !== undefined
+          ? oldTop + retained.getBoundingClientRect().top - anchorTop
+          : oldTop + list.scrollHeight - oldHeight;
       });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Не удалось загрузить историю.");
@@ -400,7 +481,8 @@ export default function MessagesPanel({
       pendingRef.current = null; setPendingId(null);
       if (conversationRef.current !== conversation.id) return;
       nearBottom.current = true;
-      setMessages((current) => mergeMessages(current, [message]));
+      if (browsingHistoryRef.current) returnToLatest();
+      setMessages((current) => mergeMessages(current, [message]).slice(-MAX_VISIBLE_MESSAGES));
       setDraft("");
       setFiles([]);
       onSent();
@@ -498,7 +580,7 @@ export default function MessagesPanel({
           return (
             <Fragment key={message.id}>
             {(index === 0 || dayKey(messages[index - 1].created_at) !== dayKey(message.created_at)) && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>}
-            <div className={`message-row ${own ? "message-own" : ""}`} key={message.id}>
+            <div className={`message-row ${own ? "message-own" : ""} ${message.deleted_at ? "message-deleted" : ""}`} data-message-id={message.id} key={message.id}>
               <span className="avatar avatar-user message-avatar">
                 {own ? "Я" : author[0]?.toUpperCase()}
               </span>
@@ -506,9 +588,26 @@ export default function MessagesPanel({
                 <div className="message-meta">
                   <strong>{author}</strong>
                   <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+                  {message.edited_at && !message.deleted_at && <span className="message-edited" title={new Date(message.edited_at).toLocaleString("ru-RU")}>изменено</span>}
                   {secure && <span className="message-encryption-label">{message.crypto ? "E2EE" : "Облачная история"}</span>}
+                  {own && !secure && !message.deleted_at && <div className="message-actions">
+                    <button type="button" aria-label="Действия с сообщением" aria-expanded={actionId === message.id} onClick={() => setActionId(current => current === message.id ? null : message.id)}><MoreHorizontal size={16} /></button>
+                    {actionId === message.id && <div className="message-actions-menu">
+                      <button type="button" onClick={() => { setEditingId(message.id); setEditBody(message.body); setDeletingId(null); setActionId(null); }}><Pencil size={14} />Редактировать</button>
+                      <button type="button" onClick={() => { setDeletingId(message.id); setEditingId(null); setActionId(null); }}><Trash2 size={14} />Удалить</button>
+                    </div>}
+                  </div>}
                 </div>
-                {message.body && (!attachmentsExpired || message.body !== "Вложение удалено") && <p>{message.body}</p>}
+                {editingId === message.id ? <form className="message-edit-form" onSubmit={event => { event.preventDefault(); void changeMessage(message.id, false); }}>
+                  <textarea autoFocus value={editBody} maxLength={4000} rows={3} disabled={changingId === message.id} aria-label="Изменить сообщение" onChange={event => setEditBody(event.target.value)} onKeyDown={event => {
+                    if (event.key === "Escape") setEditingId(null);
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void changeMessage(message.id, false); }
+                  }} />
+                  <div><button type="submit" disabled={!!changingId || !editBody.trim()}>Сохранить</button><button type="button" disabled={!!changingId} onClick={() => setEditingId(null)}>Отмена</button></div>
+                </form> : message.body && (!attachmentsExpired || message.body !== "Вложение удалено") && <p>{message.body}</p>}
+                {deletingId === message.id && <div className="message-delete-confirm" role="group" aria-label="Удаление сообщения">
+                  <span>Удалить у всех участников?</span><div><button type="button" disabled={!!changingId} onClick={() => void changeMessage(message.id, true)}>Удалить</button><button type="button" disabled={!!changingId} onClick={() => setDeletingId(null)}>Отмена</button></div>
+                </div>}
                 {attachmentsExpired && <span className="message-attachment-expired">Вложение удалено</span>}
                 {!attachmentsExpired && message.attachments?.map((attachment) => <AttachmentView
                   key={attachment.id}
@@ -523,6 +622,8 @@ export default function MessagesPanel({
           );
         })}
       </div>
+
+      {browsingHistory && <button type="button" className="message-jump-latest" onClick={returnToLatest}>К последним сообщениям ↓</button>}
 
       {pendingId && !sending && <div className="pending-secure-message">Сообщение сохранено в защищённой очереди. Повторная отправка не создаст копию.<button type="button" onClick={() => void sendMessage()}>Повторить</button><button type="button" onClick={() => void cancelPending()}>Отменить отправку</button></div>}
       <form className="message-composer" onSubmit={(event) => void sendMessage(event)}>
@@ -580,6 +681,9 @@ function AttachmentView({ path, attachment, accountId, onPreview }: {
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [requestNumber, setRequestNumber] = useState(0);
+  const [inViewport, setInViewport] = useState(false);
+  const [pageVisible, setPageVisible] = useState(!document.hidden);
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
 
@@ -588,17 +692,25 @@ function AttachmentView({ path, attachment, accountId, onPreview }: {
     const element = container.current;
     if (!element) return;
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        setRequestNumber(1);
-        observer.disconnect();
-      }
+      const visible = entries.some((entry) => entry.isIntersecting);
+      setInViewport(visible);
+      if (visible) setRequestNumber(current => current || 1);
     }, { rootMargin: "250px" });
     observer.observe(element);
     return () => observer.disconnect();
   }, [attachment.media_type]);
 
   useEffect(() => {
-    if (!requestNumber) return;
+    const update = () => setPageVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+
+  useEffect(() => {
+    // Decoded full-size images can dwarf the JS heap. Keep previews only near
+    // the viewport and release blobs while the desktop client is hidden.
+    const image = attachment.media_type.startsWith("image/");
+    if (!requestNumber || !pageVisible || (image && !inViewport)) { setUrl(""); return; }
     setError("");
     let active = true;
     let loadedUrl = "";
@@ -611,10 +723,14 @@ function AttachmentView({ path, attachment, accountId, onPreview }: {
       active = false;
       if (loadedUrl.startsWith("blob:")) URL.revokeObjectURL(loadedUrl);
     };
-  }, [path, requestNumber]);
+  }, [path, requestNumber, inViewport, pageVisible]);
 
   return <div className="message-attachment" ref={container}>
-    {url && attachment.media_type.startsWith("image/") && <button type="button" className="message-image-preview" onClick={() => onPreview(url)} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" /></button>}
+    {url && attachment.media_type.startsWith("image/") && <button type="button" className="message-image-preview" onClick={() => onPreview(url)} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" onLoad={event => {
+      const { width, height } = event.currentTarget.getBoundingClientRect();
+      setImageSize({ width, height });
+    }} /></button>}
+    {!url && imageSize && <div aria-hidden="true" style={{ width: imageSize.width, height: imageSize.height, maxWidth: "100%" }} />}
     {url && attachment.media_type.startsWith("video/") && <video src={url} controls preload="metadata" />}
     {url && attachment.media_type.startsWith("audio/") && <audio src={url} controls preload="none" />}
     {url ? <a href={url} download={attachment.filename}>{attachment.filename} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ</a>

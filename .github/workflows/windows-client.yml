@@ -92,7 +92,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Signed installer build failed' }
           Pop-Location
           ./scripts/clean-desktop-artifacts.ps1
-          ./scripts/prepare-desktop-release.ps1 -Notes 'Облачные чаты без Recovery Key и сквозное шифрование звонков с одноразовыми ключами.'
+          ./scripts/prepare-desktop-release.ps1 -Notes (Get-Content -LiteralPath $notes -Raw)
           $bundle = 'frontend/src-tauri/target/release/bundle/nsis'
           Push-Location frontend/src-tauri
           try {

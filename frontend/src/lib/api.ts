@@ -96,6 +96,8 @@ export interface Message {
   attachments_expired: boolean;
   attachments: Array<{ id: string; filename: string; media_type: string; byte_size: number; secure?: import("./crypto/files").SecureFile }>;
   created_at: string;
+  edited_at?: string | null;
+  deleted_at?: string | null;
 }
 
 export interface Conversation {
@@ -386,6 +388,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ body }),
     }),
+  editMessage: (conversationId: string, messageId: string, body: string) =>
+    request<Message>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, {
+      method: "PATCH", body: JSON.stringify({ body }),
+    }),
+  deleteMessage: (conversationId: string, messageId: string) =>
+    request<Message>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, { method: "DELETE" }),
   sendAttachments: (conversationId: string, body: string, files: File[]) => {
     const data = new FormData();
     data.append("body", body);

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { AudioPresets, Track, type Room } from "livekit-client";
+import { resumeAudioContext } from "./audioContext";
 
 let operations: Promise<unknown> = Promise.resolve();
 function serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -9,7 +10,7 @@ function serialize<T>(operation: () => Promise<T>): Promise<T> {
   return next;
 }
 
-interface AudioPacket { captureId: number; pcm: string }
+interface AudioPacket { captureId: number; sequence: number; pcm: string }
 interface AudioFailure { captureId: number; message: string }
 
 export class NativeScreenAudio {
@@ -37,7 +38,11 @@ export class NativeScreenAudio {
         if (this.stopped) return;
         const source = new AudioWorkletNode(context, "coherent-system-audio", { numberOfInputs: 0, outputChannelCount: [2] });
         this.source = source;
-        source.port.onmessage = ({ data }: MessageEvent<{ frames: number; peak: number; underruns: number }>) => {
+        source.port.onmessage = ({ data }: MessageEvent<{ type?: string; captureId?: number; sequence?: number; frames: number; peak: number; underruns: number }>) => {
+          if (data.type === "ack") {
+            void invoke("desktop_audio_ack", { captureId: data.captureId, sequence: data.sequence }).catch(() => undefined);
+            return;
+          }
           if (this.stopped || this.captureId === null) return;
           void invoke("desktop_audio_bridge_status", { captureId: this.captureId,
             frames: data.frames, peak: data.peak, underruns: data.underruns }).catch(() => undefined);
@@ -48,10 +53,13 @@ export class NativeScreenAudio {
         source.connect(destination);
         let pendingError: AudioFailure | null = null;
         this.unlisten.push(await listen<AudioPacket>("coherent:system-audio", ({ payload }) => {
-          if (this.stopped || payload.captureId !== this.captureId) return;
+          if (this.stopped || payload.captureId !== this.captureId) {
+            void invoke("desktop_audio_ack", { captureId: payload.captureId, sequence: payload.sequence }).catch(() => undefined);
+            return;
+          }
           const bytes = Uint8Array.from(atob(payload.pcm), (char) => char.charCodeAt(0));
           const samples = new Int16Array(bytes.buffer);
-          source.port.postMessage(samples, [samples.buffer]);
+          source.port.postMessage({ samples, captureId: payload.captureId, sequence: payload.sequence }, [samples.buffer]);
         }));
         this.unlisten.push(await listen<AudioFailure>("coherent:system-audio-error", ({ payload }) => {
           if (this.stopped) return;
@@ -61,7 +69,7 @@ export class NativeScreenAudio {
           void this.stop();
         }));
         if (this.stopped) return;
-        await context.resume();
+        await resumeAudioContext(context);
         this.captureId = await invoke<number>("start_system_audio");
         if (pendingError && (pendingError as AudioFailure).captureId === this.captureId)
           throw new Error((pendingError as AudioFailure).message);
@@ -97,6 +105,7 @@ export class NativeScreenAudio {
       track.stop();
       await this.room.localParticipant.unpublishTrack(track).catch(() => undefined);
     }
+    this.source?.port.postMessage({ type: "stop" });
     this.source?.disconnect();
     this.source?.port.close();
     this.source = null;

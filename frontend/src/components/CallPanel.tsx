@@ -42,7 +42,8 @@ import { api, ApiError, displayName, type Call, type CallJoin } from "../lib/api
 import {
   cameraCapture,
   cameraPublish,
-  microphoneCapture,
+  enableMicrophone,
+  microphoneError,
   screenShareCapture,
   screenSharePublish,
   updateScreenShareBitrate,
@@ -535,12 +536,14 @@ function CallMediaBridge({
       await room.localParticipant.setAttributes({ "coherent.deafened": selected.deafened ? "true" : "false" }).catch(() => undefined);
       if (!active) return;
       if (selected.microphoneEnabled) {
-        await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(selected));
+        await enableMicrophone(room, selected);
         try {
           await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.noiseSuppression ? "noisy" : "soft", selected.noiseProcessor, selected.rnnoisePreset);
         } catch (reason) {
-          await room.localParticipant.setMicrophoneEnabled(false);
-          throw reason;
+          const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+          await track?.stopProcessor().catch(() => undefined);
+          // Retain the live input if optional DSP fails; never silently mute it.
+          if (active) onError(`Дополнительная обработка недоступна. Микрофон работает без неё. ${microphoneError(reason)}`);
         }
       }
       if (selected.cameraEnabled) {
@@ -556,7 +559,7 @@ function CallMediaBridge({
       }
     }
     void prepare().catch((reason: unknown) => {
-      if (active) onError(reason instanceof Error ? reason.message : "Не удалось включить устройство.");
+      if (active) onError(microphoneError(reason));
     }).finally(() => {
       if (active) onRoomReady(room);
     });

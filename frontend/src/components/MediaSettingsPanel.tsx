@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMaybeRoomContext } from "@livekit/components-react";
-import { LocalVideoTrack, Track } from "livekit-client";
+import { LocalVideoTrack, Track, type Room } from "livekit-client";
+import MicrophoneCheck from "./MicrophoneCheck";
 import { Settings2, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { supportedAudioProcessing, supportedVideoCodec, type AudioProcessingState, type MediaPreferences, type VideoCodec } from "../lib/media";
 
 interface MediaSettingsPanelProps {
+  room?: Room | null;
   media: MediaPreferences;
   audioProcessingState: AudioProcessingState | null;
   onChange: (patch: Partial<MediaPreferences>) => Promise<void>;
@@ -20,8 +22,9 @@ const codecNames: Record<VideoCodec, string> = {
   av1: "AV1",
 };
 
-export default function MediaSettingsPanel({ media, audioProcessingState, onChange, onClose, embedded = false }: MediaSettingsPanelProps) {
-  const room = useMaybeRoomContext();
+export default function MediaSettingsPanel({ media, audioProcessingState, onChange, onClose, embedded = false, room: providedRoom }: MediaSettingsPanelProps) {
+  const contextRoom = useMaybeRoomContext();
+  const room = contextRoom ?? providedRoom;
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -170,6 +173,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <input type="range" min="0" max="100" step="5" value={media.microphoneVolume} onChange={(event) => void change({ microphoneVolume: Number(event.target.value) })} />
           <small>100% — полный уровень. Голос усиливается и выравнивается автоматически, громкие пики ограничиваются.</small>
         </label>
+        <MicrophoneCheck media={media} room={room} />
         <label>
           Камера
           <select disabled={busy} value={media.cameraId} onChange={(event) => void change({ cameraId: event.target.value })}>

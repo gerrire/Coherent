@@ -34,6 +34,7 @@ import {
   cameraPublish,
   loadMediaPreferences,
   microphoneCapture,
+  enableMicrophone,
   readAudioProcessing,
   saveMediaPreferences,
   supportedAudioProcessing,
@@ -514,6 +515,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     let reconnectDelay = 1000;
 
     function connect() {
+      if (stopped) return;
+      window.clearTimeout(reconnectTimer);
+      disconnect?.();
+      disconnect = null;
       void connectAppEvents(() => {
         socketReadyRef.current = true;
         reconnectDelay = 1000;
@@ -562,6 +567,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           }
           if (payload.type === "presence") {
             void refreshPresence().catch(() => undefined);
+            return;
+          }
+          if (payload.type === "message_updated" && payload.message) {
+            window.dispatchEvent(new CustomEvent("coherent-message-updated", { detail: payload.message }));
+            void refreshConversations().catch(() => undefined);
             return;
           }
           if (payload.type === "conversation" && payload.removed_user_id === user.id) {
@@ -666,7 +676,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
 
         if (patch.microphoneEnabled !== undefined && next.microphoneEnabled !== current.microphoneEnabled) {
           try {
-            await participant.setMicrophoneEnabled(next.microphoneEnabled, microphoneCapture(next));
+            if (next.microphoneEnabled) await enableMicrophone(room, next);
+            else await participant.setMicrophoneEnabled(false);
           } catch (reason) {
             await participant.setMicrophoneEnabled(current.microphoneEnabled, microphoneCapture(current)).catch(() => undefined);
             throw reason;
@@ -1357,6 +1368,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       {serverDialogOpen && <ServerDialog server={serverDialogManage ? selectedServer : undefined} currentUserId={user.id} onRemoved={(id) => { setServers(current => current.filter(item => item.id !== id)); setChannelConversation(null); setSelectedServerId(null); setActiveConversationId(null); setSection("messages"); }} onClose={() => setServerDialogOpen(false)} onSaved={(server) => { const existed=servers.some(item => item.id===server.id); setServers(current => [...current.filter(item => item.id !== server.id),server]); if (!existed || !server.channels.some(item => item.conversation_id===activeConversationRef.current)) openServer(server); else void refreshOpenChannel().catch(() => undefined); }} />}
       {adminPanelOpen && <AdminPanel onClose={() => setAdminPanelOpen(false)} />}
       {clientSettingsOpen && <ClientSettingsDialog
+        room={roomRef.current}
         section={clientSettingsSection}
         onSectionChange={setClientSettingsSection}
         onClose={() => setClientSettingsOpen(false)}
@@ -1403,7 +1415,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       </div>
       {controlError && <div className="media-control-error" role="alert">{controlError}</div>}
       {callSettingsOpen && !callPanelReady && (
-        <MediaSettingsPanel media={media} audioProcessingState={audioProcessingState} onChange={changeMedia} onClose={() => setCallSettingsOpen(false)} />
+        <MediaSettingsPanel room={roomRef.current} media={media} audioProcessingState={audioProcessingState} onChange={changeMedia} onClose={() => setCallSettingsOpen(false)} />
       )}
       {showGroupPicker && (
         <ParticipantPicker

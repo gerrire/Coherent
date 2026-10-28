@@ -34,6 +34,8 @@ class Message(Base):
     attachments_expired: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default="false"
     )
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

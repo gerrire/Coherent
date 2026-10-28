@@ -157,8 +157,30 @@ export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions 
     noiseSuppression: value.noiseProcessor === "browser" && value.noiseSuppression,
     echoCancellation: value.echoCancellation,
     autoGainControl: value.autoGainControl,
+    channelCount: 1,
     voiceIsolation: false,
   };
+}
+
+export async function enableMicrophone(room: Room, value: MediaPreferences): Promise<void> {
+  try {
+    await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(value));
+  } catch (error) {
+    // USB device identifiers can change after reconnects or a WebView upgrade.
+    // Retry only a missing saved device, never an OS/privacy permission denial.
+    if (!value.microphoneId || !(error instanceof Error) || !["NotFoundError", "OverconstrainedError"].includes(error.name)) throw error;
+    await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture({ ...value, microphoneId: "" }));
+  }
+}
+
+export function microphoneError(error: unknown): string {
+  const name = error instanceof Error ? error.name : "";
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") return isTauri()
+    ? "Нет доступа к микрофону. Проверь разрешение Coherent и Windows → Конфиденциальность и безопасность → Микрофон → Доступ для классических приложений."
+    : "Разреши доступ к микрофону в настройках сайта.";
+  if (name === "NotFoundError" || name === "OverconstrainedError") return "Микрофон не найден. Выбери доступное устройство в настройках звука.";
+  if (name === "NotReadableError") return "Windows не смогла открыть микрофон. Проверь подключение и не занят ли он другой программой в монопольном режиме.";
+  return error instanceof Error ? error.message : "Не удалось включить микрофон.";
 }
 
 export function cameraCapture(value: MediaPreferences): VideoCaptureOptions {
