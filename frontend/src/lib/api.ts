@@ -85,10 +85,24 @@ export interface FriendRequests {
   outgoing: FriendRequest[];
 }
 
+export interface MessageReply {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  body: string;
+  attachment_count: number;
+  attachments_expired: boolean;
+  created_at: string;
+  edited_at?: string | null;
+  deleted_at?: string | null;
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
   sender_id: string;
+  reply_to_id?: string | null;
+  reply_to?: MessageReply | null;
   crypto?: Record<string, unknown> | null;
   locked?: boolean;
   body: string;
@@ -137,6 +151,7 @@ export function conversationTitle(conversation: Conversation): string {
 export interface MessagePage {
   messages: Message[];
   has_more: boolean;
+  has_newer?: boolean;
 }
 
 export interface Call {
@@ -217,6 +232,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
         path,
         body: String(init.body.get("body") ?? ""),
         secureData: init.body.has("data") ? String(init.body.get("data")) : null,
+        replyToId: init.body.has("reply_to_id") ? String(init.body.get("reply_to_id")) : null,
         files: await Promise.all(init.body.getAll("files").filter((value): value is File => value instanceof File).map(async (file) => ({
           name: file.name,
           mediaType: file.type || "application/octet-stream",
@@ -378,15 +394,17 @@ export const api = {
     request<MessagePage>(
       `/api/v1/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
     ),
+  messagesAround: (conversationId: string, messageId: string) =>
+    request<MessagePage>(`/api/v1/conversations/${conversationId}/messages?around=${encodeURIComponent(messageId)}`),
   markConversationRead: (conversationId: string, messageId: string) =>
     request<void>(`/api/v1/conversations/${conversationId}/read`, {
       method: "POST",
       body: JSON.stringify({ message_id: messageId }),
     }),
-  sendMessage: (conversationId: string, body: string) =>
+  sendMessage: (conversationId: string, body: string, replyToId?: string) =>
     request<Message>(`/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body, ...(replyToId ? { reply_to_id: replyToId } : {}) }),
     }),
   editMessage: (conversationId: string, messageId: string, body: string) =>
     request<Message>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, {
@@ -394,9 +412,10 @@ export const api = {
     }),
   deleteMessage: (conversationId: string, messageId: string) =>
     request<Message>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, { method: "DELETE" }),
-  sendAttachments: (conversationId: string, body: string, files: File[]) => {
+  sendAttachments: (conversationId: string, body: string, files: File[], replyToId?: string) => {
     const data = new FormData();
     data.append("body", body);
+    if (replyToId) data.append("reply_to_id", replyToId);
     files.forEach((file) => data.append("files", file));
     return request<Message>(`/api/v1/conversations/${conversationId}/messages/attachments`, {
       method: "POST", body: data,

@@ -3890,14 +3890,6 @@ a {
 .incoming-call-decline { background: #af4056; }
 .incoming-call-accept { background: #259f70; }
 
-/* Message actions stay accessible on touch screens and follow every theme. */
-.message-actions { position: relative; margin-left: auto; align-self: center; }
-.message-actions > button { display: flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 4px; border: 0; border-radius: 6px; color: var(--theme-muted); background: transparent; cursor: pointer; }
-.message-actions > button:hover, .message-actions > button:focus-visible { background: var(--theme-hover); color: var(--theme-text); }
-.message-actions-menu { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; width: max-content; max-width: 210px; padding: 5px; border: 1px solid var(--theme-border); border-radius: 9px; background: var(--theme-raised); box-shadow: 0 6px 20px #0004; }
-.message-actions-menu button { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 0; border-radius: 5px; background: transparent; color: var(--theme-text); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
-.message-actions-menu button:hover { background: var(--theme-hover); }
-.message-actions-floating { position: fixed; right: auto; z-index: 4100; max-width: calc(100vw - 16px); max-height: calc(100dvh - 60px); overflow-y: auto; }
 .message-edited { color: var(--theme-faint); font-size: 9px; }
 .message-deleted .message-entry p { color: var(--theme-muted); font-style: italic; }
 .message-meta { flex-wrap: wrap; }

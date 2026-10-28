@@ -305,6 +305,7 @@ pub async fn api_upload(
     path: String,
     body: String,
     secure_data: Option<String>,
+    reply_to_id: Option<String>,
     files: Vec<UploadFile>,
 ) -> Result<ApiReply, String> {
     if !path.starts_with("/api/v1/conversations/")
@@ -338,6 +339,13 @@ pub async fn api_upload(
     } else {
         reqwest::multipart::Form::new().text("body", body)
     };
+    if let Some(reply) = reply_to_id {
+        if secure || reply.len() != 36 || !reply.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+        {
+            return Err("Недопустимое сообщение для ответа".into());
+        }
+        form = form.text("reply_to_id", reply);
+    }
     for file in files {
         let bytes = STANDARD.decode(file.data).map_err(|e| e.to_string())?;
         if bytes.len() > 25 * 1024 * 1024 + if secure { 4096 } else { 0 } {
