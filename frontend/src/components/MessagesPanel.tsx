@@ -457,7 +457,6 @@ export default function MessagesPanel({
         </div>
       </div>
       {membersOpen && <GroupMembersDialog conversation={conversation} account={currentUserId} onClose={() => setMembersOpen(false)} onUpdated={() => { setMembersOpen(false); onSent(); }} onLeft={() => { setMembersOpen(false); onSent(); }} />}
-      {!secure && !inCall && <div className="chat-security-notice" title="Сервер расшифровывает историю для участников беседы. Это не сквозное шифрование."><span>Защита при передаче (TLS) и шифрование при хранении на сервере</span></div>}
       {secure && !!migrationInfo?.remaining && <p className="migration-status">Старая облачная история: {migrationInfo.remaining} сообщений. {migrationInfo.own_remaining ? `Твоих осталось перенести: ${migrationInfo.own_remaining}.` : "Твои сообщения перенесены."} {migrationInfo.other_remaining ? "Остальные перенесутся, когда авторы откроют беседу." : ""}</p>}
       {renaming && <form className="group-rename-form" onSubmit={(event) => void saveGroupName(event)}>
         <input value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={64} aria-label="Название группы" autoFocus />
@@ -556,7 +555,10 @@ export default function MessagesPanel({
             <Send size={18} />
           </button>
         </div>
-        <span className="composer-hint">Enter — отправить · Shift+Enter — новая строка · Ctrl+V — вставить файл или скриншот</span>
+        <div className="composer-footer">
+          <span className="composer-hint">Enter — отправить · Shift+Enter — новая строка · Ctrl+V — вставить файл или скриншот</span>
+          {!secure && !inCall && <small className="composer-security-note" title="TLS защищает передачу, сообщения шифруются при хранении на сервере. Сервер расшифровывает историю для участников беседы; это не сквозное шифрование.">Защита при передаче и хранении на сервере</small>}
+        </div>
       </form>
       {preview && <div className="image-preview-backdrop" role="presentation" onMouseDown={(event) => {
         if (event.target === event.currentTarget) setPreview(null);

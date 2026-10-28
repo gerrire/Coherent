@@ -1,10 +1,10 @@
 name: Windows client
 
 on:
+  # Web updates do not build Windows. Desktop releases are requested separately
+  # after the web version has been tried, via a manual run or a desktop tag.
   push:
-    branches: ["**"]
     tags: ["desktop-v*"]
-    paths: ["frontend/**", "crates/**", "scripts/*desktop*.ps1", ".github/workflows/windows-client.yml"]
   workflow_dispatch:
     inputs:
       prepare_release:
