@@ -56,7 +56,7 @@ import ServerDialog from "./ServerDialog";
 import { applyMicrophoneProcessing, prepareRnnoise } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 import { connectAppEvents } from "../lib/events";
-import { desktopNotify, desktopRaiseIncomingCall, setUpdateMediaBusy } from "../lib/desktop";
+import { desktopNotify, desktopRaiseIncomingCall, setDesktopMediaActive, setUpdateMediaBusy } from "../lib/desktop";
 
 interface ChatShellProps {
   user: User;
@@ -207,7 +207,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const microphoneLive = roomRef.current?.state === ConnectionState.Connected;
   useEffect(() => {
     setUpdateMediaBusy(busyInCall);
-    return () => setUpdateMediaBusy(false);
+    setDesktopMediaActive(busyInCall);
+    return () => { setUpdateMediaBusy(false); setDesktopMediaActive(false); };
   }, [busyInCall]);
   const microphoneButtonLabel = microphoneLive
     ? media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"

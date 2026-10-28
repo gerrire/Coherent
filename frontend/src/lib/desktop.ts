@@ -86,12 +86,15 @@ let downloadedUpdate: Update | null = null;
 let versionRequest: Promise<void> | null = null;
 export function setUpdateMediaBusy(value: boolean) {
   mediaBusy = value;
-  if (isTauri()) void invoke("desktop_set_media_active", { active: value }).catch(() => undefined);
   setUpdateState({ callActive: value,
     ...(updateState.downloaded && !updateState.busy ? { status: value
       ? "Обновление скачано. Установка доступна после звонка."
       : "Обновление скачано и проверено. Можно установить и перезапустить приложение." } : {}),
   });
+}
+
+export function setDesktopMediaActive(active: boolean) {
+  if (isTauri()) void invoke("desktop_set_media_active", { active }).catch(() => undefined);
 }
 
 function setUpdateState(patch: Partial<UpdateState>) {

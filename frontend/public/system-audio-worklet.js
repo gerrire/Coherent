@@ -9,7 +9,11 @@ class CoherentSystemAudioProcessor extends AudioWorkletProcessor {
     this.stopped = false;
     this.port.onmessage = (event) => {
       if (event.data.type === "stop") { this.stopped = true; this.queue = []; return; }
-      this.queue.push(event.data);
+      // Accept the previous PCM format while client/worklet assets are replaced,
+      // but retain the same queue bound. New packets carry playback credits.
+      const packet = ArrayBuffer.isView(event.data) ? { samples: event.data } : event.data;
+      if (!packet.samples || packet.samples.BYTES_PER_ELEMENT !== 2 || packet.samples.length % 2 || packet.samples.length > 96000) return;
+      this.queue.push(packet);
       // Bound the queue if the WebView falls behind the native capture thread.
       if (this.queue.length > 20) {
         this.ack(this.queue.shift());
@@ -19,7 +23,7 @@ class CoherentSystemAudioProcessor extends AudioWorkletProcessor {
   }
 
   ack(packet) {
-    this.port.postMessage({ type: "ack", captureId: packet.captureId, sequence: packet.sequence });
+    if (packet.sequence !== undefined) this.port.postMessage({ type: "ack", captureId: packet.captureId, sequence: packet.sequence });
   }
 
   process(_inputs, outputs) {
