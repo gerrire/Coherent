@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
@@ -45,7 +45,6 @@ pub struct DesktopState {
     incoming_call_id: Mutex<Option<String>>,
     file: PathBuf,
     overlay_operation: tokio::sync::Mutex<()>,
-    dragging: Arc<AtomicBool>,
 }
 
 impl DesktopState {
@@ -81,7 +80,6 @@ impl DesktopState {
             incoming_call_id: Mutex::new(None),
             file,
             overlay_operation: tokio::sync::Mutex::new(()),
-            dragging: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -150,7 +148,6 @@ pub fn desktop_show_main(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn desktop_window_drag(
     window: WebviewWindow,
-    state: State<'_, DesktopState>,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
@@ -162,93 +159,7 @@ pub fn desktop_window_drag(
     {
         return Err("Недоступно для этого окна".into());
     }
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::Graphics::Gdi::ClientToScreen;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let mut initial = POINT {
-        x: (x * scale).round() as i32,
-        y: (y * scale).round() as i32,
-    };
-    unsafe {
-        ClientToScreen(hwnd, &mut initial)
-            .ok()
-            .map_err(|e| e.to_string())?;
-    }
-    if state.dragging.load(Ordering::Acquire) {
-        return Ok(());
-    }
-    let mut origin = window.outer_position().map_err(|e| e.to_string())?;
-    if window.is_maximized().map_err(|e| e.to_string())? {
-        let maximized_width = window.outer_size().map_err(|e| e.to_string())?.width;
-        window.unmaximize().map_err(|e| e.to_string())?;
-        let restored = window.outer_size().map_err(|e| e.to_string())?;
-        let ratio = (x * scale / f64::from(maximized_width)).clamp(0.0, 1.0);
-        origin = PhysicalPosition::new(
-            initial.x - (f64::from(restored.width) * ratio).round() as i32,
-            initial.y - (y * scale).round() as i32,
-        );
-    }
-    if state
-        .dragging
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return Ok(());
-    }
-    let dragging = state.dragging.clone();
-    std::thread::Builder::new()
-        .name("coherent-window-drag".into())
-        .spawn(move || {
-            struct End(Arc<AtomicBool>);
-            impl Drop for End {
-                fn drop(&mut self) {
-                    self.0.store(false, Ordering::Release);
-                }
-            }
-            let _end = End(dragging);
-            let started = std::time::Instant::now();
-            let mut last = (initial.x, initial.y);
-            let mut moved = false;
-            // Native coordinates keep this correct across DPI changes. No WebView
-            // move loop or stream of JS pointer events is involved. Only a gesture
-            // initiated on this window's titlebar is tracked, until release.
-            loop {
-                let mut cursor = POINT::default();
-                if unsafe { GetCursorPos(&mut cursor) }.is_err() {
-                    break;
-                }
-                if (cursor.x, cursor.y) != last {
-                    let dx = cursor.x.saturating_sub(initial.x);
-                    let dy = cursor.y.saturating_sub(initial.y);
-                    if window
-                        .set_position(PhysicalPosition::new(
-                            origin.x.saturating_add(dx),
-                            origin.y.saturating_add(dy),
-                        ))
-                        .is_err()
-                    {
-                        break;
-                    }
-                    last = (cursor.x, cursor.y);
-                    moved = true;
-                }
-                if unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } >= 0
-                    || started.elapsed().as_secs() >= 60
-                {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(8));
-            }
-            crate::diagnostics::event("window.drag", serde_json::json!({"moved": moved}));
-        })
-        .map_err(|e| {
-            state.dragging.store(false, Ordering::Release);
-            e.to_string()
-        })?;
-    Ok(())
+    window.start_dragging().map_err(|error| error.to_string())
 }
 
 #[tauri::command]

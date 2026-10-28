@@ -9,6 +9,7 @@ mod permissions;
 mod screen_capture;
 mod shared_video;
 mod webview_health;
+mod window_frame;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -96,6 +97,8 @@ pub fn run() {
             desktop::desktop_theme_set,
             desktop::desktop_show_main,
             desktop::desktop_window_drag,
+            window_frame::desktop_window_frame_set_visible,
+            webview_health::desktop_process_metrics,
             desktop::desktop_exit,
             desktop::desktop_send_test_notification,
             desktop::desktop_notify,
@@ -130,6 +133,7 @@ pub fn run() {
             )?));
             if let Some(main) = app.get_webview_window("main") {
                 webview_health::install(&main)?;
+                window_frame::install(&main)?;
             }
             desktop::install_tray(app)?;
             if cfg!(debug_assertions) {

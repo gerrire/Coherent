@@ -23,6 +23,8 @@ pub const COMMANDS: &[&str] = &[
     "desktop_theme_set",
     "desktop_show_main",
     "desktop_window_drag",
+    "desktop_window_frame_set_visible",
+    "desktop_process_metrics",
     "desktop_exit",
     "desktop_send_test_notification",
     "desktop_notify",

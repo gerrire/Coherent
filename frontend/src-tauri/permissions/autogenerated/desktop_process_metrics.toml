@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-process-metrics"
+description = "Enables the desktop_process_metrics command without any pre-configured scope."
+commands.allow = ["desktop_process_metrics"]
+
+[[permission]]
+identifier = "deny-desktop-process-metrics"
+description = "Denies the desktop_process_metrics command without any pre-configured scope."
+commands.deny = ["desktop_process_metrics"]

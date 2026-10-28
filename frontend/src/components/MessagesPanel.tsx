@@ -1,4 +1,5 @@
 import GroupMembersDialog from "./GroupMembersDialog";
+import MessageActionsMenu from "./MessageActionsMenu";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, MoreHorizontal, Pencil, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
@@ -383,7 +384,7 @@ export default function MessagesPanel({
 
   useEffect(() => {
     if (!actionId) return;
-    const close = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest(".message-actions")) setActionId(null); };
+    const close = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest(".message-actions, .message-actions-menu")) setActionId(null); };
     const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") setActionId(null); };
     document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
@@ -592,10 +593,10 @@ export default function MessagesPanel({
                   {secure && <span className="message-encryption-label">{message.crypto ? "E2EE" : "Облачная история"}</span>}
                   {own && !secure && !message.deleted_at && <div className="message-actions">
                     <button type="button" aria-label="Действия с сообщением" aria-expanded={actionId === message.id} onClick={() => setActionId(current => current === message.id ? null : message.id)}><MoreHorizontal size={16} /></button>
-                    {actionId === message.id && <div className="message-actions-menu">
+                    {actionId === message.id && <MessageActionsMenu messageId={message.id}>
                       <button type="button" onClick={() => { setEditingId(message.id); setEditBody(message.body); setDeletingId(null); setActionId(null); }}><Pencil size={14} />Редактировать</button>
                       <button type="button" onClick={() => { setDeletingId(message.id); setEditingId(null); setActionId(null); }}><Trash2 size={14} />Удалить</button>
-                    </div>}
+                    </MessageActionsMenu>}
                   </div>}
                 </div>
                 {editingId === message.id ? <form className="message-edit-form" onSubmit={event => { event.preventDefault(); void changeMessage(message.id, false); }}>

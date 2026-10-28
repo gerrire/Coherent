@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Coherent",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "identifier": "com.coherent.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -15,8 +15,8 @@
         "title": "Coherent",
         "width": 1280,
         "height": 800,
-        "minWidth": 900,
-        "minHeight": 620,
+        "minWidth": 480,
+        "minHeight": 420,
         "resizable": true,
         "decorations": false,
         "shadow": true,

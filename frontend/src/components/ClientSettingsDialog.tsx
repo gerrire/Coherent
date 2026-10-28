@@ -8,6 +8,7 @@ import { type AudioProcessingState, type MediaPreferences } from "../lib/media";
 import { applyTheme, loadTheme, themes } from "../lib/theme";
 import { defaultDesktopSettings, getAutostart, getDesktopSettings, requestDesktopNotifications, saveDesktopSettings, setAutostart, type DesktopSettings } from "../lib/desktop";
 import { DesktopUpdateSettings } from "./DesktopUpdates";
+import DesktopResources from "./DesktopResources";
 import { getMediaAccess, setMediaAccess, type MediaAccess } from "../lib/desktopPermissions";
 
 export type ClientSettingsSection = "appearance" | "media" | "desktop";
@@ -47,6 +48,7 @@ function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettings
 
   return <div className="client-settings-body desktop-settings-body">
     <DesktopUpdateSettings />
+    <DesktopResources />
     {error && <p className="desktop-settings-error" role="alert">{error}</p>}
     <div className="desktop-settings-group">
       <strong>Окно и запуск</strong>

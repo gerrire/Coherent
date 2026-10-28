@@ -7,7 +7,7 @@
   height: 36px;
   flex: 0 0 36px;
   border-bottom: 1px solid var(--theme-border);
-  background: var(--theme-panel);
+  background: linear-gradient(110deg, var(--theme-sidebar), var(--theme-panel) 65%);
   color: var(--theme-text);
   user-select: none;
 }
@@ -20,7 +20,15 @@
 .desktop-titlebar-mark i:nth-child(3) { height: 11px; }
 .desktop-titlebar-caption { position: absolute; left: 50%; transform: translateX(-50%); color: var(--theme-muted); font-size: 10px; letter-spacing: .02em; }
 .desktop-titlebar-controls { display: flex; height: 100%; margin-left: auto; }
-.desktop-titlebar-controls button { display: grid; place-items: center; width: 46px; height: 100%; border: 0; background: transparent; color: #a99db9; cursor: pointer; transition: background .12s ease, color .12s ease; }
-.desktop-titlebar-controls button:hover { background: rgba(255, 255, 255, .09); color: #fff; }
+.desktop-titlebar-controls button { position: relative; display: grid; place-items: center; width: 46px; flex: 0 0 46px; height: 100%; border: 0; background: transparent; color: var(--theme-muted); cursor: pointer; transition: background .12s ease, color .12s ease; }
+.desktop-titlebar-controls button:hover, .desktop-titlebar-controls button.native-hover { background: var(--theme-hover); color: var(--theme-text); }
 .desktop-titlebar-controls button.desktop-titlebar-close:hover { background: #bf4057; color: #fff; }
 .desktop-titlebar-controls button:active { background: rgba(255, 255, 255, .14); }
+.desktop-titlebar-controls button:focus-visible { outline: 2px solid var(--theme-accent); outline-offset: -3px; }
+.desktop-titlebar-update.has-update { color: var(--theme-accent-text); }
+.desktop-titlebar-update i { position: absolute; right: 10px; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--theme-accent-text); }
+.desktop-titlebar-updates { position: absolute; top: 44px; right: 12px; width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 60px); overflow: auto; user-select: text; box-shadow: 0 18px 50px #0004; border-radius: 14px; }
+.desktop-titlebar-updates .desktop-update-card { padding-top: 38px; }
+.desktop-titlebar-updates-close { position: absolute; top: 8px; right: 10px; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 7px; color: var(--theme-muted); background: transparent; cursor: pointer; }
+.desktop-titlebar-updates-close:hover { background: var(--theme-hover); }
+@media (max-width: 650px) { .desktop-titlebar-caption { display: none; } }

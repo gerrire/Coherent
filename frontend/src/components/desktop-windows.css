@@ -25,3 +25,8 @@
 .desktop-incoming-overlay .incoming-call-actions { margin-top: 18px; }
 .desktop-incoming-overlay .incoming-call-actions button { min-height: 39px; font-size: 11px; }
 .desktop-incoming-overlay,.desktop-incoming-overlay button { pointer-events: auto; }
+.desktop-resources dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.desktop-resources dl > div { padding: 12px; border: 1px solid var(--theme-border); border-radius: 10px; background: var(--theme-panel); }
+.desktop-resources dt { font-size: 11px; color: var(--theme-muted); }
+.desktop-resources dd { margin: 6px 0 0; font-size: 19px; font-weight: 650; color: var(--theme-text); font-variant-numeric: tabular-nums; }
+.desktop-resources p, .desktop-resources > small { font-size: 11px; line-height: 1.5; color: var(--theme-muted); }
