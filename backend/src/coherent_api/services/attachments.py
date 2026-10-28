@@ -17,7 +17,7 @@ from coherent_api.schemas.messages import AttachmentResponse, MessageResponse
 from coherent_api.services.attachment_cleanup import is_expired
 from coherent_api.services.conversation_access import conversation_member_ids, get_conversation
 from coherent_api.services.crypto_policy import require_cloud_write
-from coherent_api.services.messages import visible_message
+from coherent_api.services.messages import validate_reply, visible_message, with_reply_previews
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
 MAX_TOTAL_SIZE = 50 * 1024 * 1024
@@ -83,9 +83,11 @@ async def save_message_files(
     body: str,
     files: list[UploadFile],
     settings: Settings,
+    reply_to_id: UUID | None = None,
 ) -> tuple[MessageResponse, tuple[UUID, ...]]:
     conversation = await get_conversation(session, user, conversation_id)
     await require_cloud_write(session, conversation_id)
+    await validate_reply(session, conversation_id, reply_to_id)
     clean_body = body.strip()
     if len(clean_body) > 4000 or not files or len(files) > MAX_FILES:
         raise AttachmentError("Можно отправить до четырёх файлов и 4000 символов текста")
@@ -158,6 +160,7 @@ async def save_message_files(
             sender_id=user.id,
             body=clean_body,
             attachment_count=len(attachments),
+            reply_to_id=reply_to_id,
         )
         from datetime import UTC, datetime
 
@@ -174,7 +177,9 @@ async def save_message_files(
                 "attachments": [AttachmentResponse.model_validate(item) for item in attachments]
             }
         )
-        return result, await conversation_member_ids(session, conversation)
+        return (await with_reply_previews(session, [result]))[0], await conversation_member_ids(
+            session, conversation
+        )
     except Exception:
         await session.rollback()
         for path in stored:

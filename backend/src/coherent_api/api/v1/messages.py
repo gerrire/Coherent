@@ -45,6 +45,7 @@ from coherent_api.services.messages import (
     ConversationUserNotFoundError,
     MessageChangeError,
     MessageCursorNotFoundError,
+    MessageReplyError,
     ReadMessageNotFoundError,
     SelfConversationError,
     change_message,
@@ -57,6 +58,7 @@ from coherent_api.services.messages import (
     rename_group,
     send_message,
     visible_message,
+    with_reply_previews,
 )
 from coherent_api.services.push import send_to_users
 
@@ -181,6 +183,7 @@ async def post_message_attachments(
     session: SessionDep,
     files: Annotated[list[UploadFile], File()],
     body: str = Form(""),
+    reply_to_id: Annotated[UUID | None, Form()] = None,
 ) -> MessageResponse:
     try:
         result, member_ids = await save_message_files(
@@ -190,12 +193,15 @@ async def post_message_attachments(
             body,
             files,
             request.app.state.settings,
+            reply_to_id,
         )
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
     except AttachmentQuotaError as error:
         raise HTTPException(status_code=507, detail=str(error)) from error
     except AttachmentError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except MessageReplyError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     await request.app.state.message_events.publish(
         member_ids,
@@ -278,9 +284,10 @@ async def get_messages(
     user: CurrentUser,
     session: SessionDep,
     before: UUID | None = None,
+    around: UUID | None = None,
 ) -> MessagesResponse:
     try:
-        return await list_messages(session, user, conversation_id, before)
+        return await list_messages(session, user, conversation_id, before, around)
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
     except MessageCursorNotFoundError as error:
@@ -316,11 +323,15 @@ async def post_message(
     session: SessionDep,
 ) -> MessageResponse:
     try:
-        message, conversation = await send_message(session, user, conversation_id, body.body)
+        message, conversation = await send_message(
+            session, user, conversation_id, body.body, body.reply_to_id
+        )
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
+    except MessageReplyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
-    result = visible_message(session, message)
+    result = (await with_reply_previews(session, [visible_message(session, message)]))[0]
     await request.app.state.message_events.publish(
         await conversation_member_ids(session, conversation),
         {
@@ -369,9 +380,16 @@ async def get_single_message(
             select(MessageAttachment).where(MessageAttachment.message_id == message.id)
         )
     )
-    return visible_message(
-        session, message, [AttachmentResponse.model_validate(a) for a in attachments]
-    )
+    return (
+        await with_reply_previews(
+            session,
+            [
+                visible_message(
+                    session, message, [AttachmentResponse.model_validate(a) for a in attachments]
+                )
+            ],
+        )
+    )[0]
 
 
 @router.post("/{conversation_id}/members", response_model=ConversationResponse)

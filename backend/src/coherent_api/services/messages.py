@@ -21,6 +21,7 @@ from coherent_api.schemas.messages import (
     ConversationResponse,
     ConversationsResponse,
     ConversationUser,
+    MessageReplyResponse,
     MessageResponse,
     MessagesResponse,
 )
@@ -57,6 +58,72 @@ class ReadMessageNotFoundError(Exception):
 
 class MessageChangeError(Exception):
     pass
+
+
+class MessageReplyError(Exception):
+    pass
+
+
+async def validate_reply(
+    session: AsyncSession, conversation_id: UUID, reply_to_id: UUID | None
+) -> None:
+    if reply_to_id is None:
+        return
+    target = await session.scalar(
+        select(Message).where(
+            Message.id == reply_to_id,
+            Message.conversation_id == conversation_id,
+            Message.deleted_at.is_(None),
+            Message.mls_payload.is_(None),
+        )
+    )
+    if target is None:
+        raise MessageReplyError(
+            "Сообщение для ответа недоступно. Сними ответ и отправь текст снова."
+        )
+
+
+async def with_reply_previews(
+    session: AsyncSession, messages: list[MessageResponse]
+) -> list[MessageResponse]:
+    targets = {item.reply_to_id for item in messages if item.reply_to_id and not item.deleted_at}
+    if not targets:
+        return messages
+    rows = (
+        await session.execute(
+            select(Message, User.username, User.display_name)
+            .join(User, User.id == Message.sender_id)
+            .where(
+                Message.id.in_(targets),
+                Message.conversation_id.in_({m.conversation_id for m in messages}),
+            )
+        )
+    ).all()
+    replies = {}
+    for target, username, display_name in rows:
+        visible = visible_message(session, target)
+        replies[target.id] = (
+            target.conversation_id,
+            MessageReplyResponse(
+                id=target.id,
+                sender_id=target.sender_id,
+                sender_name=(display_name or "").strip() or username,
+                body=visible.body[:500],
+                attachment_count=visible.attachment_count,
+                attachments_expired=visible.attachments_expired,
+                created_at=target.created_at,
+                edited_at=target.edited_at,
+                deleted_at=target.deleted_at,
+            ),
+        )
+    return [
+        message.model_copy(update={"reply_to": replies[message.reply_to_id][1]})
+        if not message.deleted_at
+        and message.reply_to_id in replies
+        and replies[message.reply_to_id][0] == message.conversation_id
+        else message
+        for message in messages
+    ]
 
 
 def visible_message(
@@ -400,13 +467,18 @@ async def list_messages(
     current_user: User,
     conversation_id: UUID,
     before: UUID | None,
+    around: UUID | None = None,
 ) -> MessagesResponse:
     await get_conversation(session, current_user, conversation_id)
+    if before is not None and around is not None:
+        raise MessageCursorNotFoundError
     query = select(Message).where(Message.conversation_id == conversation_id)
-    if before is not None:
-        cursor = await session.get(Message, before)
+    cursor = None
+    if before is not None or around is not None:
+        cursor = await session.get(Message, before or around)
         if cursor is None or cursor.conversation_id != conversation_id:
             raise MessageCursorNotFoundError
+    if cursor is not None and before is not None:
         query = query.where(
             or_(
                 Message.created_at < cursor.created_at,
@@ -414,12 +486,43 @@ async def list_messages(
             )
         )
 
-    messages = list(
-        await session.scalars(
-            query.order_by(Message.created_at.desc(), Message.id.desc()).limit(51)
+    has_newer = False
+    if cursor is not None and around is not None:
+        older = list(
+            await session.scalars(
+                query.where(
+                    or_(
+                        Message.created_at < cursor.created_at,
+                        and_(Message.created_at == cursor.created_at, Message.id < cursor.id),
+                    )
+                )
+                .order_by(Message.created_at.desc(), Message.id.desc())
+                .limit(26)
+            )
         )
-    )
-    page = list(reversed(messages[:50]))
+        newer = list(
+            await session.scalars(
+                query.where(
+                    or_(
+                        Message.created_at > cursor.created_at,
+                        and_(Message.created_at == cursor.created_at, Message.id >= cursor.id),
+                    )
+                )
+                .order_by(Message.created_at, Message.id)
+                .limit(26)
+            )
+        )
+        page = list(reversed(older[:25])) + newer[:25]
+        has_more = len(older) > 25
+        has_newer = len(newer) > 25
+    else:
+        messages = list(
+            await session.scalars(
+                query.order_by(Message.created_at.desc(), Message.id.desc()).limit(51)
+            )
+        )
+        page = list(reversed(messages[:50]))
+        has_more = len(messages) > 50
     attachments = (
         list(
             await session.scalars(
@@ -437,20 +540,31 @@ async def list_messages(
             AttachmentResponse.model_validate(attachment)
         )
     return MessagesResponse(
-        messages=[
-            visible_message(session, message, by_message.get(message.id, [])) for message in page
-        ],
-        has_more=len(messages) > 50,
+        messages=await with_reply_previews(
+            session,
+            [visible_message(session, message, by_message.get(message.id, [])) for message in page],
+        ),
+        has_more=has_more,
+        has_newer=has_newer,
     )
 
 
 async def send_message(
-    session: AsyncSession, current_user: User, conversation_id: UUID, body: str
+    session: AsyncSession,
+    current_user: User,
+    conversation_id: UUID,
+    body: str,
+    reply_to_id: UUID | None = None,
 ) -> tuple[Message, Conversation]:
     conversation = await get_conversation(session, current_user, conversation_id)
     await require_cloud_write(session, conversation_id)
+    await validate_reply(session, conversation_id, reply_to_id)
     message = cloud_message(
-        session, conversation_id=conversation_id, sender_id=current_user.id, body=body
+        session,
+        conversation_id=conversation_id,
+        sender_id=current_user.id,
+        body=body,
+        reply_to_id=reply_to_id,
     )
     conversation.updated_at = datetime.now(UTC)
     session.add(message)
@@ -498,6 +612,7 @@ async def change_message(
             message.attachment_count = 0
             message.attachments_expired = False
             message.deleted_at = datetime.now(UTC)
+            message.reply_to_id = None
         attachments = []
     else:
         if message.deleted_at is not None:
@@ -508,9 +623,18 @@ async def change_message(
     member_ids = tuple(await conversation_member_ids(session, conversation))
     await session.commit()
     return (
-        visible_message(
-            session, message, [AttachmentResponse.model_validate(a) for a in attachments]
-        ),
+        (
+            await with_reply_previews(
+                session,
+                [
+                    visible_message(
+                        session,
+                        message,
+                        [AttachmentResponse.model_validate(a) for a in attachments],
+                    )
+                ],
+            )
+        )[0],
         member_ids,
         removed_files,
     )

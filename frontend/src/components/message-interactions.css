@@ -1,0 +1,112 @@
+.message-empty { color: var(--theme-muted); }
+.message-empty strong { color: var(--theme-text); }
+:root[data-theme] .message-empty > svg { color: var(--theme-accent-text); }
+.message-empty span { color: var(--theme-muted); }
+
+.message-row {
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(642px, 100%);
+  padding-right: 42px;
+  outline: none;
+}
+.message-row.message-own { max-width: min(704px, 100%); padding: 0 0 0 104px; }
+.message-row.message-deleted { padding: 0; }
+.message-row:not(:has(.message-actions)) { padding: 0; }
+.message-avatar { flex-shrink: 0; }
+.message-content { position: relative; flex: 0 1 auto; min-width: 0; }
+.message-content > .message-entry { box-sizing: border-box; width: 100%; max-width: none; }
+:root[data-theme] .message-deleted .message-entry p { color: var(--theme-muted); }
+.message-content .message-edit-form { max-width: 100%; }
+.message-actions {
+  position: absolute;
+  top: 4px;
+  left: calc(100% + 8px);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--theme-border);
+  border-radius: 9px;
+  background: var(--theme-panel);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity .12s ease, transform .12s ease;
+}
+.message-own .message-actions { left: auto; right: calc(100% + 8px); }
+.message-row:hover .message-actions, .message-row:focus-within .message-actions {
+  opacity: 1; pointer-events: auto; transform: none;
+}
+.message-actions > button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--theme-muted);
+  cursor: pointer;
+}
+.message-actions > button:hover { background: var(--theme-hover); color: var(--theme-accent-text); }
+.message-actions > .message-action-delete:hover { color: #ef6a7c; }
+.message-actions > button:disabled { opacity: .45; cursor: default; }
+.message-actions > button:focus-visible, .message-reply-quote:focus-visible,
+.composer-reply button:focus-visible { outline: 2px solid var(--theme-accent); outline-offset: 2px; }
+
+.message-reply-quote {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 5px 0 7px;
+  padding: 6px 9px;
+  border: 0;
+  border-left: 3px solid var(--theme-accent);
+  border-radius: 3px 7px 7px 3px;
+  color: var(--theme-text);
+  background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
+  text-align: left;
+  cursor: pointer;
+}
+.message-reply-quote:hover { background: color-mix(in srgb, var(--theme-accent) 21%, transparent); }
+.reply-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.reply-copy > strong { overflow: hidden; color: var(--theme-accent-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.reply-copy > span { overflow: hidden; color: var(--theme-muted); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.message-row.message-highlighted .message-entry {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--theme-accent) 14%, transparent);
+}
+.composer-reply { display: flex; align-items: center; gap: 10px; min-width: 0; margin-bottom: 8px; color: var(--theme-accent-text); }
+.composer-reply > svg { flex-shrink: 0; }
+.composer-reply-target { flex: 1; min-width: 0; padding: 3px 0 3px 10px; border: 0; border-left: 3px solid var(--theme-accent); background: transparent; text-align: left; cursor: pointer; }
+.composer-reply-cancel { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 7px; color: var(--theme-muted); background: transparent; cursor: pointer; }
+.composer-reply-cancel:hover { background: var(--theme-hover); color: var(--theme-text); }
+
+@media (max-width: 680px), (hover: none), (pointer: coarse) {
+  .message-row, .message-row.message-own { max-width: 100%; padding: 0; }
+  .message-content { max-width: calc(100% - 35px); }
+  .message-actions, .message-own .message-actions {
+    position: static;
+    justify-content: flex-end;
+    width: fit-content;
+    margin: 4px 0 0 auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+  .message-actions > button { width: 36px; height: 36px; }
+  .message-reply-quote { margin-top: 4px; }
+  .composer-reply { gap: 8px; }
+  .composer-reply-cancel { width: 38px; height: 38px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message-actions { transition: none; }
+}

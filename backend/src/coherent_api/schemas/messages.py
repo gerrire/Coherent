@@ -23,6 +23,7 @@ class RenameConversationRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
+    reply_to_id: UUID | None = None
 
     @field_validator("body")
     @classmethod
@@ -46,12 +47,26 @@ class AttachmentResponse(BaseModel):
     byte_size: int
 
 
+class MessageReplyResponse(BaseModel):
+    id: UUID
+    sender_id: UUID
+    sender_name: str
+    body: str
+    attachment_count: int = 0
+    attachments_expired: bool = False
+    created_at: datetime
+    edited_at: datetime | None = None
+    deleted_at: datetime | None = None
+
+
 class MessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     conversation_id: UUID
     sender_id: UUID
+    reply_to_id: UUID | None = None
+    reply_to: MessageReplyResponse | None = None
     crypto: dict | None = None
     body: str
     attachment_count: int = 0
@@ -92,3 +107,4 @@ class ConversationsResponse(BaseModel):
 class MessagesResponse(BaseModel):
     messages: list[MessageResponse] = Field(default_factory=list)
     has_more: bool = False
+    has_newer: bool = False

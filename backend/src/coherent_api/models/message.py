@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, Uuid, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from coherent_api.db.base import Base
@@ -16,6 +16,11 @@ class Message(Base):
         ),
         CheckConstraint("length(body) <= 4000", name="ck_messages_body_length"),
         Index("ix_messages_conversation_created", "conversation_id", "created_at", "id"),
+        Index(
+            "ix_messages_reply_to_id",
+            "reply_to_id",
+            postgresql_where=text("reply_to_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -24,6 +29,10 @@ class Message(Base):
     )
     sender_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    reply_to_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", name="fk_messages_reply_to_id", ondelete="SET NULL"),
+        nullable=True,
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
     mls_payload: Mapped[str | None] = mapped_column(Text, nullable=True)

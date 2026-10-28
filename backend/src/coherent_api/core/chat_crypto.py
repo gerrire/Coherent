@@ -151,12 +151,14 @@ def cloud_message(
     sender_id: UUID,
     body: str,
     attachment_count: int = 0,
+    reply_to_id: UUID | None = None,
 ) -> Message:
     message = Message(
         id=uuid4(),
         conversation_id=conversation_id,
         sender_id=sender_id,
         attachment_count=attachment_count,
+        reply_to_id=reply_to_id,
     )
     set_cloud_body(session, message, body)
     return message

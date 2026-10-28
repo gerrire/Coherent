@@ -1,9 +1,9 @@
 import GroupMembersDialog from "./GroupMembersDialog";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, FilePlus2, MessageCircle, MoreHorizontal, Pencil, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
+import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Reply, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
 import { messagingFor, MessagingAccessError, type KeyReview } from "../lib/crypto/messaging";
-import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type UserSearchResult } from "../lib/api";
+import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type MessageReply, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
@@ -19,16 +19,42 @@ interface MessagesPanelProps {
   onFilesConsumed: (nonce: number) => void;
 }
 
+function revision(value: { created_at: string; edited_at?: string | null; deleted_at?: string | null }): number {
+  return Date.parse(value.deleted_at || value.edited_at || value.created_at);
+}
+
+function replyText(value: Pick<MessageReply, "body" | "deleted_at" | "attachments_expired" | "attachment_count">): string {
+  if (value.deleted_at) return "Сообщение удалено";
+  if (value.body.trim()) return value.body.trim().replace(/\s+/g, " ");
+  if (value.attachments_expired) return "Вложение удалено";
+  return value.attachment_count > 1 ? `Вложения · ${value.attachment_count}` : "Вложение";
+}
+
+function refreshReply(previous: MessageReply, message: Message): MessageReply {
+  if (revision(previous) > revision(message)) return previous;
+  return { ...previous, body: Array.from(message.body).slice(0, 500).join(""), attachment_count: message.attachment_count,
+    attachments_expired: message.attachments_expired, edited_at: message.edited_at, deleted_at: message.deleted_at };
+}
+
 function mergeMessages(first: Message[], second: Message[]): Message[] {
   const unique = new Map(first.map(message => [message.id, message]));
   for (const message of second) {
     const previous = unique.get(message.id);
-    const revision = (value: Message) => value.deleted_at || value.edited_at || value.created_at;
-    if (!previous || revision(message) >= revision(previous)) unique.set(message.id, message);
+    if (!previous || revision(message) >= revision(previous)) {
+      const reply = message.reply_to;
+      unique.set(message.id, reply && previous?.reply_to?.id === reply.id && revision(previous.reply_to) > revision(reply)
+        ? { ...message, reply_to: previous.reply_to } : message);
+    }
   }
   return [...unique.values()].sort((a, b) =>
     a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
   );
+}
+
+function applyMessageChange(messages: Message[], message: Message): Message[] {
+  const updated = messages.some(item => item.id === message.id) ? mergeMessages(messages, [message]) : messages;
+  return updated.map(item => item.reply_to?.id === message.id
+    ? { ...item, reply_to: refreshReply(item.reply_to, message) } : item);
 }
 
 const MAX_VISIBLE_MESSAGES = 200;
@@ -152,7 +178,12 @@ export default function MessagesPanel({
   const [groupName, setGroupName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
-  const [actionId, setActionId] = useState<string | null>(null);
+  const [replyTarget, setReplyTarget] = useState<MessageReply | null>(null);
+  const [jumpingId, setJumpingId] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const pendingJump = useRef<string | null>(null);
+  const highlightTimer = useRef(0);
+  const historyNavigation = useRef(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -275,7 +306,9 @@ export default function MessagesPanel({
       setError("");
       setLoadError("");
       setRenaming(false);
-      setActionId(null); setEditingId(null); setDeletingId(null); setChangingId(null);
+      setReplyTarget(null); setEditingId(null); setDeletingId(null); setChangingId(null);
+      setJumpingId(null); setHighlightedId(null); pendingJump.current = null;
+      historyNavigation.current++; window.clearTimeout(highlightTimer.current);
       browsingHistoryRef.current = false; setBrowsingHistory(false);
     }
 
@@ -315,7 +348,8 @@ export default function MessagesPanel({
     const updated = (event: Event) => {
       const message = (event as CustomEvent<Message>).detail;
       if (message.conversation_id !== conversation.id) return;
-      setMessages(current => mergeMessages(current, current.some(item => item.id === message.id) ? [message] : []));
+      setMessages(current => applyMessageChange(current, message));
+      setReplyTarget(current => current?.id === message.id ? message.deleted_at ? null : refreshReply(current, message) : current);
       if (message.deleted_at) {
         setEditingId(current => current === message.id ? null : current);
         setDeletingId(current => current === message.id ? null : current);
@@ -334,8 +368,9 @@ export default function MessagesPanel({
       const result = remove ? await api.deleteMessage(target, messageId)
         : await api.editMessage(target, messageId, editBody.trim());
       if (conversationRef.current !== target) return;
-      setMessages(current => mergeMessages(current, [result]));
-      setEditingId(null); setDeletingId(null); setActionId(null);
+      setMessages(current => applyMessageChange(current, result));
+      setReplyTarget(current => current?.id === result.id ? result.deleted_at ? null : refreshReply(current, result) : current);
+      setEditingId(null); setDeletingId(null);
       if (remove) setPreview(null);
       onSent();
     } catch (reason) {
@@ -346,10 +381,65 @@ export default function MessagesPanel({
   }
 
   function returnToLatest() {
+    historyNavigation.current++; pendingJump.current = null; setJumpingId(null);
     browsingHistoryRef.current = false; setBrowsingHistory(false);
     hasLoadedPage.current = false; nearBottom.current = true;
     setMessages([]); setLoading(true); setRetry(current => current + 1);
   }
+
+  function startReply(message: Message) {
+    if (sending || secure || message.deleted_at || pendingId) return;
+    const member = conversation.members.find(person => person.id === message.sender_id);
+    setReplyTarget({ id: message.id, sender_id: message.sender_id, sender_name: member ? displayName(member) : "Участник",
+      body: Array.from(message.body).slice(0, 500).join(""), attachment_count: message.attachment_count,
+      attachments_expired: message.attachments_expired, created_at: message.created_at,
+      edited_at: message.edited_at, deleted_at: message.deleted_at });
+    setEditingId(null); setDeletingId(null);
+    draftRef.current?.focus();
+  }
+
+  function revealMessage(messageId: string): boolean {
+    const list = listRef.current;
+    const element = list?.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`);
+    if (!list || !element) return false;
+    nearBottom.current = false;
+    const top = list.scrollTop + element.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    list.scrollTo({ top: Math.max(0, top - (list.clientHeight - element.clientHeight) / 2),
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    element.focus({ preventScroll: true });
+    window.clearTimeout(highlightTimer.current); setHighlightedId(messageId);
+    highlightTimer.current = window.setTimeout(() => setHighlightedId(null), 1800);
+    return true;
+  }
+
+  async function jumpToMessage(messageId: string) {
+    if (jumpingId) return;
+    if (revealMessage(messageId)) return;
+    const targetConversation = conversation.id;
+    const navigation = ++historyNavigation.current;
+    setJumpingId(messageId); setError("");
+    try {
+      const page = await api.messagesAround(targetConversation, messageId);
+      const decoded = await decodePage(page.messages);
+      if (conversationRef.current !== targetConversation || historyNavigation.current !== navigation) return;
+      pendingJump.current = messageId; nearBottom.current = false;
+      browsingHistoryRef.current = true; setBrowsingHistory(true);
+      hasLoadedPage.current = true;
+      setMessages(decoded); setHasMore(page.has_more);
+    } catch (reason) {
+      if (conversationRef.current === targetConversation && historyNavigation.current === navigation) {
+        setError(reason instanceof Error ? reason.message : "Не удалось открыть исходное сообщение");
+      }
+    } finally {
+      if (historyNavigation.current === navigation) setJumpingId(null);
+    }
+  }
+
+  useLayoutEffect(() => {
+    if (pendingJump.current && revealMessage(pendingJump.current)) pendingJump.current = null;
+  }, [messages]);
+
+  useEffect(() => () => { window.clearTimeout(highlightTimer.current); historyNavigation.current++; }, []);
 
   useEffect(() => {
     if (!secure || securityReady || securityProblem?.kind !== "waiting") return;
@@ -380,14 +470,6 @@ export default function MessagesPanel({
     document.addEventListener("visibilitychange", hidden);
     return () => { window.removeEventListener("keydown", close); document.removeEventListener("visibilitychange", hidden); };
   }, [preview]);
-
-  useEffect(() => {
-    if (!actionId) return;
-    const close = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest(".message-actions")) setActionId(null); };
-    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") setActionId(null); };
-    document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
-  }, [actionId]);
 
   useEffect(() => {
     if (incomingFiles?.files.length && incomingFiles.conversationId === conversation.id
@@ -477,7 +559,7 @@ export default function MessagesPanel({
       if (secure && !pendingRef.current) { pendingRef.current = crypto.randomUUID(); setPendingId(pendingRef.current); }
       const message = secure
         ? await messagingFor(currentUserId).send(conversation, body, files, pendingRef.current!)
-        : files.length ? await api.sendAttachments(conversation.id, body, files) : await api.sendMessage(conversation.id, body);
+        : files.length ? await api.sendAttachments(conversation.id, body, files, replyTarget?.id) : await api.sendMessage(conversation.id, body, replyTarget?.id);
       pendingRef.current = null; setPendingId(null);
       if (conversationRef.current !== conversation.id) return;
       nearBottom.current = true;
@@ -485,6 +567,7 @@ export default function MessagesPanel({
       setMessages((current) => mergeMessages(current, [message]).slice(-MAX_VISIBLE_MESSAGES));
       setDraft("");
       setFiles([]);
+      setReplyTarget(null);
       onSent();
     } catch (requestError) {
       if (secure && pendingRef.current && !await messagingFor(currentUserId).hasPending(pendingRef.current).catch(() => true)) { pendingRef.current = null; setPendingId(null); }
@@ -496,6 +579,7 @@ export default function MessagesPanel({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Escape" && replyTarget && !sending) { event.preventDefault(); setReplyTarget(null); return; }
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void sendMessage();
@@ -580,24 +664,21 @@ export default function MessagesPanel({
           return (
             <Fragment key={message.id}>
             {(index === 0 || dayKey(messages[index - 1].created_at) !== dayKey(message.created_at)) && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>}
-            <div className={`message-row ${own ? "message-own" : ""} ${message.deleted_at ? "message-deleted" : ""}`} data-message-id={message.id} key={message.id}>
+            <div className={`message-row ${own ? "message-own" : ""} ${message.deleted_at ? "message-deleted" : ""} ${highlightedId === message.id ? "message-highlighted" : ""}`} data-message-id={message.id} key={message.id} tabIndex={-1}>
               <span className="avatar avatar-user message-avatar">
                 {own ? "Я" : author[0]?.toUpperCase()}
               </span>
+              <div className="message-content">
               <div className="message-entry">
                 <div className="message-meta">
                   <strong>{author}</strong>
                   <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
                   {message.edited_at && !message.deleted_at && <span className="message-edited" title={new Date(message.edited_at).toLocaleString("ru-RU")}>изменено</span>}
                   {secure && <span className="message-encryption-label">{message.crypto ? "E2EE" : "Облачная история"}</span>}
-                  {own && !secure && !message.deleted_at && <div className="message-actions">
-                    <button type="button" aria-label="Действия с сообщением" aria-expanded={actionId === message.id} onClick={() => setActionId(current => current === message.id ? null : message.id)}><MoreHorizontal size={16} /></button>
-                    {actionId === message.id && <div className="message-actions-menu">
-                      <button type="button" onClick={() => { setEditingId(message.id); setEditBody(message.body); setDeletingId(null); setActionId(null); }}><Pencil size={14} />Редактировать</button>
-                      <button type="button" onClick={() => { setDeletingId(message.id); setEditingId(null); setActionId(null); }}><Trash2 size={14} />Удалить</button>
-                    </div>}
-                  </div>}
                 </div>
+                {message.reply_to && !message.deleted_at && <button type="button" className="message-reply-quote" disabled={!!jumpingId} aria-label={`Перейти к сообщению: ${replyText(message.reply_to)}`} onClick={() => void jumpToMessage(message.reply_to!.id)}>
+                  <span className="reply-copy"><strong>{message.reply_to.sender_id === currentUserId ? "Ты" : message.reply_to.sender_name}</strong><span>{replyText(message.reply_to)}</span></span>
+                </button>}
                 {editingId === message.id ? <form className="message-edit-form" onSubmit={event => { event.preventDefault(); void changeMessage(message.id, false); }}>
                   <textarea autoFocus value={editBody} maxLength={4000} rows={3} disabled={changingId === message.id} aria-label="Изменить сообщение" onChange={event => setEditBody(event.target.value)} onKeyDown={event => {
                     if (event.key === "Escape") setEditingId(null);
@@ -617,6 +698,14 @@ export default function MessagesPanel({
                   onPreview={(url) => setPreview({ url, name: attachment.filename })}
                 />)}
               </div>
+              {!secure && !message.deleted_at && <div className="message-actions" role="group" aria-label="Действия с сообщением">
+                <button type="button" aria-label="Ответить на сообщение" title="Ответить" disabled={sending || !!pendingId} onClick={() => startReply(message)}><Reply size={16} /></button>
+                {own && <>
+                  <button type="button" aria-label="Редактировать сообщение" title="Редактировать" disabled={!!changingId} onClick={() => { setEditingId(message.id); setEditBody(message.body); setDeletingId(null); }}><Pencil size={15} /></button>
+                  <button type="button" className="message-action-delete" aria-label="Удалить сообщение" title="Удалить" disabled={!!changingId} onClick={() => { setDeletingId(message.id); setEditingId(null); }}><Trash2 size={15} /></button>
+                </>}
+              </div>}
+              </div>
             </div>
             </Fragment>
           );
@@ -632,6 +721,13 @@ export default function MessagesPanel({
             {error || loadError} {messages.length === 0 && <button type="button" onClick={() => setRetry((n) => n + 1)}>Повторить</button>}
           </div>
         )}
+        {replyTarget && <div className="composer-reply" role="group" aria-label="Ответ на сообщение">
+          <Reply size={19} aria-hidden="true" />
+          <button type="button" className="composer-reply-target" disabled={!!jumpingId} onClick={() => void jumpToMessage(replyTarget.id)}>
+            <span className="reply-copy"><strong>Ответ {replyTarget.sender_id === currentUserId ? "на своё сообщение" : replyTarget.sender_name}</strong><span>{replyText(replyTarget)}</span></span>
+          </button>
+          <button type="button" className="composer-reply-cancel" aria-label="Отменить ответ" title="Отменить ответ · Esc" disabled={sending} onClick={() => setReplyTarget(null)}><X size={18} /></button>
+        </div>}
         {files.length > 0 && <div className="composer-files">{files.map((file, index) => <span key={`${file.name}-${index}`}>{file.name}<button type="button" onClick={() => setFiles((current) => current.filter((_, position) => position !== index))} aria-label={`Убрать ${file.name}`}><X size={13} /></button></span>)}</div>}
         <div className="composer-field">
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
