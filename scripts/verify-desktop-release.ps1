@@ -8,9 +8,15 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $nativeRoot = Join-Path $projectRoot 'frontend\src-tauri'
 $config = Get-Content -LiteralPath (Join-Path $nativeRoot 'tauri.conf.json') -Raw | ConvertFrom-Json
 $version = [string]$config.version
+$cargoLock = Get-Content -LiteralPath (Join-Path $nativeRoot 'Cargo.lock') -Raw
+$updaterVersion = [regex]::Match($cargoLock, '(?m)^name = "tauri-plugin-updater"\r?\nversion = "([^"]+)"').Groups[1].Value
+if (-not $updaterVersion) { throw 'Updater library version is missing from Cargo.lock' }
+# Match the real updater's content negotiation, including GitHub redirect caches.
+$manifestHeaders = @{ 'User-Agent' = "tauri-plugin-updater/$updaterVersion"; 'Accept' = 'application/json' }
+$downloadHeaders = @{ 'User-Agent' = "tauri-plugin-updater/$updaterVersion"; 'Accept' = 'application/octet-stream' }
 $bundle = if ($BundleDirectory) { [IO.Path]::GetFullPath($BundleDirectory) } else { Join-Path $nativeRoot 'target\release\bundle\nsis' }
-$localInstaller = Join-Path $bundle 'Coherent-setup.exe'
-if (-not (Test-Path -LiteralPath $localInstaller)) { $localInstaller = Join-Path $bundle "Coherent_${version}_x64-setup.exe" }
+$localInstaller = Join-Path $bundle "Coherent_${version}_x64-setup.exe"
+if (-not (Test-Path -LiteralPath $localInstaller)) { $localInstaller = Join-Path $bundle 'Coherent-setup.exe' }
 if (-not (Test-Path -LiteralPath $localInstaller) -or -not (Test-Path -LiteralPath "$localInstaller.sig")) { throw 'Local signed installer is required for comparison' }
 $expectedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $localInstaller).Hash
 $expectedSignature = (Get-Content -LiteralPath "$localInstaller.sig" -Raw).Trim()
@@ -20,13 +26,13 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ('coherent-update-check-' + [g
 try {
     foreach ($endpoint in $config.plugins.updater.endpoints) {
         if ([string]$endpoint -match '\{\{') { throw 'This verifier requires a static updater endpoint' }
-        $manifest = Invoke-RestMethod -Uri $endpoint -Headers @{ 'Cache-Control' = 'no-cache'; 'User-Agent' = 'Coherent-Updater-Verification' } -TimeoutSec 45
+        $manifest = Invoke-RestMethod -Uri $endpoint -Headers $manifestHeaders -TimeoutSec 45
         if ($manifest.version -ne $version) { throw "Public updater offers $($manifest.version), expected $version" }
         $platform = $manifest.platforms.'windows-x86_64'
         if (-not $platform -or -not ([string]$platform.url).StartsWith($expectedPrefix, [StringComparison]::Ordinal)) { throw 'Updater points outside this versioned desktop release' }
         if ($platform.signature -ne $expectedSignature) { throw 'Public updater signature differs from the verified local package' }
         $download = Join-Path $temporary 'Coherent-setup.exe'
-        Invoke-WebRequest -Uri $platform.url -OutFile $download -Headers @{ 'Cache-Control' = 'no-cache'; 'User-Agent' = 'Coherent-Updater-Verification' } -TimeoutSec 90
+        Invoke-WebRequest -Uri $platform.url -OutFile $download -Headers $downloadHeaders -TimeoutSec 90
         if ((Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash -ne $expectedHash) { throw 'Public installer bytes differ from the local build' }
         [IO.File]::WriteAllText("$download.sig", [string]$platform.signature, [Text.UTF8Encoding]::new($false))
         Push-Location $nativeRoot
