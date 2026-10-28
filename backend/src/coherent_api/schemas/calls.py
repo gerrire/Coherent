@@ -29,6 +29,7 @@ class CallResponse(BaseModel):
     answered_at: datetime | None
     ended_at: datetime | None
     participants: list[CallParticipant] = Field(default_factory=list)
+    joined_here: bool = False
 
 
 class CurrentCallsResponse(BaseModel):

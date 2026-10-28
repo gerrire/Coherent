@@ -290,8 +290,14 @@ async def terminate_session(
             )
         )
     )
-    for call_id in calls:
-        await finish_call(call_id, request, user, session)
+    caller_digest = session.info.get("auth_session_digest")
+    try:
+        # The explicitly revoked login owns these calls, not the requesting login.
+        session.info["auth_session_digest"] = row.digest
+        for call_id in calls:
+            await finish_call(call_id, request, user, session)
+    finally:
+        session.info["auth_session_digest"] = caller_digest
 
 
 @router.patch("/profile", response_model=UserResponse)

@@ -103,10 +103,13 @@ export class MlsMessaging {
   }
   private async publishPackages(): Promise<void> {
     const device = this.device!;
+    // Ephemeral call identities need a small pool, not a persistent device's 16.
+    const target = this.callId ? 4 : 16;
+    const minimum = this.callId ? 2 : 8;
     const count = await apiRequest<{ available: number }>(`/api/v1/security/key-packages/count?device_id=${device.device_id}`);
     let pending = (await this.crypto.pendingDeliveries()).filter(item => item.operation === "key_package").slice(0, 16);
-    if (count.available < 8) {
-      for (let i = pending.length; i < 16; i++) await this.crypto.execute({ operation: "key_package" });
+    if (count.available < minimum) {
+      for (let i = pending.length; i < target - count.available; i++) await this.crypto.execute({ operation: "key_package" });
       pending = (await this.crypto.pendingDeliveries()).filter(item => item.operation === "key_package").slice(0, 16);
     }
     if (!pending.length) return;
@@ -340,8 +343,9 @@ export class MlsMessaging {
     }
   }
   private async prepareOnce(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
+    const initialized = Boolean(this.initialization);
     await this.ready();
-    if(this.callId) await this.packages();
+    if(this.callId && initialized) await this.packages();
     const directory = await this.checkDirectory(conversation, confirmed);
     await this.resolveCandidates(conversation);
     try { await this.pull(conversation, directory); }

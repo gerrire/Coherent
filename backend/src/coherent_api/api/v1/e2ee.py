@@ -734,7 +734,7 @@ async def reset_device_trust(
         )
     )
     for call_id in active_calls:
-        call, _ = await end_call(session, user, call_id)
+        call, _ = await end_call(session, user, call_id, force=True)
         await remove_livekit_participant(request.app.state.settings, call_id, user.id)
         await request.app.state.message_events.publish(
             tuple(person.user_id for person in call.participants),

@@ -67,7 +67,8 @@ interface ChatShellProps {
 type Section = "messages" | "friends";
 type FriendsTab = "search" | "all" | "requests";
 type ShellPopover = "workspace" | "notifications" | "help" | null;
-const CallPanel = lazy(() => import("./CallPanel"));
+const loadCallPanel = () => import("./CallPanel");
+const CallPanel = lazy(loadCallPanel);
 
 export default function ChatShell({ user, onLogout, onUserChange }: ChatShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -163,6 +164,15 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
   const [currentCall, setCurrentCall] = useState<Call | null>(null);
+  const localCallOwner = useRef<string | null>(null);
+  const [ownedCallId, setOwnedCallId] = useState<string | null>(null);
+  const onCallOwnershipChange = useCallback((callId: string, owned: boolean) => {
+    if (owned) localCallOwner.current = callId;
+    else if (localCallOwner.current === callId) localCallOwner.current = null;
+    setOwnedCallId((current) => owned ? callId : current === callId ? null : current);
+  }, []);
+  const callsRefresh = useRef<Promise<void> | null>(null);
+  const callsRevision = useRef(0);
   const [callCollapsed, setCallCollapsed] = useState(false);
   const [availableCalls, setAvailableCalls] = useState<Call[]>([]);
   const [callPending, setCallPending] = useState(false);
@@ -222,6 +232,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     && call.participants.some((participant) => participant.user_id === user.id && participant.state === "left"));
   const callCompact = Boolean(currentCall && (callCollapsed || section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
   const callPanelReady = Boolean(currentCall?.status === "active"
+    && currentCall.id === ownedCallId
     && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
     && !callCompact);
   const visibleConversations = conversations.filter((item) =>
@@ -345,6 +356,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       }
       return;
     }
+    // The foreground call dialog already supplies the incoming-call UI.
+    if (id.startsWith("call-") && !document.hidden && document.hasFocus()) return;
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     try {
       const notice = new Notification(title, { body, icon: "/favicon.svg", tag: id });
@@ -392,20 +405,31 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   }
 
   const refreshCalls = useCallback(async () => {
-    const result = await api.currentCalls();
-    for (const call of result.calls) {
-      const invited = call.participants.some((participant) => participant.user_id === user.id && participant.state === "invited");
-      if (!invited || notifiedCalls.current.has(call.id)) continue;
-      notifiedCalls.current.add(call.id);
-      showNotification(`call-${call.id}`, "Входящий звонок", `${(call.caller_display_name || call.caller_username)} звонит тебе`, call.conversation_id);
-      void desktopRaiseIncomingCall(call.id);
-    }
-    setAvailableCalls(result.calls);
-    setCurrentCall((current) => result.calls.find((call) => call.participants.some((participant) =>
-      participant.user_id === user.id && participant.state === "joined"
-    )) ?? result.calls.find((call) => call.participants.some((participant) =>
-      participant.user_id === user.id && participant.state === "invited"
-    )) ?? result.calls.find((call) => call.id === current?.id) ?? result.calls[0] ?? null);
+    if (callsRefresh.current) return callsRefresh.current;
+    const load = async () => {
+      for (;;) {
+        const revision = callsRevision.current;
+        const result = await api.currentCalls();
+        if (revision !== callsRevision.current) continue;
+        for (const call of result.calls) {
+          const invited = call.participants.some((participant) => participant.user_id === user.id && participant.state === "invited");
+          if (!invited || notifiedCalls.current.has(call.id)) continue;
+          notifiedCalls.current.add(call.id);
+          showNotification(`call-${call.id}`, "Входящий звонок", `${(call.caller_display_name || call.caller_username)} звонит тебе`, call.conversation_id);
+          void desktopRaiseIncomingCall(call.id);
+        }
+        setAvailableCalls(result.calls);
+        setCurrentCall((current) => result.calls.find((call) => call.participants.some((participant) =>
+          participant.user_id === user.id && participant.state === "joined"
+        )) ?? result.calls.find((call) => call.participants.some((participant) =>
+          participant.user_id === user.id && participant.state === "invited"
+        )) ?? result.calls.find((call) => call.id === current?.id) ?? result.calls[0] ?? null);
+        return;
+      }
+    };
+    const operation = load().finally(() => { if (callsRefresh.current === operation) callsRefresh.current = null; });
+    callsRefresh.current = operation;
+    return operation;
   }, [showNotification, user.id]);
 
   const refreshRequests = useCallback(async () => {
@@ -457,6 +481,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
 
   const incomingCallId = currentCall?.participants.some((participant) => participant.user_id === user.id && participant.state === "invited") ? currentCall.id : null;
   useEffect(() => {
+    if (incomingCallId) void loadCallPanel().catch(() => undefined);
+  }, [incomingCallId]);
+  useEffect(() => {
     const ringtone = ringtoneRef.current;
     if (!ringtone) return;
     if (!incomingCallId) {
@@ -504,7 +531,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       return;
     }
     const callId = currentCall.id;
-    const handlePageHide = () => api.endCallOnPageHide(callId);
+    const handlePageHide = () => {
+      if (localCallOwner.current === callId) api.endCallOnPageHide(callId);
+    };
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
   }, [currentCall, user.id]);
@@ -799,6 +828,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
 
   async function startCall() {
     if (!activeConversationId || busyInCall || callPending) return;
+    void loadCallPanel().catch(() => undefined);
     if (resumableCall) {
       await acceptCall(resumableCall);
       return;
@@ -807,7 +837,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     setCallError("");
     try {
       await updateMedia({ cameraEnabled: false });
-      setCurrentCall(await api.startCall(activeConversationId));
+      const call = await api.startCall(activeConversationId);
+      callsRevision.current += 1;
+      setCurrentCall(call);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось начать звонок.");
       throw reason;
@@ -827,7 +859,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       setActiveConversationId(group.id);
       setSection("messages");
       setShowWelcome(false);
-      setCurrentCall(await api.startCall(group.id));
+      const call = await api.startCall(group.id);
+      callsRevision.current += 1;
+      setCurrentCall(call);
     } catch (reason) {
       setCallError(reason instanceof Error ? reason.message : "Не удалось создать групповой звонок.");
       throw reason;
@@ -839,6 +873,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   async function inviteToCall(userIds: string[]) {
     if (!currentCall) return;
     const call = await api.inviteCall(currentCall.id, userIds);
+    callsRevision.current += 1;
     setCurrentCall(call);
     void refreshConversations().catch(() => undefined);
   }
@@ -855,6 +890,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     try {
       await updateMedia({ cameraEnabled: false });
       const call = await api.acceptCall(target.id);
+      callsRevision.current += 1;
       setCurrentCall(call);
       setAvailableCalls((current) => current.map((item) => item.id === call.id ? call : item));
       setActiveConversationId(call.conversation_id);
@@ -876,6 +912,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     try {
       await updateMedia({ cameraEnabled: false }).catch(() => undefined);
       const call = await api.endCall(currentCall.id);
+      callsRevision.current += 1;
       closeCallMessaging(user.id,currentCall.id);
       setCurrentCall(call.status === "active" ? call : null);
       setAvailableCalls((current) => call.status === "active"
@@ -1217,9 +1254,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           </div>
         )}
 
-        {currentCall && (
+        {currentCall && (isTauri() || !incomingCallId) && (
           <Suspense fallback={<div className="call-connect-note">Подготавливаем звонок...</div>}>
             <CallPanel
+              key={currentCall.id}
               call={currentCall}
               conversationTitle={conversations.find((item) => item.id === currentCall.conversation_id)?.name ?? undefined}
               isGroupConversation={conversations.find((item) => item.id === currentCall.conversation_id)?.kind === "group"}
@@ -1233,6 +1271,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
               onToggleSettings={() => setCallSettingsOpen((open) => !open)}
               onMediaChange={changeMedia}
               onRoomReady={setActiveRoom}
+              onOwnershipChange={onCallOwnershipChange}
               onInvite={inviteToCall}
               onAccept={() => void acceptCall()}
               onEnd={() => void endCall()}
@@ -1255,7 +1294,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             onSent={() => { void refreshConversations().catch(() => undefined); }}
             onRead={markConversationRead}
             callError={currentCall ? "" : callError}
-            inCall={currentCall?.status === "active" && busyInCall}
+            inCall={currentCall?.status === "active" && currentCall.id === ownedCallId}
             peerOnline={selectedConversation.other_user ? onlineIds.has(selectedConversation.other_user.id) : undefined}
             onRename={renameGroup}
             incomingFiles={pendingFiles}

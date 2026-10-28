@@ -220,7 +220,7 @@ async def remove_group_member(session, user: User, conversation_id: UUID, target
         from coherent_api.services.calls import end_call
 
         target = await session.get(User, target_id)
-        await end_call(session, target, active)
+        await end_call(session, target, active, force=True)
     conversation = await session.scalar(
         select(Conversation)
         .where(Conversation.id == conversation_id)

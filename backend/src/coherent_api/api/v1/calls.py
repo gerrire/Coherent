@@ -17,6 +17,7 @@ from coherent_api.services.calls import (
     CallFullError,
     CallInviteError,
     CallNotFoundError,
+    CallSessionConflictError,
     CallStateError,
     accept_call,
     current_calls,
@@ -51,7 +52,7 @@ async def register_media_device(
 async def publish_call(request: Request, call: CallResponse) -> None:
     await request.app.state.message_events.publish(
         tuple(participant.user_id for participant in call.participants),
-        {"type": "call", "call": call.model_dump(mode="json")},
+        {"type": "call", "call": call.model_dump(mode="json", exclude={"joined_here"})},
     )
 
 
@@ -134,6 +135,10 @@ async def finish_call(
         call, _ = await end_call(session, user, call_id)
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
+    except CallSessionConflictError as error:
+        raise HTTPException(
+            409, "Звонок открыт на другом устройстве. Сначала выйди из него там"
+        ) from error
     if call.status not in ("ringing", "active"):
         await close_livekit_room(request.app.state.settings, call.id)
     elif call.status == "active":
@@ -158,6 +163,10 @@ async def invite_call_participants(
     except CallStateError as error:
         raise HTTPException(
             status_code=409, detail="Приглашать может только участник звонка"
+        ) from error
+    except CallSessionConflictError as error:
+        raise HTTPException(
+            409, "Приглашай участников с устройства, на котором идёт звонок"
         ) from error
     except CallBusyError as error:
         raise HTTPException(status_code=409, detail="Один из приглашённых уже занят") from error
@@ -218,6 +227,10 @@ async def get_join_token(
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
     except CallStateError as error:
         raise HTTPException(status_code=409, detail="Этот вызов уже недоступен") from error
+    except CallSessionConflictError as error:
+        raise HTTPException(
+            409, "Звонок открыт на другом устройстве. Сначала выйди из него там"
+        ) from error
 
 
 @router.post("/calls/media-events")
@@ -266,20 +279,18 @@ async def media_events(request: Request, session: SessionDep):
 
 @router.get("/calls/{call_id}/crypto")
 async def call_crypto(call_id: UUID, user: CurrentUser, session: SessionDep):
-    from coherent_api.models.call_member import CallMember
+    from coherent_api.models.call_media import CallMediaSession
     from coherent_api.models.conversation import Conversation
+    from coherent_api.services.call_devices import joined_call
     from coherent_api.services.call_media import sync_members
-    from coherent_api.services.calls import get_call, is_expired
     from coherent_api.services.messages import conversation_response
 
-    try:
-        call = await get_call(session, user, call_id)
-    except CallNotFoundError:
-        raise HTTPException(404, "Звонок недоступен") from None
-    member = await session.get(CallMember, (call_id, user.id))
-    if call.status != "active" or is_expired(call) or member.state != "joined":
-        raise HTTPException(403, "Войди в звонок перед настройкой шифрования")
-    media_id = await sync_members(session, call)
-    await session.commit()
+    call = await joined_call(session, user, call_id)
+    link = await session.get(CallMediaSession, call_id)
+    if link is None:
+        media_id = await sync_members(session, call)
+        await session.commit()
+    else:
+        media_id = link.conversation_id
     conversation = await session.get(Conversation, media_id)
     return await conversation_response(session, conversation, user.id)

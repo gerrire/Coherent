@@ -118,6 +118,7 @@ interface CallPanelProps {
   onToggleSettings: () => void;
   onMediaChange: (patch: Partial<MediaPreferences>) => Promise<void>;
   onRoomReady: (room: Room | null) => void;
+  onOwnershipChange: (callId: string, owned: boolean) => void;
   onInvite: (userIds: string[]) => Promise<void>;
   onAccept: () => void;
   onEnd: () => void;
@@ -139,6 +140,7 @@ export default function CallPanel({
   onToggleSettings,
   onMediaChange,
   onRoomReady,
+  onOwnershipChange,
   onInvite,
   onAccept,
   onEnd,
@@ -161,10 +163,37 @@ export default function CallPanel({
   const [tileDensity, setTileDensity] = useState<TileDensity>("normal");
   const [viewOpen, setViewOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [ownership, setOwnership] = useState<"checking" | "local" | "other">("checking");
 
-  useEffect(() => () => {
-    closeCallMessaging(currentUserId,call.id);
-  }, [call.id, currentUserId]);
+  useEffect(() => {
+    if (!call.joined_here || self?.state !== "joined") return;
+    let stopped = false;
+    let release: (() => void) | undefined;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const own = async () => {
+      if (stopped) return;
+      setOwnership("local");
+      onOwnershipChange(call.id, true);
+      await hold;
+      onOwnershipChange(call.id, false);
+      closeCallMessaging(currentUserId, call.id);
+    };
+    setOwnership("checking");
+    if (navigator.locks) {
+      void navigator.locks.request(`coherent-call-owner-${currentUserId}`, { ifAvailable: true }, async (lock) => {
+        if (stopped) return;
+        if (!lock) { setOwnership("other"); return; }
+        await own();
+      }).catch(() => { if (!stopped) setOwnership("other"); });
+    } else {
+      void own();
+    }
+    return () => {
+      stopped = true;
+      onOwnershipChange(call.id, false);
+      release?.();
+    };
+  }, [call.id, call.joined_here, currentUserId, self?.state, onOwnershipChange]);
 
   useEffect(() => {
     const syncFullscreen = () => setIsFullscreen(document.fullscreenElement === panelRef.current);
@@ -197,6 +226,16 @@ export default function CallPanel({
     } catch {
       setIsViewportFullscreen(true);
     }
+  }
+
+  if (self?.state === "joined" && (!call.joined_here || ownership !== "local")) {
+    return <aside className="call-invite" role="status">
+      <div className="call-invite-avatar"><Phone size={22} /></div>
+      <div className="call-invite-copy">
+        <strong>{title}</strong>
+        <small>{call.joined_here && ownership === "checking" ? "Подготавливаем подключение…" : "Звонок открыт в другой вкладке или на другом устройстве. Продолжи его там; для перехода сначала выйди из звонка на том устройстве."}</small>
+      </div>
+    </aside>;
   }
 
   if (incoming || call.status === "ringing" || reconnectable) {
@@ -388,11 +427,13 @@ function CallRoom({
     async function prepareEncryption() {
       if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
       if (!join?.media_conversation_id) throw new Error("Обнови клиент для защищённых звонков.");
-      const mediaKey = await callMessagingFor(currentUserId,call.id,join?.crypto_protocol??"account_mls_v1").mediaKey(call.id);
-      if (!active) return;
       const provider = new ExternalE2EEKeyProvider();
       worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
       room = new Room({ ...roomOptions, encryption: { keyProvider: provider, worker } });
+      // Warm up DNS/TLS while MLS runs; never connect/publish without its key.
+      void room.prepareConnection(join.server_url, join.token);
+      const mediaKey = await callMessagingFor(currentUserId,call.id,join?.crypto_protocol??"account_mls_v1").mediaKey(call.id);
+      if (!active) return;
       await provider.setKey(mediaKey.key);
       await room.setE2EEEnabled(true);
       const fingerprint = await keyFingerprint(mediaKey.key);

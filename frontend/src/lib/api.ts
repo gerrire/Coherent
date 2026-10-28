@@ -168,6 +168,7 @@ export interface Call {
   expires_at: string;
   answered_at: string | null;
   ended_at: string | null;
+  joined_here: boolean;
   participants: Array<{
     user_id: string;
     username: string;
