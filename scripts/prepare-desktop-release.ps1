@@ -1,5 +1,6 @@
 param(
-    [string]$Notes = 'Обновление Coherent для Windows.'
+    [string]$Notes = 'Обновление Coherent для Windows.',
+    [string]$BundleDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +25,7 @@ if ($frontendPackage.version -ne $version -or $frontendLock.version -ne $version
     throw 'The desktop version differs between Tauri, Cargo and frontend manifests. Update all package and lock files before publishing.'
 }
 
-$bundle = Join-Path $projectRoot 'frontend\src-tauri\target\release\bundle\nsis'
+$bundle = if ($BundleDirectory) { [IO.Path]::GetFullPath($BundleDirectory) } else { Join-Path $projectRoot 'frontend\src-tauri\target\release\bundle\nsis' }
 $installerName = "Coherent_${version}_x64-setup.exe"
 $installer = Join-Path $bundle $installerName
 if (-not (Test-Path -LiteralPath $installer)) {

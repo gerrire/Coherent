@@ -1,12 +1,11 @@
 # Coherent Desktop 0.1.6
 
-- Replace the polling-based window move loop with native Win32 caption hit surfaces. Windows handles dragging, restore-on-drag and snapping without a JavaScript/IPC loop.
-- Add a native `HTMAXBUTTON` surface for Windows 11 Snap Layouts, sized at 46 × 36 logical pixels. Reposition after window/DPI changes, keep the resize border free, and hide native surfaces when the React titlebar is hidden for screen viewing.
-- Lower the minimum window size to 480 × 420 so half/quarter layouts can use the existing compact navigation.
-- Add a titlebar update button with a themed update panel. It uses the existing signed update workflow and still blocks installation during calls.
-- Refresh the titlebar in every theme. Add combined process, private memory and CPU metrics under client settings; WebView2 process IDs are deduplicated across auxiliary windows.
-- Position message edit/delete actions at the left centre of the bubble, with below/above fallbacks and viewport clamping. Render outside the scrolling message list to avoid clipping.
+- Перемещение окна передано Windows вместо ручного цикла опроса мыши. Добавлена нативная обработка заголовка для перетаскивания и восстановления развёрнутого окна.
+- Добавлена поддержка Snap Layouts Windows 11 на кнопке разворачивания. Минимальный размер окна уменьшен до 480 × 420 для компактных раскладок.
+- Рядом с кнопками окна появилась проверка обновлений с отдельной панелью скачивания и установки. Установка во время звонка остаётся заблокированной.
+- Обновлён заголовок окна для всех тем. В настройках отображаются общие показатели памяти, процессора и количества процессов клиента и его окон WebView2.
+- Меню редактирования и удаления сообщений выравнивается слева по центру сообщения. Если места не хватает, оно появляется снизу или сверху и остаётся в границах экрана.
 
-Windows Task Manager owns visual grouping of WebView2 processes. There is no supported WebView2 API to force all of them into one entry; a process AppUserModelID does not fix this Windows/runtime issue. The settings counters provide a combined view without disabling process isolation.
+Обновление устанавливается внутри приложения, подписано прежним ключом и сохраняет аккаунты и настройки. Группировка WebView2 в диспетчере задач зависит от Windows; показатели внутри клиента показывают общую нагрузку.
 
-Validation: frontend production build; 13 focused tests (message menu geometry, update safety, settings); Windows Rust/C++ release build and signed NSIS installer. Interactive window/Snap checks remain unverified: the execution policy rejected launching the locally built client, including after explicit user approval. This build has not been installed, pushed, published or deployed to the web service.
+Сборка Windows, 13 целевых тестов и проверка подписи пакета прошли. Проверка поведения нативного окна и Snap Layouts на реальном ПК остаётся незавершённой: среда автоматизации блокировала запуск клиента. Успешная проверка пакета не заменяет проверку установки и перезапуска внутри клиента.
