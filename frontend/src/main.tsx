@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import "./themes.css";
+import "./scrollbars.css";
 import "./upgrade.css";
 import "./components/message-interactions.css";
 import { applyTheme, loadTheme } from "./lib/theme";

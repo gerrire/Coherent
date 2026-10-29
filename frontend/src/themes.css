@@ -107,22 +107,6 @@
 }
 :root[data-theme] .sidebar-nav-friends:hover { background: var(--theme-hover); }
 
-/* Shared by the website and desktop WebView; follows theme changes immediately. */
-.conversation-list {
-  scrollbar-width: thin;
-  scrollbar-color: var(--theme-faint, var(--text-dim)) var(--theme-sidebar, var(--bg-sidebar));
-}
-.conversation-list::-webkit-scrollbar { width: 8px; }
-.conversation-list::-webkit-scrollbar-track { background: var(--theme-sidebar, var(--bg-sidebar)); }
-.conversation-list::-webkit-scrollbar-thumb {
-  border: 2px solid var(--theme-sidebar, var(--bg-sidebar));
-  border-radius: 8px;
-  background: var(--theme-faint, var(--text-dim));
-}
-.conversation-list::-webkit-scrollbar-thumb:hover { background: var(--theme-muted, var(--text-muted)); }
-@media (forced-colors: active) {
-  .conversation-list { scrollbar-color: auto; }
-}
 :root[data-theme] .sidebar-nav-friends .sidebar-nav-item:hover,
 :root[data-theme] .sidebar-nav-friends.active .sidebar-nav-item {
   background: transparent; border-color: transparent;
@@ -293,7 +277,7 @@
   outline-color: var(--theme-accent-hover);
 }
 :root[data-theme] :is(input[type="range"], input[type="checkbox"]) { accent-color: var(--theme-accent); }
-:root[data-theme] :is(.message-list, .friends-content, .media-settings-scroll,
+:root[data-theme] :is(.friends-content, .media-settings-scroll,
   .call-stage, .call-stage-sidebar, .profile-settings-content, .client-settings-body,
   .shell-popover, .participant-picker-list) {
   scrollbar-color: var(--theme-accent) var(--theme-panel);
