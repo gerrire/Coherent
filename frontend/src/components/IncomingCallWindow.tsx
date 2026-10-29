@@ -84,7 +84,7 @@ export default function IncomingCallWindow() {
     <button type="button" className="desktop-incoming-dismiss" aria-label="Закрыть окно звонка" onClick={() => {
       void invoke("desktop_close_call_overlay", { callId: currentId.current }).catch(() => setError("Не удалось закрыть окно."));
     }}><X size={16} /></button>
-    <IncomingCallCard caller={(call?.caller_display_name || call?.caller_username) ?? (error ? "Звонок недоступен" : "Подключаемся…")}
+    <IncomingCallCard showBrand caller={(call?.caller_display_name || call?.caller_username) ?? (error ? "Не удалось загрузить звонок" : "Подключаемся…")}
       error={error} busy={!call || busy} onRetry={() => { void refresh().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Не удалось обновить звонок.")); }} onDecline={() => void finish(false)} onAccept={() => void finish(true)} />
   </main>;
 }

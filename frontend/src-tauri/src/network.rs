@@ -221,6 +221,20 @@ pub async fn api_initialize_csrf(state: State<'_, Arc<NetworkState>>) -> Result<
     result
 }
 
+fn overlay_request_allowed(method: &str, path: &str) -> bool {
+    // Invitation membership needs the signed-in account ID before reading calls.
+    // Keep the auxiliary window restricted to this read and call actions.
+    (method == "GET" && matches!(path, "/api/v1/auth/me" | "/api/v1/calls/current"))
+        || (method == "POST"
+            && path.strip_prefix("/api/v1/calls/").is_some_and(|suffix| {
+                suffix.split_once('/').is_some_and(|(id, action)| {
+                    !id.is_empty()
+                        && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+                        && ["accept", "end"].contains(&action)
+                })
+            }))
+}
+
 #[tauri::command]
 pub async fn api_request(
     window: tauri::WebviewWindow,
@@ -229,19 +243,8 @@ pub async fn api_request(
     method: String,
     body: Option<Value>,
 ) -> Result<ApiReply, String> {
-    if window.label() == "call-overlay" {
-        let valid_get = method == "GET" && path == "/api/v1/calls/current";
-        let valid_action = method == "POST"
-            && path.strip_prefix("/api/v1/calls/").is_some_and(|suffix| {
-                suffix.split_once('/').is_some_and(|(id, action)| {
-                    !id.is_empty()
-                        && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
-                        && ["accept", "end"].contains(&action)
-                })
-            });
-        if !valid_get && !valid_action {
-            return Err("Недоступно в окне звонка".into());
-        }
+    if window.label() == "call-overlay" && !overlay_request_allowed(&method, &path) {
+        return Err("Недоступно в окне звонка".into());
     }
     if !path.starts_with("/api/v1/")
         || path.contains("..")
@@ -621,4 +624,36 @@ fn protect(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 fn unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
     crypt(data, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_request_allowed;
+
+    #[test]
+    fn overlay_can_load_account_then_find_and_answer_invitation() {
+        assert!(overlay_request_allowed("GET", "/api/v1/auth/me"));
+        assert!(overlay_request_allowed("GET", "/api/v1/calls/current"));
+        for action in ["accept", "end"] {
+            assert!(overlay_request_allowed(
+                "POST",
+                &format!("/api/v1/calls/123e4567-e89b-12d3-a456-426614174000/{action}")
+            ));
+        }
+    }
+
+    #[test]
+    fn overlay_cannot_change_account_or_access_other_endpoints() {
+        for (method, path) in [
+            ("POST", "/api/v1/auth/me"),
+            ("POST", "/api/v1/auth/logout"),
+            ("GET", "/api/v1/auth/me?extra=1"),
+            ("GET", "/api/v1/conversations"),
+            ("POST", "/api/v1/calls/not-an-id/accept"),
+            ("POST", "/api/v1/calls/123/accept/extra"),
+            ("POST", "/api/v1/calls/123/join"),
+        ] {
+            assert!(!overlay_request_allowed(method, path), "{method} {path}");
+        }
+    }
 }

@@ -7,11 +7,14 @@ interface IncomingCallCardProps {
   onDecline: () => void;
   onAccept: () => void;
   onRetry?: () => void;
+  showBrand?: boolean;
 }
 
-export default function IncomingCallCard({ caller, error, busy, onDecline, onAccept, onRetry }: IncomingCallCardProps) {
+export default function IncomingCallCard({ caller, error, busy, onDecline, onAccept, onRetry, showBrand = false }: IncomingCallCardProps) {
   return <div className="incoming-call-card">
-    <div className="incoming-call-avatar">{caller.slice(0, 1).toUpperCase() || "…"}</div>
+    <div className="incoming-call-avatar">{showBrand
+      ? <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
+      : caller.slice(0, 1).toUpperCase() || "…"}</div>
     <span>ВХОДЯЩИЙ ЗВОНОК</span>
     <h2>{caller}</h2>
     <p className={error ? "incoming-call-error" : undefined}>{error || "звонит тебе в Coherent"}</p>

@@ -22,6 +22,22 @@ The first registration attempt using CurrentUser/TrustedPeople failed with `0x80
 - The probe confirms package identity fixes attribution on this machine. Do not claim the full Coherent migration is validated until its installed-client regression and updater tests pass.
 - Keep the installed 0.1.10 intact for the owner's requested next-update test. A candidate may run from a separate test directory; it must not replace the installed client manually.
 
+## Certificate-free inspection of the installed client
+
+The owner subsequently accepted separate process rows instead of package grouping and ruled out obtaining a Windows signing certificate. Package identity remains optional; it is not required for Windows to enumerate the runtime processes or measure their CPU and memory.
+
+The actual installed, unpackaged 0.1.10 was launched without replacing its executable. A fresh OS process snapshot found the native host plus seven WebView2 descendants (browser, crashpad, GPU, network, storage, renderer and audio). The owner opened Task Manager's **Details** tab and filtered by `msedgeweb`; a screenshot then showed all seven matching PIDs alongside a different application's seven WebView2 processes. This directly verifies visibility in Task Manager on the owner's machine, rather than extrapolating from the earlier probe.
+
+The Details tab's current column selection did not show a memory-total column. Its narrow `Дель…` column showed mostly zero values; those must not be interpreted as the processes' total memory. Enable a memory working-set column and **Command line** for inspection. Most owned runtime rows contain `--webview-exe-name=coherent-desktop.exe`; the crashpad helper instead carries the client's `com.coherent.desktop` data-folder path. PIDs change after restarting the client, so compare a current snapshot or the client's process list.
+
+After the owner enabled the columns, a second screenshot verified nonzero working-set, private-working-set and committed-memory values for all seven owned WebView2 rows. A simultaneous OS snapshot confirmed their ownership had not changed. The command-line column is enabled, although its current width truncates the identifying arguments. This completes installed-client visibility/resource inspection in Task Manager without Windows certificate trust, package registration or a client update. It does not fix the Processes-tab group name or provide an automatic aggregate there.
+
+Filtering by `coherent` does not reliably find these rows: Task Manager's search field advertises name, publisher and PID, while their executable remains Microsoft's `msedgewebview2.exe`. Do not claim a renamed runtime or a repaired Processes-tab association. Neither has been implemented. A Windows signature is unnecessary for the verified Details-tab inspection.
+
+**Acceptance remains unmet:** the owner explicitly rejected Details-tab/PID inspection as a product solution. The requirement is recognizable, resource-bearing entries on the ordinary **Processes** tab without a production signing certificate. The friend's system reportedly shows those entries for an older client, likely 0.1.6, on an unspecified custom Windows build; its exact OS/runtime versions are not known.
+
+Comparison against 0.1.6 identified the later explicit process AUMID call as a testable difference. An additional offline native probe omitted that call; on the owner's Windows it still appeared on Processes with only about 2.4 MB for the host. This rules out removing that call as a demonstrated solution; it does not prove all differences from the older client have been tested. Installed client metadata is correctly named Coherent, its Start-menu AUMID is `com.coherent.desktop`, and the Evergreen runtime's Microsoft signature is valid. No production Task Manager fix is delivered by 0.1.11.
+
 ## References
 
 - [Microsoft WebView2 issue 5628](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5628)
