@@ -43,6 +43,7 @@ import {
   type MediaPreferences,
 } from "../lib/media";
 import FriendsPanel from "./FriendsPanel";
+import { useScrollActivity } from "../lib/useScrollActivity";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
 import IncomingCallCard from "./IncomingCallCard";
@@ -159,6 +160,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const showScrollbar = useScrollActivity();
   const [conversationQuery, setConversationQuery] = useState("");
   const [conversationError, setConversationError] = useState("");
   const [messageVersion, setMessageVersion] = useState(0);
@@ -1109,7 +1111,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         </div>
         {conversationError && <p className="conversation-error" role="alert">{conversationError}</p>}
         {visibleConversations.length > 0 ? (
-          <div className="conversation-list">
+          <div className="conversation-list" onScroll={event => showScrollbar(event.currentTarget)}>
             {visibleConversations.map((conversation) => (
               <button
                 key={conversation.id}

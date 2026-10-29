@@ -1,4 +1,5 @@
 import GroupMembersDialog from "./GroupMembersDialog";
+import { useScrollActivity } from "../lib/useScrollActivity";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Reply, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
@@ -114,6 +115,7 @@ export default function MessagesPanel({
   onFilesConsumed,
 }: MessagesPanelProps) {
   const consumedDrop = useRef<number | null>(null);
+  const showScrollbar = useScrollActivity();
   const secure = conversation.encryption === "mls";
   const [securityReady, setSecurityReady] = useState(false);
   const [securityProblem, setSecurityProblem] = useState<MessagingAccessError | null>(null);
@@ -641,6 +643,7 @@ export default function MessagesPanel({
         aria-label={`Сообщения: ${title}`}
         onScroll={(event) => {
           const element = event.currentTarget;
+          showScrollbar(element);
           nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 30;
         }}
       >

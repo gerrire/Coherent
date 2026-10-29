@@ -1,0 +1,36 @@
+/* Keep both panes identical. A transparent thumb preserves the scrollable area
+   while idle, so showing it cannot resize content or move message bubbles. */
+:root :is(.conversation-list, .message-list) {
+  --scroll-thumb: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+:root :is(.conversation-list, .message-list):is(:hover, :focus-visible, [data-scrolling]) {
+  --scroll-thumb: var(--theme-faint, var(--text-dim));
+}
+
+/* Chromium/WebView2 otherwise ignores the 5px pseudo-element width when the
+   standardized scrollbar-width is thin. Keep Firefox's thin fallback above. */
+@supports selector(::-webkit-scrollbar) {
+  :root :is(.conversation-list, .message-list) {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+  :root :is(.conversation-list, .message-list)::-webkit-scrollbar { width: 5px; height: 5px; }
+  :root :is(.conversation-list, .message-list)::-webkit-scrollbar-track { background: transparent; }
+  :root :is(.conversation-list, .message-list)::-webkit-scrollbar-thumb {
+    min-height: 32px;
+    border: 0;
+    border-radius: 5px;
+    background: var(--scroll-thumb);
+  }
+  :root :is(.conversation-list, .message-list)::-webkit-scrollbar-corner { background: transparent; }
+}
+
+@media (forced-colors: active) {
+  :root :is(.conversation-list, .message-list) {
+    --scroll-thumb: ButtonText;
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
