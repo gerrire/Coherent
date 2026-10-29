@@ -529,6 +529,12 @@ function CallMediaBridge({
   mediaRef.current = media;
 
   useEffect(() => {
+    const fallback = () => onError("Обработка микрофона перестала выдавать звук. Шумоподавление временно отключено; голос передаётся с прежней громкостью.");
+    window.addEventListener("coherent-microphone-processing-fallback", fallback);
+    return () => window.removeEventListener("coherent-microphone-processing-fallback", fallback);
+  }, [onError]);
+
+  useEffect(() => {
     if (!connected) return;
     let active = true;
     async function prepare() {

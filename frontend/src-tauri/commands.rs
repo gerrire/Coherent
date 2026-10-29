@@ -25,6 +25,7 @@ pub const COMMANDS: &[&str] = &[
     "desktop_window_drag",
     "desktop_window_frame_set_visible",
     "desktop_process_metrics",
+    "desktop_open_runtime_tasks",
     "desktop_exit",
     "desktop_send_test_notification",
     "desktop_notify",

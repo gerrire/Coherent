@@ -319,21 +319,25 @@ pub async fn desktop_show_call_overlay(
 }
 
 #[tauri::command]
-pub fn desktop_close_call_overlay(
+pub async fn desktop_close_call_overlay(
     app: AppHandle,
     state: State<'_, DesktopState>,
-    call_id: String,
+    call_id: Option<String>,
 ) -> Result<(), String> {
+    let _operation = state.overlay_operation.lock().await;
     let mut current = state
         .incoming_call_id
         .lock()
         .map_err(|_| "Не удалось закрыть окно звонка".to_string())?;
-    if current.as_deref() != Some(call_id.as_str()) {
+    // None is allowed only to dismiss an orphan with no active invitation.
+    // A late renderer must never hide a newer call's window.
+    if current.as_deref() != call_id.as_deref() {
         return Ok(());
     }
     *current = None;
+    drop(current);
     if let Some(window) = app.get_webview_window("call-overlay") {
-        window.hide().map_err(|e| e.to_string())?;
+        window.destroy().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -437,7 +441,10 @@ pub fn on_window_event(window: &Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         if window.label() == "call-overlay" {
             api.prevent_close();
-            let _ = window.hide();
+            if let Some(state) = window.app_handle().try_state::<DesktopState>() {
+                if let Ok(mut current) = state.incoming_call_id.lock() { *current = None; }
+            }
+            let _ = window.destroy();
             return;
         }
         if let Some(state) = window.app_handle().try_state::<DesktopState>() {

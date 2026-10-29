@@ -26,7 +26,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { ConnectionState, Track, type Room } from "livekit-client";
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api, displayName, conversationTitle, type Call, type Conversation, type Message, type FriendRequest, type User, type CommunityServer } from "../lib/api";
 import {
@@ -866,6 +866,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     try {
       await updateMedia({ cameraEnabled: false });
       const call = await api.acceptCall(target.id);
+      if (isTauri()) void invoke("desktop_close_call_overlay", { callId: target.id }).catch(() => undefined);
       setCurrentCall(call);
       setAvailableCalls((current) => current.map((item) => item.id === call.id ? call : item));
       setActiveConversationId(call.conversation_id);
@@ -887,6 +888,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     try {
       await updateMedia({ cameraEnabled: false }).catch(() => undefined);
       const call = await api.endCall(currentCall.id);
+      if (isTauri()) void invoke("desktop_close_call_overlay", { callId: currentCall.id }).catch(() => undefined);
       closeCallMessaging(user.id,currentCall.id);
       setCurrentCall(call.status === "active" ? call : null);
       setAvailableCalls((current) => call.status === "active"

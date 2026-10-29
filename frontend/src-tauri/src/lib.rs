@@ -7,6 +7,7 @@ mod diagnostics;
 mod e2ee;
 mod network;
 mod permissions;
+mod processes;
 mod screen_capture;
 mod shared_video;
 mod webview_health;
@@ -32,6 +33,8 @@ pub(crate) fn stop_media(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     diagnostics::initialize();
+    let context = tauri::generate_context!();
+    processes::set_identity(&context.config().identifier);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let _ = desktop::desktop_show_main(app.clone());
@@ -99,7 +102,8 @@ pub fn run() {
             desktop::desktop_show_main,
             desktop::desktop_window_drag,
             window_frame::desktop_window_frame_set_visible,
-            webview_health::desktop_process_metrics,
+            processes::desktop_process_metrics,
+            processes::desktop_open_runtime_tasks,
             desktop::desktop_exit,
             desktop::desktop_send_test_notification,
             desktop::desktop_notify,
@@ -146,7 +150,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .build(tauri::generate_context!());
+        .build(context);
     match app {
         Ok(app) => app.run(|handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
