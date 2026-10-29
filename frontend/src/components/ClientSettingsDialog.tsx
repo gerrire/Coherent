@@ -57,7 +57,7 @@ function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettings
     </div>
     <div className="desktop-settings-group">
       <strong>Звонки и уведомления</strong>
-      <label className="desktop-settings-row"><span><b>Показывать входящий звонок</b><small>Окно появится поверх других приложений.</small></span><input type="checkbox" checked={settings.raiseOnCall} disabled={busy} onChange={(event) => void save({ raiseOnCall: event.target.checked })} /></label>
+      <label className="desktop-settings-row"><span><b>Показывать входящий звонок</b><small>Без переключения фокуса. Во время игры и захвата курсора окно не появляется.</small></span><input type="checkbox" checked={settings.raiseOnCall} disabled={busy} onChange={(event) => void save({ raiseOnCall: event.target.checked })} /></label>
       <label className="desktop-settings-row"><span><b>Уведомления Windows</b><small>Сообщения и заявки. Входящий звонок появляется отдельным окном.</small></span><input type="checkbox" checked={settings.showNotifications} disabled={busy} onChange={(event) => void save({ showNotifications: event.target.checked })} /></label>
       <label className="desktop-settings-row"><span><b>Звук уведомлений</b><small>Сообщения и заявки. Звонки используют свою мелодию.</small></span><input type="checkbox" checked={settings.notificationSound} disabled={busy || !settings.showNotifications} onChange={(event) => void save({ notificationSound: event.target.checked })} /></label>
     </div>

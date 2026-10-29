@@ -266,6 +266,13 @@ pub async fn desktop_show_call_overlay(
     call_id: String,
 ) -> Result<(), String> {
     let _operation = state.overlay_operation.lock().await;
+    // Check before creating an auxiliary WebView/GPU surface over a game.
+    if let Some(reason) = crate::call_presentation::suppression_reason() {
+        crate::diagnostics::event(
+            "call.overlay_suppressed", serde_json::json!({"reason": reason}),
+        );
+        return Ok(());
+    }
     *state
         .incoming_call_id
         .lock()
@@ -285,9 +292,29 @@ pub async fn desktop_show_call_overlay(
         return Ok(());
     }
     position_call_overlay(&app, &window)?;
-    window.set_always_on_top(true).map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
+    // Recheck on the UI thread: a game may have become foreground while the
+    // WebView was being created. Never activate or make the window topmost.
+    let presentation = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let state = presentation.state::<DesktopState>();
+            if !state.incoming_call_id.lock()
+                .is_ok_and(|id| id.as_deref() == Some(expected.as_str())) {
+                return;
+            }
+            if let Some(reason) = crate::call_presentation::suppression_reason() {
+                crate::diagnostics::event(
+                    "call.overlay_suppressed", serde_json::json!({"reason": reason}),
+                );
+                return;
+            }
+            if let Err(error) = crate::call_presentation::show_without_activation(&presentation) {
+                crate::diagnostics::event(
+                    "call.overlay_failed", serde_json::json!({"error": error}),
+                );
+            }
+        })
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -326,7 +353,8 @@ async fn build_call_overlay(app: &AppHandle) -> Result<WebviewWindow, String> {
     .inner_size(340.0, 226.0)
     .resizable(false)
     .decorations(false)
-    .always_on_top(true)
+    .always_on_top(false)
+    .focused(false)
     .skip_taskbar(true)
     .shadow(true)
     .visible(false)

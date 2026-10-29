@@ -64,7 +64,7 @@ export async function desktopRaiseIncomingCall(callId: string): Promise<void> {
   try {
     if ((await getDesktopSettings()).raiseOnCall) await invoke("desktop_show_call_overlay", { callId });
   } catch {
-    // Incoming call remains visible in the client even if Windows rejects focus.
+    // The call remains in the client even when a separate window cannot be shown.
   }
 }
 
