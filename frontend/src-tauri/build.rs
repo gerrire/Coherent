@@ -1,6 +1,7 @@
 include!("commands.rs");
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=COHERENT_WINDOWS_IDENTITY_MANIFEST");
     for path in [
         "src",
         "native",
@@ -38,8 +39,19 @@ fn main() {
     println!("cargo:rustc-link-lib=ole32");
     println!("cargo:rustc-link-lib=comctl32");
     println!("cargo:rustc-link-lib=dwmapi");
+    let mut windows = tauri_build::WindowsAttributes::new();
+    if let Some(path) = std::env::var_os("COHERENT_WINDOWS_IDENTITY_MANIFEST") {
+        println!(
+            "cargo:rerun-if-changed={}",
+            std::path::Path::new(&path).display()
+        );
+        windows = windows.app_manifest(
+            std::fs::read_to_string(path).expect("identity application manifest is missing"),
+        );
+    }
     tauri_build::try_build(
         tauri_build::Attributes::new()
+            .windows_attributes(windows)
             .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
     )
     .expect("invalid desktop permission manifest");

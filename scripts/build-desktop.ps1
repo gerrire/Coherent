@@ -1,3 +1,4 @@
+param([string]$WindowsSigningCertificateThumbprint)
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -14,8 +15,17 @@ $cargoDir = Join-Path $env:USERPROFILE '.cargo\bin'
 $env:PATH = "$cargoDir;$env:PATH"
 $originalKey = $env:TAURI_SIGNING_PRIVATE_KEY
 $originalPassword = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+$originalIdentityManifest = $env:COHERENT_WINDOWS_IDENTITY_MANIFEST
 $pointer = [IntPtr]::Zero
 try {
+    $tauriArguments = @('run','tauri','--','build')
+    if ($WindowsSigningCertificateThumbprint) {
+        $identity = & (Join-Path $PSScriptRoot 'prepare-windows-identity.ps1') -CertificateThumbprint $WindowsSigningCertificateThumbprint
+        $env:COHERENT_WINDOWS_IDENTITY_MANIFEST = $identity.ManifestPath
+        $tauriArguments += @('--config',$identity.ConfigPath)
+    } elseif ($env:COHERENT_WINDOWS_IDENTITY_MANIFEST) {
+        throw 'Use -WindowsSigningCertificateThumbprint so the embedded manifest and signed installer identity cannot diverge.'
+    }
     # CI supplies the original key through secrets. Local Windows builds use
     # the same key and a password encrypted for the current Windows account.
     if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
@@ -36,7 +46,7 @@ try {
     }
     Push-Location $frontend
     try {
-        & $npm run tauri build
+        & $npm @tauriArguments
         if ($LASTEXITCODE -ne 0) { throw "Tauri build failed with exit code $LASTEXITCODE" }
         & (Join-Path $PSScriptRoot 'clean-desktop-artifacts.ps1')
     } finally {
@@ -46,4 +56,5 @@ try {
     if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
     $env:TAURI_SIGNING_PRIVATE_KEY = $originalKey
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $originalPassword
+    $env:COHERENT_WINDOWS_IDENTITY_MANIFEST = $originalIdentityManifest
 }

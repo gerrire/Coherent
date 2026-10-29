@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$bundleRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'frontend\src-tauri\target\release\bundle\nsis'))
-if (-not $bundleRoot.StartsWith($projectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Bundle directory is outside this project' }
+$targetRoot = if ($env:CARGO_TARGET_DIR) { [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR) } else { Join-Path $projectRoot 'frontend\src-tauri\target' }
+$bundleRoot = [IO.Path]::GetFullPath((Join-Path $targetRoot 'release\bundle\nsis'))
+if (-not $bundleRoot.StartsWith($targetRoot.TrimEnd('\') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Bundle directory is outside the selected Cargo target directory' }
 $config = Get-Content -LiteralPath (Join-Path $projectRoot 'frontend\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
 $version = [string]$config.version
 if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid package metadata' }

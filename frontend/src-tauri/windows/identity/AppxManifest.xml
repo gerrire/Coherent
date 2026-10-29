@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+ xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+ xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+ xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
+ xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+ IgnorableNamespaces="uap uap10 uap11 rescap">
+ <Identity Name="Coherent.Desktop" Publisher="@@PUBLISHER@@" Version="1.0.0.0" ProcessorArchitecture="neutral"/>
+ <Properties><DisplayName>Coherent</DisplayName><PublisherDisplayName>Coherent</PublisherDisplayName><Logo>windows-identity\logo.png</Logo><uap10:AllowExternalContent>true</uap10:AllowExternalContent></Properties>
+ <Resources><Resource Language="ru-ru"/><Resource Language="en-us"/></Resources>
+ <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0"/></Dependencies>
+ <Applications><Application Id="App" Executable="coherent-desktop.exe" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App"><uap:VisualElements AppListEntry="none" DisplayName="Coherent" Description="Coherent" BackgroundColor="transparent" Square150x150Logo="windows-identity\logo.png" Square44x44Logo="windows-identity\logo.png"/></Application></Applications>
+ <Capabilities>
+  <Capability Name="internetClient"/>
+  <rescap:Capability Name="runFullTrust"/>
+  <rescap:Capability Name="unvirtualizedResources"/>
+  <uap11:Capability Name="graphicsCaptureProgrammatic"/>
+  <uap11:Capability Name="graphicsCaptureWithoutBorder"/>
+  <DeviceCapability Name="microphone"/>
+  <DeviceCapability Name="webcam"/>
+ </Capabilities>
+</Package>

@@ -294,12 +294,34 @@ pub async fn desktop_open_runtime_tasks(window: WebviewWindow) -> Result<(), Str
 }
 
 pub fn set_identity(identifier: &str) {
-    let identifier = windows::core::HSTRING::from(identifier);
+    // Keep the OS-assigned identity for sparse/full MSIX applications. An
+    // arbitrary unpackaged AUMID must not replace the packaged application's ID.
+    let packaged = unsafe {
+        use windows::Win32::Storage::Packaging::Appx::GetCurrentApplicationUserModelId;
+        let mut length = 0;
+        let _ = GetCurrentApplicationUserModelId(&mut length, None);
+        if length > 0 && length <= 4096 {
+            let mut buffer = vec![0u16; length as usize];
+            GetCurrentApplicationUserModelId(
+                &mut length,
+                Some(windows::core::PWSTR(buffer.as_mut_ptr())),
+            )
+            .is_ok()
+            .then(|| {
+                String::from_utf16_lossy(
+                    &buffer[..buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len())],
+                )
+            })
+        } else {
+            None
+        }
+    };
+    let identifier = windows::core::HSTRING::from(packaged.as_deref().unwrap_or(identifier));
     let result =
         unsafe { windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(&identifier) };
     crate::diagnostics::event(
         "app.windows_identity",
-        serde_json::json!({"applied": result.is_ok()}),
+        serde_json::json!({"applied": result.is_ok(), "packaged": packaged.is_some()}),
     );
 }
 
