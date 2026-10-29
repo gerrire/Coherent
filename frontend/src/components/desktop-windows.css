@@ -37,6 +37,9 @@
 .desktop-process-details { margin: 12px 0; }
 .desktop-process-details summary { cursor: pointer; color: var(--theme-text); font-size: 12px; }
 .desktop-process-table { margin-top: 12px; overflow-x: auto; }
+/* Horizontal overflow creates a scroll container on both axes. Let vertical
+   wheel/touchpad input reach the settings pane instead of trapping it here. */
+.tauri-main-window .desktop-process-table { overscroll-behavior-y: auto; }
 .desktop-process-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 11px; font-variant-numeric: tabular-nums; }
 .desktop-process-table :is(th, td) { padding: 9px 6px; border-bottom: 1px solid var(--theme-border); }
 .desktop-process-table th { color: var(--theme-muted); font-weight: 500; }
