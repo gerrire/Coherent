@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const plugin = vi.hoisted(() => ({ check: vi.fn(), relaunch: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: () => true }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.1.0' }));
@@ -6,8 +6,47 @@ vi.mock('@tauri-apps/plugin-updater', () => ({ check: plugin.check }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: plugin.relaunch }));
 vi.mock('@tauri-apps/plugin-autostart', () => ({ enable: vi.fn(), disable: vi.fn(), isEnabled: vi.fn() }));
 beforeEach(() => { vi.resetModules(); plugin.check.mockReset(); plugin.relaunch.mockReset(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 const release = () => ({ version: '0.1.1', body: 'Обновление клиента', currentVersion: '0.1.0',
   download: vi.fn().mockResolvedValue(undefined), install: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined) });
+
+it('prepares a signed update in the background without starting installation', async () => {
+  const candidate = release(); plugin.check.mockResolvedValue(candidate);
+  const updates = await import('../src/lib/desktop');
+  await updates.checkForUpdates(true);
+  expect(candidate.download).toHaveBeenCalledOnce();
+  expect(candidate.install).not.toHaveBeenCalled();
+  expect(updates.getUpdateState()).toMatchObject({ phase: 'ready', downloaded: true, busy: false });
+});
+
+it('defers background preparation until the running call ends', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('window', { setInterval });
+  const candidate = release(); plugin.check.mockResolvedValue(candidate);
+  const updates = await import('../src/lib/desktop');
+  updates.setUpdateMediaBusy(true); updates.startUpdateWatcher();
+  await vi.waitFor(() => expect(updates.getUpdateState().phase).toBe('available'));
+  expect(candidate.download).not.toHaveBeenCalled();
+  updates.setUpdateMediaBusy(false);
+  await vi.waitFor(() => expect(updates.getUpdateState().phase).toBe('ready'));
+  expect(candidate.download).toHaveBeenCalledOnce();
+  expect(candidate.install).not.toHaveBeenCalled();
+});
+
+it('keeps the verified package and running client when unsent work blocks restart', async () => {
+  const target = new EventTarget(); vi.stubGlobal('window', target);
+  const protect = (event: Event) => event.preventDefault();
+  target.addEventListener('coherent-before-update', protect);
+  const candidate = release(); plugin.check.mockResolvedValue(candidate);
+  const updates = await import('../src/lib/desktop');
+  await updates.checkForUpdates(true); await updates.installUpdate();
+  expect(candidate.install).not.toHaveBeenCalled();
+  expect(updates.getUpdateState()).toMatchObject({ phase: 'ready', downloaded: true, busy: false });
+  target.removeEventListener('coherent-before-update', protect);
+  await updates.installUpdate();
+  expect(candidate.download).toHaveBeenCalledOnce();
+  expect(candidate.install).toHaveBeenCalledWith({ restartAfterInstall: true });
+});
 
 it('keeps a running call intact when the user clicks install', async () => {
   const candidate = release(); plugin.check.mockResolvedValue(candidate);

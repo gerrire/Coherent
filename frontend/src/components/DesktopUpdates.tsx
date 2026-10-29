@@ -11,7 +11,7 @@ export function DesktopUpdateSettings() {
   return <section className="desktop-update-card" aria-label="Обновления приложения">
     <header><strong><RefreshCw size={17} />Обновления приложения</strong><span>Версия {update.currentVersion || "…"}</span></header>
     {update.available && <h3>Доступна версия {update.version}</h3>}
-    <p role="status" aria-live="polite">{update.status || "Проверяем новые версии автоматически при запуске и каждые шесть часов."}</p>
+    <p role="status" aria-live="polite">{update.status || "Проверяем обновления при запуске и каждые шесть часов, скачиваем и проверяем их в фоне. Для установки останется перезапустить приложение."}</p>
     {update.phase === "downloading" && <div className="desktop-update-progress">
       <progress aria-label="Загрузка обновления" max={100} value={update.progress ?? undefined} />
       <span>{update.progress !== null ? `${update.progress}% · ` : ""}{size(update.downloadedBytes)}{update.totalBytes ? ` из ${size(update.totalBytes)}` : ""}</span>

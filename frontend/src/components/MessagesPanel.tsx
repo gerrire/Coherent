@@ -169,6 +169,13 @@ export default function MessagesPanel({
   const [draft, setDraft] = useState("");
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const [files, setFiles] = useState<File[]>([]);
+  useEffect(() => {
+    const protectComposer = (event: Event) => {
+      if (draft.trim() || files.length || sending) event.preventDefault();
+    };
+    window.addEventListener("coherent-before-update", protectComposer);
+    return () => window.removeEventListener("coherent-before-update", protectComposer);
+  }, [draft, files.length, sending]);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [friendError, setFriendError] = useState("");

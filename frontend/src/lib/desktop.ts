@@ -91,6 +91,9 @@ export function setUpdateMediaBusy(value: boolean) {
       ? "Обновление скачано. Установка доступна после звонка."
       : "Обновление скачано и проверено. Можно установить и перезапустить приложение." } : {}),
   });
+  // A startup/periodic check may have found an update during a call. Prepare it
+  // once media becomes idle, without installing or restarting automatically.
+  if (!value && watcherStarted && updateState.phase === "available") void downloadUpdate();
 }
 
 export function setDesktopMediaActive(active: boolean) {
@@ -141,6 +144,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
   } finally {
     setUpdateState({ busy: false });
   }
+  if (silent && !mediaBusy && updateState.phase === "available") await downloadUpdate();
 }
 
 export async function downloadUpdate(): Promise<void> {
@@ -183,6 +187,10 @@ export async function installUpdate(): Promise<void> {
   try {
     // On Windows the verified installer closes this process and restarts the
     // installed client. A separate relaunch races with the installer replacing it.
+    if (typeof window !== "undefined" && !window.dispatchEvent(new Event("coherent-before-update", { cancelable: true }))) {
+      setUpdateState({ busy: false, phase: "ready", status: "Есть неотправленное сообщение или вложение. Заверши работу с ним перед перезапуском." });
+      return;
+    }
     await selected.install({ restartAfterInstall: true });
   } catch {
     // The native installer may have consumed its bytes before failing to launch.

@@ -44,6 +44,7 @@ import {
 } from "../lib/media";
 import FriendsPanel from "./FriendsPanel";
 import { useScrollActivity } from "../lib/useScrollActivity";
+import { clearUpdateConversation, readUpdateConversation, rememberUpdateConversation } from "../lib/updateLocation";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ClientSettingsDialog, { type ClientSettingsSection } from "./ClientSettingsDialog";
 import IncomingCallCard from "./IncomingCallCard";
@@ -71,6 +72,7 @@ type ShellPopover = "workspace" | "notifications" | "help" | null;
 const CallPanel = lazy(() => import("./CallPanel"));
 
 export default function ChatShell({ user, onLogout, onUserChange }: ChatShellProps) {
+  const [updateConversation] = useState(() => isTauri() ? readUpdateConversation(user.id) : null);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [servers, setServers] = useState<CommunityServer[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
@@ -101,14 +103,14 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   useEffect(() => { void refreshServers().catch(() => undefined); }, [refreshServers]);
   useEffect(() => {
     if (linkedChannelOpened.current) return;
-    const linkedId = new URLSearchParams(window.location.search).get("conversation");
+    const linkedId = new URLSearchParams(window.location.search).get("conversation") ?? updateConversation;
     const server = servers.find((item) => item.channels.some((channel) => channel.conversation_id === linkedId));
     const channel = server?.channels.find((item) => item.conversation_id === linkedId);
     if (server && channel) {
       linkedChannelOpened.current = true;
       void openChannel(server, channel.id);
     }
-  }, [servers]);
+  }, [servers, updateConversation]);
   const [section, setSection] = useState<Section>("messages");
   const [showWelcome, setShowWelcome] = useState(false);
   const [friendsInitialTab, setFriendsInitialTab] = useState<FriendsTab>("search");
@@ -200,6 +202,13 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   sectionRef.current = section;
   conversationsRef.current = conversations;
   popoverRef.current = popover;
+  useEffect(() => {
+    if (!isTauri()) return;
+    clearUpdateConversation(user.id);
+    const saveLocation = () => rememberUpdateConversation(user.id, activeConversationRef.current);
+    window.addEventListener("coherent-before-update", saveLocation);
+    return () => window.removeEventListener("coherent-before-update", saveLocation);
+  }, [user.id]);
   dismissedNotificationIdsRef.current = dismissedNotificationIds;
   const initial = displayName(user).slice(0, 1).toUpperCase();
   const selectedConversation = showWelcome ? undefined : channelConversation?.id === activeConversationId ? channelConversation : conversations.find((item) => item.id === activeConversationId);
@@ -315,10 +324,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const refreshConversations = useCallback(async () => {
     const result = await api.conversations();
     setConversations(result.conversations);
-    const linkedId = new URLSearchParams(window.location.search).get("conversation");
+    const linkedId = new URLSearchParams(window.location.search).get("conversation") ?? updateConversation;
     setActiveConversationId((current) => current ?? result.conversations.find((item) => item.id === linkedId)?.id ?? result.conversations[0]?.id ?? null);
     setConversationError("");
-  }, []);
+  }, [updateConversation]);
 
   const refreshPresence = useCallback(async () => {
     const result = await api.presence();
