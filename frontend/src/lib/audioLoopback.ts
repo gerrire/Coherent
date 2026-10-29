@@ -29,7 +29,7 @@ export async function createAudioLoopback(track: MediaStreamTrack, signal: Abort
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     if (signal.aborted) throw new DOMException("Проверка отменена", "AbortError");
-    sender.addTrack(track, new MediaStream([track]));
+    const publication = sender.addTrack(track, new MediaStream([track]));
     await sender.setLocalDescription(await sender.createOffer());
     await receiver.setRemoteDescription(sender.localDescription!);
     for (const candidate of pendingToReceiver) await receiver.addIceCandidate(candidate);
@@ -39,7 +39,8 @@ export async function createAudioLoopback(track: MediaStreamTrack, signal: Abort
     const remoteTrack = await Promise.race([gotTrack, new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("Локальная передача WebRTC не запустилась.")), 5000);
     })]);
-    return { track: remoteTrack, close: () => { signal.removeEventListener("abort", close); close(); },
+    return { track: remoteTrack, replaceTrack: (next: MediaStreamTrack) => publication.replaceTrack(next),
+      close: () => { signal.removeEventListener("abort", close); close(); },
       receivedStats: async () => {
         const stats = await receiver.getStats();
         const sourceStats = await sender.getStats();

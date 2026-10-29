@@ -11,11 +11,26 @@ const loadedWorklets = new WeakMap<AudioContext, Promise<void>>();
 const loadedRnnoiseWorklets = new WeakMap<AudioContext, Promise<void>>();
 let rnnoiseBinary: Promise<ArrayBuffer> | undefined;
 
-function loadRnnoiseProcessor(context: AudioContext): Promise<ArrayBuffer> {
+function loadRnnoiseBinary(): Promise<ArrayBuffer> {
   rnnoiseBinary ??= loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl }).catch((error: unknown) => {
     rnnoiseBinary = undefined;
     throw error;
   });
+  return rnnoiseBinary;
+}
+
+let checkedRnnoise: Promise<ArrayBuffer> | undefined;
+function checkedRnnoiseBinary(): Promise<ArrayBuffer> {
+  // The library initializes WASM asynchronously inside its worklet. Check CSP
+  // and compilation here too so an initialization failure reaches the caller.
+  checkedRnnoise ??= loadRnnoiseBinary().then(async binary => {
+    await WebAssembly.compile(binary);
+    return binary;
+  }).catch((error: unknown) => { checkedRnnoise = undefined; throw error; });
+  return checkedRnnoise;
+}
+
+function loadRnnoiseProcessor(context: AudioContext): Promise<ArrayBuffer> {
   let worklet = loadedRnnoiseWorklets.get(context);
   if (!worklet) {
     worklet = context.audioWorklet.addModule(rnnoiseWorkletUrl).catch((error: unknown) => {
@@ -24,15 +39,11 @@ function loadRnnoiseProcessor(context: AudioContext): Promise<ArrayBuffer> {
     });
     loadedRnnoiseWorklets.set(context, worklet);
   }
-  return Promise.all([rnnoiseBinary, worklet]).then(([binary]) => binary);
+  return Promise.all([checkedRnnoiseBinary(), worklet]).then(([binary]) => binary);
 }
 
 export async function prepareRnnoise(): Promise<void> {
-  rnnoiseBinary ??= loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl }).catch((error: unknown) => {
-    rnnoiseBinary = undefined;
-    throw error;
-  });
-  await rnnoiseBinary;
+  await checkedRnnoiseBinary();
 }
 
 function loadSoftGate(context: AudioContext): Promise<void> {
@@ -276,6 +287,13 @@ export async function applyMicrophoneProcessing(room: Room, volume: number, gate
     await track.setProcessor(replacement);
   } catch (error) {
     await replacement.destroy();
+    // LiveKit installs its processor reference before RTCRtpSender.replaceTrack.
+    // If replacement fails (e.g. an incompatible channel layout), do not leave
+    // the sender pointing at a stopped/invalid DSP track.
+    if (track.getProcessor() === replacement) {
+      await track.stopProcessor().catch(() => undefined);
+      if (!track.isMuted && track.sender) await track.sender.replaceTrack(track.mediaStreamTrack).catch(() => undefined);
+    }
     throw error;
   }
 }

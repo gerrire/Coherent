@@ -7,6 +7,15 @@ import { decodeVault, encodeVault } from '../src/lib/crypto/browserVault';
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false, invoke: vi.fn() }));
 afterEach(() => vi.useRealTimers());
 
+it('allows the bundled RNNoise WASM in the packaged desktop without enabling JavaScript eval', () => {
+  const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
+  const script = config.app.security.csp.split(';').map((part: string) => part.trim().split(/\s+/)).find((part: string[]) => part[0] === 'script-src');
+  expect(script).toContain("'self'");
+  expect(script).toContain("'wasm-unsafe-eval'");
+  expect(script).not.toContain("'unsafe-eval'");
+  expect(script).not.toContain("'unsafe-inline'");
+});
+
 it('reads a legacy vault and round-trips binary state and its durable outbox', () => {
   const outbox = [{id:'saved-operation',operation:'send',payload:{wire:'opaque-packet'}}];
   const legacy = new TextEncoder().encode(JSON.stringify({engine:[0,128,255,1],outbox}));

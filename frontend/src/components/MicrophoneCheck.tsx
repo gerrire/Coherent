@@ -22,6 +22,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
     let inputSource: MediaStreamAudioSourceNode | undefined;
     let inputAnalyser: AnalyserNode | undefined;
     let processor: MicrophoneProcessor | undefined;
+    let processingSkipped = false;
     let loopback: Awaited<ReturnType<typeof createAudioLoopback>> | undefined;
     const abort = new AbortController();
     let interval = 0;
@@ -57,18 +58,22 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
       inputAnalyser = context.createAnalyser(); inputAnalyser.fftSize = 1024;
       inputSource.connect(inputAnalyser);
       if (ownedStream) {
+        const rawTrack = track;
         const { MicrophoneProcessor } = await import("../lib/microphoneProcessor");
+        loopback = await createAudioLoopback(track, abort.signal);
+        if (!active) { cleanup(); return; }
         // Exercise the same DSP graph used by calls, not a separate raw-input meter.
         processor = new MicrophoneProcessor(media.microphoneVolume, media.noiseSuppression ? "noisy" : "soft", media.noiseProcessor, media.rnnoisePreset);
         try {
           await processor.init({ kind: Track.Kind.Audio, track, audioContext: context });
           track = processor.processedTrack ?? track;
+          await loopback.replaceTrack(track);
         } catch {
           await processor.destroy(); processor = undefined;
+          await loopback.replaceTrack(rawTrack);
+          processingSkipped = true;
           // Calls use the live source too if optional DSP cannot initialize.
         }
-        if (!active) { cleanup(); return; }
-        loopback = await createAudioLoopback(track, abort.signal);
         if (!active) { cleanup(); return; }
         track = loopback.track;
       }
@@ -94,7 +99,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
         setLevel(value);
         if (value > 2) {
           detected = true;
-          setStatus(live ? "Сигнал отправляемой дорожки звонка поступает." : processor?.usesFallback()
+          setStatus(live ? "Сигнал отправляемой дорожки звонка поступает." : processingSkipped || processor?.usesFallback()
             ? "Звук передаётся. Неисправное шумоподавление автоматически обойдено."
             : "Звук проходит обработку и локальную передачу WebRTC.");
         }
