@@ -369,6 +369,7 @@ function CallRoom({
 }) {
   const [join, setJoin] = useState<(CallJoin & { callId: string }) | null>(null);
   const [joinAttempt, setJoinAttempt] = useState(0);
+  const currentAttempt = useRef(0);
   const [error, setError] = useState("");
   const [mediaError, setMediaError] = useState("");
   const [keyNotice, setKeyNotice] = useState("");
@@ -418,7 +419,7 @@ function CallRoom({
   }, [call.id, joinAttempt]);
 
   useEffect(() => {
-    if (!join || join.callId !== call.id) return;
+    if (!join || join.callId !== call.id || error) return;
     let active = true;
     let room: Room | undefined;
     let worker: Worker | undefined;
@@ -475,15 +476,25 @@ function CallRoom({
       if (room) void room.disconnect();
       worker?.terminate();
     };
-  }, [join, roomOptions, call.id, currentUserId]);
+  }, [join, roomOptions, call.id, currentUserId, error]);
+
+  useEffect(() => {
+    if (connected || error) return;
+    const timer = window.setTimeout(() => {
+      closeCallMessaging(currentUserId, call.id);
+      setError("Подключение заняло слишком много времени. Попробуй ещё раз");
+    }, 40000);
+    return () => window.clearTimeout(timer);
+  }, [call.id, currentUserId, joinAttempt, connected, error]);
 
   function retryConnection() {
+    currentAttempt.current += 1;
     closeCallMessaging(currentUserId,call.id);
     setError("");
     setKeyNotice("");
     setJoin(null);
     setConnected(false);
-    setJoinAttempt((attempt) => attempt + 1);
+    setJoinAttempt(currentAttempt.current);
   }
 
   useEffect(() => {
@@ -524,7 +535,7 @@ function CallRoom({
   if (error) {
     return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>Повторить подключение</button><button onClick={onEnd}>Выйти</button></div></div></>;
   }
-  if (!join || join.callId !== call.id || !encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note">Подключаем защищённый звонок...</div></>;
+  if (!join || join.callId !== call.id || !encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note" role="status">{join ? "Согласуем ключи звонка…" : "Получаем доступ к звонку…"}</div></>;
 
   return (
     <LiveKitRoom
@@ -534,8 +545,16 @@ function CallRoom({
       connect
       audio={false}
       video={false}
-      onConnected={() => setConnected(true)}
-      onDisconnected={() => { setConnected(false); setError("Соединение со звонком завершилось. Подключись повторно."); }}
+      onConnected={() => {
+        if (currentAttempt.current !== joinAttempt) return;
+        setConnected(true);
+        if (isTauri()) void encryptedRoom.room.startAudio().catch(() => undefined);
+      }}
+      onDisconnected={() => {
+        if (currentAttempt.current !== joinAttempt) return;
+        setConnected(false);
+        setError(current => current || "Соединение со звонком завершилось. Подключись повторно.");
+      }}
       onError={(reason) => setError(reason.message)}
       onEncryptionError={(reason) => { setError(`Ошибка шифрования: ${reason.message}`); void encryptedRoom.room.disconnect(); }}
     >
@@ -596,7 +615,19 @@ function CallMediaBridge({
         );
       }
       if (selected.speakerId) {
-        await room.switchActiveDevice("audiooutput", selected.speakerId);
+        try {
+          if (!await room.switchActiveDevice("audiooutput", selected.speakerId)) {
+            throw new Error("Не удалось выбрать динамики");
+          }
+        } catch {
+          if (!active) return;
+          try {
+            await room.switchActiveDevice("audiooutput", "default");
+            if (active) onError("Выбранные динамики недоступны. Используется системный выход");
+          } catch {
+            if (active) onError("Не удалось выбрать выход звука. Проверь динамики в настройках звонка");
+          }
+        }
       }
     }
     void prepare().catch((reason: unknown) => {
