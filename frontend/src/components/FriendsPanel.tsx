@@ -133,12 +133,8 @@ export default function FriendsPanel({
   return (
     <div className="friends-panel">
       <div className="friends-heading">
-        <div>
-          <div className="friends-eyebrow"><UsersRound size={14} /> ТВОИ ЛЮДИ</div>
-          <h1>Друзья</h1>
-          <p>Находи людей, общайся и собирай свою компанию в Coherent.</p>
-        </div>
-        <div className="friends-heading-glow"><UsersRound size={28} /></div>
+        <h1>Друзья</h1>
+        <p>Поиск собеседников, список друзей и заявки.</p>
       </div>
 
       <div className="friends-tabs" role="tablist" aria-label="Разделы друзей">
@@ -229,7 +225,7 @@ export default function FriendsPanel({
 
       {tab === "all" && (
         <section className="friends-section" aria-label="Список друзей">
-          <div className="friend-list-caption">ТВОЯ КОМПАНИЯ <span>{friends.length}</span></div>
+          <div className="friend-list-caption">Все друзья <span>{friends.length}</span></div>
           {friends.length === 0 ? (
             <div className="friends-empty-state compact-empty">
               <div className="friends-empty-icon"><UsersRound size={20} /></div>

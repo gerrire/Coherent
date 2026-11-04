@@ -80,7 +80,8 @@
 :root[data-theme] :is(.channel-sidebar, .profile-settings-sidebar, .client-settings-sidebar) {
   background: var(--theme-sidebar); border-color: var(--theme-border);
 }
-:root[data-theme] :is(.content-area, .welcome-content) {
+:root[data-theme] :is(.content-area, .friends-content) { background: var(--theme-panel); }
+:root[data-theme] .welcome-content:not(.friends-content) {
   background: radial-gradient(ellipse 70% 65% at 53% 43%,
     color-mix(in srgb, var(--theme-accent) 13%, var(--theme-panel)),
     var(--theme-panel) 84%);
@@ -149,7 +150,7 @@
   background: linear-gradient(145deg, var(--theme-avatar-top), var(--theme-avatar-bottom));
   border-color: var(--theme-border); color: white;
 }
-:root[data-theme] :is(.workspace-symbol, .empty-bubble, .friends-empty-icon, .friends-heading-glow,
+:root[data-theme] :is(.workspace-symbol, .empty-bubble, .friends-empty-icon,
   .sidebar-note-icon, .progress-icon, .card-icon, .scene-core, .art-main-icon) {
   background: var(--theme-veil); border-color: var(--theme-border); color: var(--theme-accent-text);
   box-shadow: none;
@@ -210,7 +211,7 @@
   .media-settings-scroll small, .media-settings-note, .media-screen-diagnostics,
   .media-settings-heading button, .call-invite-copy small, .call-surface-title small,
   .call-sidebar-heading, .call-share-picker strong, .call-sidebar-volume,
-  .call-waiting-label, .client-settings-nav-caption, .client-settings-sidebar-note,
+  .call-waiting-label,
   .client-settings-intro) { color: var(--theme-muted); }
 :root[data-theme] :is(.field-label, .auth-footer, .secure-divider, .search-hint,
   .call-connect-note, .call-connect-error, .call-sidebar-invited,
@@ -222,12 +223,12 @@
 :root[data-theme] :is(.auth-footer, .rail-separator, .header-divider) { border-color: var(--theme-border); background-color: var(--theme-border); }
 :root[data-theme] :is(.eyebrow, .card-overline, .auth-switch button, .card-legal a, .secure-lock,
   .nav-add, .chat-friend-button,
-  .header-location > svg, .header-call-button, .friends-eyebrow, .friends-heading-glow,
+  .header-location > svg, .header-call-button,
   .sidebar-note-icon, .progress-icon, .text-button, .app-statusbar b,
   .notification-heading button, .shell-popover > button svg, .shell-popover-link,
   .profile-settings-eyebrow, .profile-settings-section-heading,
   .media-settings-heading > div svg, .participant-picker-heading > div svg,
-  .client-settings-header span, .client-settings-nav button.active svg,
+  .client-settings-nav button.active svg,
   .message-attachment a, .image-preview-header a) { color: var(--theme-accent-text); }
 :root[data-theme] :is(.auth-story h1 span, .welcome-copy h1 span) {
   color: var(--theme-accent-text); text-shadow: none;
