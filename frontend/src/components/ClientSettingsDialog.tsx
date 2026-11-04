@@ -2,7 +2,7 @@ import { useModalFocus } from "../lib/useModalFocus";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import type { Room } from "livekit-client";
-import { Bell, Check, Monitor, Settings2, SlidersHorizontal, X } from "lucide-react";
+import { Bell, Check, Monitor, SlidersHorizontal, X } from "lucide-react";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import { type AudioProcessingState, type MediaPreferences } from "../lib/media";
 import { applyTheme, loadTheme, themes } from "../lib/theme";
@@ -57,7 +57,7 @@ function DesktopSettingsPanel({ onMediaChange }: { onMediaChange: ClientSettings
     </div>
     <div className="desktop-settings-group">
       <strong>Звонки и уведомления</strong>
-      <label className="desktop-settings-row"><span><b>Показывать входящий звонок</b><small>Без переключения фокуса. Во время игры и захвата курсора окно не появляется.</small></span><input type="checkbox" checked={settings.raiseOnCall} disabled={busy} onChange={(event) => void save({ raiseOnCall: event.target.checked })} /></label>
+      <label className="desktop-settings-row"><span><b>Показывать входящий звонок</b><small>Карточка появляется поверх окон, сохраняя фокус у активного приложения.</small></span><input type="checkbox" checked={settings.raiseOnCall} disabled={busy} onChange={(event) => void save({ raiseOnCall: event.target.checked })} /></label>
       <label className="desktop-settings-row"><span><b>Уведомления Windows</b><small>Сообщения и заявки. Входящий звонок появляется отдельным окном.</small></span><input type="checkbox" checked={settings.showNotifications} disabled={busy} onChange={(event) => void save({ showNotifications: event.target.checked })} /></label>
       <label className="desktop-settings-row"><span><b>Звук уведомлений</b><small>Сообщения и заявки. Звонки используют свою мелодию.</small></span><input type="checkbox" checked={settings.notificationSound} disabled={busy || !settings.showNotifications} onChange={(event) => void save({ notificationSound: event.target.checked })} /></label>
     </div>
@@ -106,21 +106,19 @@ export default function ClientSettingsDialog({
     <div className="client-settings-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="client-settings-title" tabIndex={-1}>
       <aside className="client-settings-sidebar">
         <div className="client-settings-brand"><span className="brand-mark"><span /><span /><span /></span><strong>Когерент</strong></div>
-        <span className="client-settings-nav-caption">НАСТРОЙКИ КЛИЕНТА</span>
         <nav className="client-settings-nav" aria-label="Разделы настроек">
           <button type="button" className={section === "appearance" ? "active" : ""} onClick={() => onSectionChange("appearance")}><Monitor size={18} /> Оформление</button>
           <button type="button" className={section === "media" ? "active" : ""} onClick={() => onSectionChange("media")}><SlidersHorizontal size={18} /> Звук и видео</button>
           {isTauri() && <button type="button" className={section === "desktop" ? "active" : ""} onClick={() => onSectionChange("desktop")}><Bell size={18} /> Приложение</button>}
         </nav>
-        <p className="client-settings-sidebar-note"><Settings2 size={15} /> Настройки Coherent</p>
       </aside>
       <div className="client-settings-main">
         <header className="client-settings-header">
-          <div><span>НАСТРОЙКИ КЛИЕНТА</span><h2 id="client-settings-title">{section === "appearance" ? "Оформление" : section === "media" ? "Звук и видео" : "Приложение"}</h2></div>
+          <h2 id="client-settings-title">{section === "appearance" ? "Оформление" : section === "media" ? "Звук и видео" : "Приложение"}</h2>
           <button type="button" onClick={onClose} aria-label="Закрыть настройки"><X size={20} /></button>
         </header>
         {section === "appearance" ? <div className="client-settings-body">
-          <p className="client-settings-intro">Выбери оформление Когерента. Оно применяется сразу и сохраняется на этом устройстве.</p>
+          <p className="client-settings-intro">Цветовая тема применяется сразу и сохраняется на этом устройстве.</p>
           <div className="client-theme-grid" role="group" aria-label="Цветовая тема">
             {themes.map((option) => <button
               key={option.id}
@@ -135,7 +133,7 @@ export default function ClientSettingsDialog({
                 <span className="client-theme-preview-sidebar"><i /><i /><i /></span>
                 <span className="client-theme-preview-content"><i /><i /><i /></span>
               </span>
-              <span className="client-theme-name"><i style={{ background: option.color }} />{option.label}{theme === option.id && <Check size={16} />}</span>
+              <span className="client-theme-name"><i style={{ background: option.color }} /><span>{option.label}</span>{theme === option.id && <Check size={16} />}</span>
             </button>)}
           </div>
         </div> : section === "desktop" ? <DesktopSettingsPanel onMediaChange={onMediaChange} /> : <div className="client-settings-media">

@@ -1,7 +1,7 @@
 import GroupMembersDialog from "./GroupMembersDialog";
 import { useScrollActivity } from "../lib/useScrollActivity";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, FilePlus2, MessageCircle, Pencil, Reply, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
+import { Check, Clock3, FilePlus2, MessageCircle, MoreHorizontal, Pencil, Reply, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
 import { messagingFor, MessagingAccessError, type KeyReview } from "../lib/crypto/messaging";
 import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type MessageReply, type UserSearchResult } from "../lib/api";
@@ -194,6 +194,15 @@ export default function MessagesPanel({
   const highlightTimer = useRef(0);
   const historyNavigation = useRef(0);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [messageActionsId, setMessageActionsId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!messageActionsId) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Element && event.target.closest(".message-action-menu"))) setMessageActionsId(null);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [messageActionsId]);
   const [editBody, setEditBody] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [changingId, setChangingId] = useState<string | null>(null);
@@ -708,12 +717,27 @@ export default function MessagesPanel({
                   onPreview={(url) => setPreview({ url, name: attachment.filename })}
                 />)}
               </div>
-              {!secure && !message.deleted_at && <div className="message-actions" role="group" aria-label="Действия с сообщением">
-                <button type="button" aria-label="Ответить на сообщение" title="Ответить" disabled={sending || !!pendingId} onClick={() => startReply(message)}><Reply size={16} /></button>
-                {own && <>
-                  <button type="button" aria-label="Редактировать сообщение" title="Редактировать" disabled={!!changingId} onClick={() => { setEditingId(message.id); setEditBody(message.body); setDeletingId(null); }}><Pencil size={15} /></button>
-                  <button type="button" className="message-action-delete" aria-label="Удалить сообщение" title="Удалить" disabled={!!changingId} onClick={() => { setDeletingId(message.id); setEditingId(null); }}><Trash2 size={15} /></button>
-                </>}
+              {!secure && !message.deleted_at && <div className="message-action-menu" onBlur={event => {
+                if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setMessageActionsId(null);
+              }} onKeyDown={event => {
+                if (event.key !== "Escape" || messageActionsId !== message.id) return;
+                event.stopPropagation();
+                setMessageActionsId(null);
+                event.currentTarget.querySelector<HTMLButtonElement>(".message-action-trigger")?.focus();
+              }}>
+                <button type="button" className="message-action-trigger" aria-label="Действия с сообщением"
+                  aria-expanded={messageActionsId === message.id}
+                  aria-controls={`message-actions-${message.id}`}
+                  onClick={() => setMessageActionsId(current => current === message.id ? null : message.id)}>
+                  <MoreHorizontal size={18} />
+                </button>
+                <div id={`message-actions-${message.id}`} className="message-actions" role="group" aria-label="Действия с сообщением">
+                  <button type="button" aria-label="Ответить на сообщение" title="Ответить" disabled={sending || !!pendingId} onClick={() => { setMessageActionsId(null); startReply(message); }}><Reply size={16} /></button>
+                  {own && <>
+                    <button type="button" aria-label="Редактировать сообщение" title="Редактировать" disabled={!!changingId} onClick={() => { setMessageActionsId(null); setEditingId(message.id); setEditBody(message.body); setDeletingId(null); }}><Pencil size={15} /></button>
+                    <button type="button" className="message-action-delete" aria-label="Удалить сообщение" title="Удалить" disabled={!!changingId} onClick={() => { setMessageActionsId(null); setDeletingId(message.id); setEditingId(null); }}><Trash2 size={15} /></button>
+                  </>}
+                </div>
               </div>}
               </div>
             </div>
@@ -748,7 +772,7 @@ export default function MessagesPanel({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={conversation.kind === "group" ? `Написать в ${title}...` : `Написать ${title}...`}
+            placeholder="Написать сообщение"
             aria-label="Текст сообщения"
             maxLength={4000}
             rows={1}

@@ -14,7 +14,8 @@
 }
 .desktop-incoming-overlay .incoming-call-card p { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desktop-incoming-overlay,.desktop-incoming-overlay button { pointer-events: auto; }
-.desktop-resources dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.desktop-resources dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+@media (max-width: 600px) { .desktop-resources dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .desktop-resources dl > div { padding: 12px; border: 1px solid var(--theme-border); border-radius: 10px; background: var(--theme-panel); }
 .desktop-resources dt { font-size: 11px; color: var(--theme-muted); }
 .desktop-resources dd { margin: 6px 0 0; font-size: 19px; font-weight: 650; color: var(--theme-text); font-variant-numeric: tabular-nums; }
@@ -26,7 +27,8 @@
    wheel/touchpad input reach the settings pane instead of trapping it here. */
 .tauri-main-window .desktop-process-table { overscroll-behavior-y: auto; }
 .desktop-process-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 11px; font-variant-numeric: tabular-nums; }
-.desktop-process-table :is(th, td) { padding: 9px 6px; border-bottom: 1px solid var(--theme-border); }
+.desktop-process-table :is(th, td) { padding: 8px; border-bottom: 1px solid var(--theme-border); }
+.desktop-process-table :is(th, td):not(:first-child) { text-align: right; }
 .desktop-process-table th { color: var(--theme-muted); font-weight: 500; }
 .desktop-process-table td:not(:first-child) { white-space: nowrap; }
 .desktop-process-table td small { display: block; margin-top: 3px; font-size: 10px; color: var(--theme-muted); }
