@@ -560,8 +560,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         setMessageVersion((current) => current + 1);
       }, (data) => {
         try {
-          const payload = JSON.parse(data) as { type?: string; conversation_id?: string; removed_user_id?: string; message?: Message };
+          const payload = JSON.parse(data) as { type?: string; conversation_id?: string; removed_user_id?: string; message?: Message; call?: Pick<Call, "status" | "conversation_id"> };
           if (payload.type === "call") {
+            if (payload.call?.status === "missed" && payload.call.conversation_id === activeConversationRef.current) {
+              setMessageVersion(current => current + 1);
+            }
             window.dispatchEvent(new Event("coherent-media-membership"));
             void refreshCalls().catch(() => undefined);
             void refreshConversations().catch(() => undefined);
@@ -1282,6 +1285,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           <MessagesPanel
             conversation={selectedConversation}
             currentUserId={user.id}
+            currentUserName={displayName(user)}
             version={messageVersion}
             onSent={() => { void refreshConversations().catch(() => undefined); }}
             onRead={markConversationRead}

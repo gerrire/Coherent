@@ -1,14 +1,16 @@
 import GroupMembersDialog from "./GroupMembersDialog";
 import { useScrollActivity } from "../lib/useScrollActivity";
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, MessageCircle, MoreHorizontal, Paperclip, Pencil, Reply, Send, ShieldCheck, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { Check, Clock3, Download, FileText, MessageCircle, MoreHorizontal, Paperclip, Pencil, PhoneMissed, Play, Reply, Send, ShieldCheck, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
 import { messagingFor, MessagingAccessError, type KeyReview } from "../lib/crypto/messaging";
-import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type MessageReply, type UserSearchResult } from "../lib/api";
+import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type MessageReply, type MissedCallEvent, type UserSearchResult } from "../lib/api";
 
 interface MessagesPanelProps {
   conversation: Conversation;
   currentUserId: string;
+  currentUserName: string;
   version: number;
   onSent: () => void;
   onRead: (conversationId: string, messageId: string) => Promise<void>;
@@ -60,6 +62,20 @@ function applyMessageChange(messages: Message[], message: Message): Message[] {
 
 const MAX_VISIBLE_MESSAGES = 200;
 
+type TimelineEntry = Message | MissedCallEvent;
+
+function compareTimeline(a: TimelineEntry, b: TimelineEntry): number {
+  const seconds = Date.parse(a.created_at) - Date.parse(b.created_at);
+  // API timestamps can include microseconds while Date rounds to milliseconds.
+  const fraction = (value: string) => Number(value.match(/\.\d+/)?.[0] ?? 0);
+  return seconds || fraction(a.created_at) - fraction(b.created_at) || a.id.localeCompare(b.id);
+}
+
+function mergeMissedCalls(previous: MissedCallEvent[], next: MissedCallEvent[]): MissedCallEvent[] {
+  if (!next.length) return previous;
+  return [...new Map([...previous, ...next].map(call => [call.id, call])).values()].sort(compareTimeline);
+}
+
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" })
     .format(new Date(value));
@@ -104,6 +120,7 @@ function filesFromClipboard(clipboard: DataTransfer): File[] {
 export default function MessagesPanel({
   conversation,
   currentUserId,
+  currentUserName,
   version,
   onSent,
   onRead,
@@ -162,6 +179,7 @@ export default function MessagesPanel({
     finally { setSending(false); }
   }
   const [messages, setMessages] = useState<Message[]>([]);
+  const [missedCalls, setMissedCalls] = useState<MissedCallEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -207,6 +225,10 @@ export default function MessagesPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [changingId, setChangingId] = useState<string | null>(null);
   const [browsingHistory, setBrowsingHistory] = useState(false);
+  const timeline = useMemo(() => {
+    const ordered = [...messages, ...missedCalls].sort(compareTimeline);
+    return browsingHistory ? ordered.slice(0, MAX_VISIBLE_MESSAGES) : ordered.slice(-MAX_VISIBLE_MESSAGES);
+  }, [messages, missedCalls, browsingHistory]);
   const browsingHistoryRef = useRef(false);
   const [now, setNow] = useState(Date.now);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -325,6 +347,7 @@ export default function MessagesPanel({
       hasLoadedPage.current = false;
       nearBottom.current = true;
       setMessages([]); setSecurityReady(false); setSecurityProblem(null); setMigration(null); setMigrationError(""); pendingRef.current = null; setPendingId(null);
+      setMissedCalls([]);
       setHasMore(false);
       setDraft("");
       setFiles([]);
@@ -334,7 +357,7 @@ export default function MessagesPanel({
       setLoadError("");
       setRenaming(false);
       setReplyTarget(null); setEditingId(null); setDeletingId(null); setChangingId(null);
-      setJumpingId(null); setHighlightedId(null); pendingJump.current = null;
+      setJumpingId(null); setHighlightedId(null); setLoadingOlder(false); pendingJump.current = null;
       historyNavigation.current++; window.clearTimeout(highlightTimer.current);
       browsingHistoryRef.current = false; setBrowsingHistory(false);
     }
@@ -347,8 +370,13 @@ export default function MessagesPanel({
       }
       const decoded = await decodePage(page.messages);
       if (!active) return;
+      const firstPage = !hasLoadedPage.current;
+      const callPage = page.missed_calls ?? [];
+      setMissedCalls(current => firstPage ? callPage : browsingHistoryRef.current
+        ? current
+        : mergeMissedCalls(current, callPage).slice(-MAX_VISIBLE_MESSAGES));
       setMessages((current) => {
-        if (changed || !hasLoadedPage.current) return decoded;
+        if (changed || firstPage) return decoded;
         if (browsingHistoryRef.current) {
           const ids = new Set(current.map(message => message.id));
           return mergeMessages(current, decoded.filter(message => ids.has(message.id)));
@@ -357,7 +385,7 @@ export default function MessagesPanel({
         if (merged.length > MAX_VISIBLE_MESSAGES) setHasMore(true);
         return merged.slice(-MAX_VISIBLE_MESSAGES);
       });
-      if (!hasLoadedPage.current) {
+      if (firstPage) {
         setHasMore(page.has_more);
         hasLoadedPage.current = true;
       }
@@ -408,10 +436,10 @@ export default function MessagesPanel({
   }
 
   function returnToLatest() {
-    historyNavigation.current++; pendingJump.current = null; setJumpingId(null);
+    historyNavigation.current++; pendingJump.current = null; setJumpingId(null); setLoadingOlder(false);
     browsingHistoryRef.current = false; setBrowsingHistory(false);
     hasLoadedPage.current = false; nearBottom.current = true;
-    setMessages([]); setLoading(true); setRetry(current => current + 1);
+    setMessages([]); setMissedCalls([]); setLoading(true); setRetry(current => current + 1);
   }
 
   function startReply(message: Message) {
@@ -444,6 +472,7 @@ export default function MessagesPanel({
     if (revealMessage(messageId)) return;
     const targetConversation = conversation.id;
     const navigation = ++historyNavigation.current;
+    setLoadingOlder(false);
     setJumpingId(messageId); setError("");
     try {
       const page = await api.messagesAround(targetConversation, messageId);
@@ -452,7 +481,7 @@ export default function MessagesPanel({
       pendingJump.current = messageId; nearBottom.current = false;
       browsingHistoryRef.current = true; setBrowsingHistory(true);
       hasLoadedPage.current = true;
-      setMessages(decoded); setHasMore(page.has_more);
+      setMessages(decoded); setMissedCalls(page.missed_calls ?? []); setHasMore(page.has_more);
     } catch (reason) {
       if (conversationRef.current === targetConversation && historyNavigation.current === navigation) {
         setError(reason instanceof Error ? reason.message : "Не удалось открыть исходное сообщение");
@@ -509,15 +538,17 @@ export default function MessagesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingFiles?.nonce]);
 
-  const latestId = messages.at(-1)?.id;
+  const latestEntryId = timeline.at(-1)?.id;
+  const latestMessage = timeline.filter((entry): entry is Message => "sender_id" in entry).at(-1);
+  const latestId = latestMessage?.id;
   useEffect(() => {
     const list = listRef.current;
     if (list && nearBottom.current) list.scrollTop = list.scrollHeight;
-  }, [latestId]);
+  }, [latestEntryId]);
 
   useEffect(() => {
     function markVisibleMessages() {
-      if (document.hidden || !document.hasFocus() || !nearBottom.current || !latestId || loading || messages.at(-1)?.locked) return;
+      if (document.hidden || !document.hasFocus() || !nearBottom.current || !latestId || loading || latestMessage?.locked) return;
       const key = `${conversation.id}:${latestId}`;
       if (lastReadRef.current === key) return;
       lastReadRef.current = key;
@@ -539,36 +570,41 @@ export default function MessagesPanel({
       window.removeEventListener("focus", markVisibleMessages);
       list?.removeEventListener("scroll", onScroll);
     };
-  }, [conversation.id, latestId, loading, onRead]);
+  }, [conversation.id, latestId, latestMessage?.locked, loading, onRead]);
 
   async function loadOlder() {
-    const first = messages[0];
+    const first = timeline[0];
     if (!first || loadingOlder) return;
+    const navigation = historyNavigation.current;
+    const stillCurrent = () => conversationRef.current === conversation.id && historyNavigation.current === navigation;
     setLoadingOlder(true);
     setError("");
     const list = listRef.current;
     const oldHeight = list?.scrollHeight ?? 0;
     const oldTop = list?.scrollTop ?? 0;
-    const anchor = list?.querySelector<HTMLElement>(`[data-message-id="${first.id}"]`);
+    const anchor = list?.querySelector<HTMLElement>(`[data-timeline-id="${first.id}"]`);
     const anchorTop = anchor?.getBoundingClientRect().top;
     try {
       const page = await api.messages(conversation.id, first.id);
-      if (conversationRef.current !== conversation.id) return;
-      nearBottom.current = false;
+      if (!stillCurrent()) return;
       const decoded = await decodePage(page.messages);
+      if (!stillCurrent()) return;
+      nearBottom.current = false;
       browsingHistoryRef.current = true; setBrowsingHistory(true);
       setMessages((current) => mergeMessages(decoded, current).slice(0, MAX_VISIBLE_MESSAGES));
+      setMissedCalls(current => mergeMissedCalls(current, page.missed_calls ?? []).slice(0, MAX_VISIBLE_MESSAGES));
       setHasMore(page.has_more);
       requestAnimationFrame(() => {
-        const retained = list?.querySelector<HTMLElement>(`[data-message-id="${first.id}"]`);
+        if (!stillCurrent()) return;
+        const retained = list?.querySelector<HTMLElement>(`[data-timeline-id="${first.id}"]`);
         if (list) list.scrollTop = retained && anchorTop !== undefined
           ? oldTop + retained.getBoundingClientRect().top - anchorTop
           : oldTop + list.scrollHeight - oldHeight;
       });
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Не удалось загрузить историю.");
+      if (stillCurrent()) setError(requestError instanceof Error ? requestError.message : "Не удалось загрузить историю.");
     } finally {
-      setLoadingOlder(false);
+      if (stillCurrent()) setLoadingOlder(false);
     }
   }
 
@@ -670,37 +706,48 @@ export default function MessagesPanel({
           nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 30;
         }}
       >
-        {hasMore && (
+        {(hasMore || !browsingHistory && messages.length + missedCalls.length > MAX_VISIBLE_MESSAGES) && (
           <button className="load-messages" onClick={() => void loadOlder()} disabled={loadingOlder}>
             {loadingOlder ? "Загружаем..." : "Показать ранние сообщения"}
           </button>
         )}
         {loading && <p className="message-list-note">Загружаем беседу...</p>}
-        {!loading && messages.length === 0 && (
+        {!loading && timeline.length === 0 && (
           <div className="message-empty">
             <MessageCircle size={27} />
             <strong>Начни разговор</strong>
             <span>{conversation.kind === "group" ? "Напиши первое сообщение участникам группы." : `Напиши первое сообщение для ${title}.`}</span>
           </div>
         )}
-        {messages.map((message, index) => {
+        {timeline.map((message, index) => {
+          const previous = timeline[index - 1];
+          const startsDay = !previous || dayKey(previous.created_at) !== dayKey(message.created_at);
+          const date = startsDay && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>;
+          if ("caller_id" in message) {
+            const caller = displayName({ username: message.caller_username, display_name: message.caller_display_name });
+            return <Fragment key={message.id}>
+              {date}
+              <div className={`missed-call-row ${message.caller_id === currentUserId ? "missed-call-own" : ""}`} data-timeline-id={message.id}>
+                <div className="missed-call-card">
+                  <PhoneMissed size={17} aria-hidden="true" />
+                  <span><strong>{message.caller_id === currentUserId ? "Звонок без ответа" : "Пропущенный звонок"}</strong><small>{caller} · <time dateTime={message.created_at}>{formatTime(message.created_at)}</time></small></span>
+                </div>
+              </div>
+            </Fragment>;
+          }
           const own = message.sender_id === currentUserId;
           const sender = conversation.members.find((member) => member.id === message.sender_id);
-          const author = own ? "Ты" : sender ? displayName(sender) : "Участник";
-          const previous = messages[index - 1];
-          const startsDay = !previous || dayKey(previous.created_at) !== dayKey(message.created_at);
-          const grouped = previous && !startsDay && previous.sender_id === message.sender_id
-            && Date.parse(message.created_at) - Date.parse(previous.created_at) <= 5 * 60_000;
-          const showAuthor = conversation.kind === "group" && !own && !grouped;
+          const author = own ? currentUserName : sender ? displayName(sender) : "Участник";
+          const grouped = previous && "sender_id" in previous && !startsDay && previous.sender_id === message.sender_id;
           const attachmentsExpired = message.attachments_expired || (message.attachment_count > 0 && now >= Date.parse(message.created_at) + 3 * 24 * 60 * 60 * 1000);
           return (
             <Fragment key={message.id}>
-            {startsDay && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>}
-            <div className={`message-row ${own ? "message-own" : ""} ${grouped ? "message-grouped" : ""} ${message.deleted_at ? "message-deleted" : ""} ${highlightedId === message.id ? "message-highlighted" : ""}`} data-message-id={message.id} tabIndex={-1}>
+            {date}
+            <div className={`message-row ${own ? "message-own" : ""} ${grouped ? "message-grouped" : ""} ${message.deleted_at ? "message-deleted" : ""} ${highlightedId === message.id ? "message-highlighted" : ""}`} data-message-id={message.id} data-timeline-id={message.id} tabIndex={-1}>
               {!own && <span className="avatar avatar-user message-avatar" aria-hidden="true">{author[0]?.toUpperCase()}</span>}
               <div className="message-content">
-              <div className="message-entry">
-                <strong className={showAuthor ? "message-author" : "message-author visually-hidden"}>{author}</strong>
+                <strong className={grouped ? "message-author visually-hidden" : "message-author"}>{author}</strong>
+              <div className={`message-entry ${!attachmentsExpired && message.attachments?.length ? "message-entry-with-attachments" : ""}`}>
                 <div className="message-body">
                 {message.reply_to && !message.deleted_at && <button type="button" className="message-reply-quote" disabled={!!jumpingId} aria-label={`Перейти к сообщению: ${replyText(message.reply_to)}`} onClick={() => void jumpToMessage(message.reply_to!.id)}>
                   <span className="reply-copy"><strong>{message.reply_to.sender_id === currentUserId ? "Ты" : message.reply_to.sender_name}</strong><span>{replyText(message.reply_to)}</span></span>
@@ -819,6 +866,14 @@ export default function MessagesPanel({
   );
 }
 
+const fileSizeNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
+
+function attachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  const unit = bytes < 1024 ** 2 ? 1 : bytes < 1024 ** 3 ? 2 : 3;
+  return `${fileSizeNumber.format(bytes / 1024 ** unit)} ${["КБ", "МБ", "ГБ"][unit - 1]}`;
+}
+
 function AttachmentView({ path, attachment, accountId, onPreview }: {
   path: string;
   accountId: string;
@@ -832,9 +887,15 @@ function AttachmentView({ path, attachment, accountId, onPreview }: {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
+  const downloadPending = useRef(false);
+  const image = attachment.media_type.startsWith("image/");
+  const video = attachment.media_type.startsWith("video/");
+  const audio = attachment.media_type.startsWith("audio/");
+  const media = image || video || audio;
+  const directDownload = !media && !attachment.secure && !isTauri() ? path : "";
 
   useEffect(() => {
-    if (!attachment.media_type.startsWith("image/")) return;
+    if (!image) return;
     const element = container.current;
     if (!element) return;
     const observer = new IntersectionObserver((entries) => {
@@ -844,7 +905,7 @@ function AttachmentView({ path, attachment, accountId, onPreview }: {
     }, { rootMargin: "250px" });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [attachment.media_type]);
+  }, [image]);
 
   useEffect(() => {
     const update = () => setPageVisible(!document.hidden);
@@ -855,33 +916,59 @@ function AttachmentView({ path, attachment, accountId, onPreview }: {
   useEffect(() => {
     // Decoded full-size images can dwarf the JS heap. Keep previews only near
     // the viewport and release blobs while the desktop client is hidden.
-    const image = attachment.media_type.startsWith("image/");
     if (!requestNumber || !pageVisible || (image && !inViewport)) { setUrl(""); return; }
     setError("");
     let active = true;
     let loadedUrl = "";
     void (attachment.secure ? messagingFor(accountId).openAttachment(path, attachment.secure) : attachmentObjectUrl(path)).then((value) => {
       loadedUrl = value;
-      if (active) setUrl(value);
+      if (active) {
+        setUrl(value);
+        if (downloadPending.current) {
+          downloadPending.current = false;
+          const link = document.createElement("a");
+          link.href = value;
+          link.download = attachment.filename;
+          document.body.append(link);
+          link.click();
+          link.remove();
+        }
+      }
       else if (value.startsWith("blob:")) URL.revokeObjectURL(value);
     }).catch(() => { if (active) setError("Не удалось загрузить вложение"); });
     return () => {
       active = false;
       if (loadedUrl.startsWith("blob:")) URL.revokeObjectURL(loadedUrl);
     };
-  }, [path, requestNumber, inViewport, pageVisible]);
+  }, [path, requestNumber, inViewport, pageVisible, image, accountId, attachment.filename]);
+
+  const fileType = attachment.filename.match(/\.([a-z0-9]{1,8})$/i)?.[1].toUpperCase() ?? "Файл";
+  const downloadUrl = url || directDownload;
+  const loadingFile = requestNumber > 0 && !url && !error;
+  const actionLabel = `${!media || downloadUrl ? "Скачать" : "Открыть"} ${attachment.filename}`;
 
   return <div className="message-attachment" ref={container}>
-    {url && attachment.media_type.startsWith("image/") && <button type="button" className="message-image-preview" onClick={() => onPreview(url)} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" onLoad={event => {
+    {url && image && <button type="button" className="message-image-preview" onClick={() => onPreview(url)} aria-label={`Открыть фото: ${attachment.filename}`}><img src={url} alt={attachment.filename} loading="lazy" onLoad={event => {
       const { width, height } = event.currentTarget.getBoundingClientRect();
       setImageSize({ width, height });
     }} /></button>}
     {!url && imageSize && <div aria-hidden="true" style={{ width: imageSize.width, height: imageSize.height, maxWidth: "100%" }} />}
-    {url && attachment.media_type.startsWith("video/") && <video src={url} controls preload="metadata" />}
-    {url && attachment.media_type.startsWith("audio/") && <audio src={url} controls preload="none" />}
-    {url ? <a href={url} download={attachment.filename}>{attachment.filename} · {(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ</a>
-      : <button type="button" onClick={() => setRequestNumber((value) => value + 1)} disabled={requestNumber > 0 && !error}>
-        {error || (requestNumber ? `Загружаем ${attachment.filename}…` : `Открыть ${attachment.filename} · ${(attachment.byte_size / 1024 / 1024).toFixed(1)} МБ`)}
-      </button>}
+    {url && video && <video src={url} controls preload="metadata" />}
+    {url && audio && <audio src={url} controls preload="none" />}
+    <div className="attachment-card">
+      <span className="attachment-icon"><FileText size={19} aria-hidden="true" /></span>
+      <span className="attachment-copy">
+        <strong title={attachment.filename}>{attachment.filename}</strong>
+        <small>{fileType} · {attachmentSize(attachment.byte_size)}</small>
+      </span>
+      {downloadUrl
+        ? <a className="attachment-action" href={downloadUrl} download={attachment.filename} aria-label={actionLabel} title={actionLabel}><Download size={17} aria-hidden="true" /></a>
+        : <button className="attachment-action" type="button" aria-label={actionLabel} title={actionLabel} disabled={loadingFile} onClick={() => {
+          downloadPending.current = !media;
+          setRequestNumber(value => value + 1);
+        }}>{media ? <Play size={17} aria-hidden="true" /> : <Download size={17} aria-hidden="true" />}</button>}
+    </div>
+    {loadingFile && <small className="attachment-status" role="status">Загружаем файл…</small>}
+    {error && <small className="attachment-status" role="status">{error}</small>}
   </div>;
 }

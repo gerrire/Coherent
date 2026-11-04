@@ -100,6 +100,11 @@
   background: var(--theme-raised); border-color: var(--theme-border); color: var(--theme-text);
 }
 :root[data-theme] .message-own .message-entry { background: var(--theme-veil-strong); }
+:root[data-theme] .content-area--conversation {
+  background-image: radial-gradient(ellipse 70% 65% at 53% 43%,
+    color-mix(in srgb, var(--theme-accent) 13%, var(--theme-panel)),
+    var(--theme-panel) 84%);
+}
 :root[data-theme="purple"] .content-area--conversation,
 :root[data-theme="purple"] .content-area--conversation :is(.content-header, .message-composer) { background-color: #1b1727; }
 :root[data-theme="purple"] .app-shell .server-rail { background: #100e18; }
