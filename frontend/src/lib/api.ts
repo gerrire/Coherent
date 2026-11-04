@@ -447,6 +447,6 @@ export const api = {
     });
   },
   callCrypto: (id: string) => request<Conversation>(`/api/v1/calls/${id}/crypto`),
-  joinCall: (callId: string) =>
-    request<CallJoin>(`/api/v1/calls/${callId}/join`, { method: "POST" }),
+  joinCall: (callId: string, transfer = false) =>
+    request<CallJoin>(`/api/v1/calls/${callId}/join${transfer ? "?transfer=true" : ""}`, { method: "POST" }),
 };

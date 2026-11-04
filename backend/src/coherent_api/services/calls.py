@@ -314,7 +314,12 @@ async def accept_call(session: AsyncSession, user: User, call_id: UUID) -> CallR
 
 
 async def end_call(
-    session: AsyncSession, user: User, call_id: UUID, *, force: bool = False, expected_session: str | None = None
+    session: AsyncSession,
+    user: User,
+    call_id: UUID,
+    *,
+    force: bool = False,
+    expected_session: str | None = None,
 ) -> tuple[CallResponse, bool]:
     call = await get_call(session, user, call_id)
     member = await session.get(CallMember, (call_id, user.id))
@@ -433,6 +438,8 @@ async def join_call(
     call_id: UUID,
     settings: Settings,
     session_digest: str | None = None,
+    *,
+    transfer: bool = False,
 ) -> CallJoinResponse:
     # Serialize session transfers with ephemeral device registration.
     await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
@@ -440,11 +447,11 @@ async def join_call(
     member = await session.get(CallMember, (call_id, user.id))
     if call.status != "active" or is_expired(call) or member is None or member.state != "joined":
         raise CallStateError
-    # Claim once. A second login must never replace the active media identity.
-    require_call_session(session, member)
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     token = issue_join_token(settings, call.id, user.id, user.public_name)
     if member.session_digest and member.session_digest != session_digest:
+        if not transfer:
+            raise CallSessionConflictError
         devices = await session.scalars(
             select(E2eeDevice).where(
                 E2eeDevice.call_id == call.id,

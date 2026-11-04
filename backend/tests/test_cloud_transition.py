@@ -103,7 +103,10 @@ def test_call_identity_is_volatile_scoped_and_needs_no_recovery(client, csrf_tok
         == 403
     )
     other_headers = _headers(other, csrf_token)
-    assert client.post(f"/api/v1/calls/{call_id}/join", headers=other_headers).status_code == 200
+    assert client.post(f"/api/v1/calls/{call_id}/join", headers=other_headers).status_code == 409
+    assert client.post(
+        f"/api/v1/calls/{call_id}/join?transfer=true", headers=other_headers
+    ).status_code == 200
     assert client.post(f"/api/v1/calls/{call_id}/end", headers=headers).status_code == 409
     assert (
         client.get(

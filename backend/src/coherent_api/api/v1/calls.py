@@ -207,7 +207,8 @@ async def invite_call_participants(
 
 @router.post("/calls/{call_id}/join", response_model=CallJoinResponse)
 async def get_join_token(
-    call_id: UUID, request: Request, user: CurrentUser, session: SessionDep
+    call_id: UUID, request: Request, user: CurrentUser, session: SessionDep,
+    transfer: bool = False,
 ) -> CallJoinResponse:
     from coherent_api.services.crypto_policy import cloud_chats
 
@@ -229,7 +230,8 @@ async def get_join_token(
             "authorization", ""
         ).removeprefix("Bearer ")
         return await join_call(
-            session, user, call_id, request.app.state.settings, token_digest(token)
+            session, user, call_id, request.app.state.settings, token_digest(token),
+            transfer=transfer,
         )
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
@@ -237,7 +239,7 @@ async def get_join_token(
         raise HTTPException(status_code=409, detail="Этот вызов уже недоступен") from error
     except CallSessionConflictError as error:
         raise HTTPException(
-            409, "Звонок открыт на другом устройстве. Сначала выйди из него там"
+            409, "Звонок открыт на другом устройстве"
         ) from error
 
 
