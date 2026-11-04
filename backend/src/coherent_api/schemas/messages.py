@@ -104,7 +104,16 @@ class ConversationsResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class MissedCallEvent(BaseModel):
+    id: UUID
+    caller_id: UUID
+    caller_username: str
+    caller_display_name: str | None = None
+    created_at: datetime
+
+
 class MessagesResponse(BaseModel):
     messages: list[MessageResponse] = Field(default_factory=list)
+    missed_calls: list[MissedCallEvent] = Field(default_factory=list)
     has_more: bool = False
     has_newer: bool = False

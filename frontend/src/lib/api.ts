@@ -148,8 +148,17 @@ export function conversationTitle(conversation: Conversation): string {
     : (conversation.other_user ? displayName(conversation.other_user) : "Личная беседа");
 }
 
+export interface MissedCallEvent {
+  id: string;
+  caller_id: string;
+  caller_username: string;
+  caller_display_name?: string | null;
+  created_at: string;
+}
+
 export interface MessagePage {
   messages: Message[];
+  missed_calls?: MissedCallEvent[];
   has_more: boolean;
   has_newer?: boolean;
 }
@@ -393,10 +402,10 @@ export const api = {
     }),
   messages: (conversationId: string, before?: string) =>
     request<MessagePage>(
-      `/api/v1/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
+      `/api/v1/conversations/${conversationId}/messages?timeline=true${before ? `&before=${encodeURIComponent(before)}` : ""}`,
     ),
   messagesAround: (conversationId: string, messageId: string) =>
-    request<MessagePage>(`/api/v1/conversations/${conversationId}/messages?around=${encodeURIComponent(messageId)}`),
+    request<MessagePage>(`/api/v1/conversations/${conversationId}/messages?timeline=true&around=${encodeURIComponent(messageId)}`),
   markConversationRead: (conversationId: string, messageId: string) =>
     request<void>(`/api/v1/conversations/${conversationId}/read`, {
       method: "POST",

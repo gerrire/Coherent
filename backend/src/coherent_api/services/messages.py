@@ -26,6 +26,7 @@ from coherent_api.schemas.messages import (
     MessagesResponse,
 )
 from coherent_api.services.attachment_cleanup import EXPIRED_MESSAGE, is_expired
+from coherent_api.services.chat_timeline import TimelineCursorNotFoundError, timeline_page
 from coherent_api.services.conversation_access import (
     GroupMembershipError,
     conversation_member_ids,
@@ -468,61 +469,71 @@ async def list_messages(
     conversation_id: UUID,
     before: UUID | None,
     around: UUID | None = None,
+    timeline: bool = False,
 ) -> MessagesResponse:
     await get_conversation(session, current_user, conversation_id)
-    if before is not None and around is not None:
-        raise MessageCursorNotFoundError
-    query = select(Message).where(Message.conversation_id == conversation_id)
-    cursor = None
-    if before is not None or around is not None:
-        cursor = await session.get(Message, before or around)
-        if cursor is None or cursor.conversation_id != conversation_id:
-            raise MessageCursorNotFoundError
-    if cursor is not None and before is not None:
-        query = query.where(
-            or_(
-                Message.created_at < cursor.created_at,
-                and_(Message.created_at == cursor.created_at, Message.id < cursor.id),
+    missed_calls = []
+    if timeline:
+        try:
+            page, missed_calls, has_more, has_newer = await timeline_page(
+                session, current_user.id, conversation_id, before, around
             )
-        )
-
-    has_newer = False
-    if cursor is not None and around is not None:
-        older = list(
-            await session.scalars(
-                query.where(
-                    or_(
-                        Message.created_at < cursor.created_at,
-                        and_(Message.created_at == cursor.created_at, Message.id < cursor.id),
-                    )
-                )
-                .order_by(Message.created_at.desc(), Message.id.desc())
-                .limit(26)
-            )
-        )
-        newer = list(
-            await session.scalars(
-                query.where(
-                    or_(
-                        Message.created_at > cursor.created_at,
-                        and_(Message.created_at == cursor.created_at, Message.id >= cursor.id),
-                    )
-                )
-                .order_by(Message.created_at, Message.id)
-                .limit(26)
-            )
-        )
-        page = list(reversed(older[:25])) + newer[:25]
-        has_more = len(older) > 25
-        has_newer = len(newer) > 25
+        except TimelineCursorNotFoundError as error:
+            raise MessageCursorNotFoundError from error
     else:
-        messages = list(
-            await session.scalars(
-                query.order_by(Message.created_at.desc(), Message.id.desc()).limit(51)
+        if before is not None and around is not None:
+            raise MessageCursorNotFoundError
+        query = select(Message).where(Message.conversation_id == conversation_id)
+        cursor = None
+        if before is not None or around is not None:
+            cursor = await session.get(Message, before or around)
+            if cursor is None or cursor.conversation_id != conversation_id:
+                raise MessageCursorNotFoundError
+        if cursor is not None and before is not None:
+            query = query.where(
+                or_(
+                    Message.created_at < cursor.created_at,
+                    and_(Message.created_at == cursor.created_at, Message.id < cursor.id),
+                )
             )
-        )
-        page = list(reversed(messages[:50]))
-        has_more = len(messages) > 50
+
+        has_newer = False
+        if cursor is not None and around is not None:
+            older = list(
+                await session.scalars(
+                    query.where(
+                        or_(
+                            Message.created_at < cursor.created_at,
+                            and_(Message.created_at == cursor.created_at, Message.id < cursor.id),
+                        )
+                    )
+                    .order_by(Message.created_at.desc(), Message.id.desc())
+                    .limit(26)
+                )
+            )
+            newer = list(
+                await session.scalars(
+                    query.where(
+                        or_(
+                            Message.created_at > cursor.created_at,
+                            and_(Message.created_at == cursor.created_at, Message.id >= cursor.id),
+                        )
+                    )
+                    .order_by(Message.created_at, Message.id)
+                    .limit(26)
+                )
+            )
+            page = list(reversed(older[:25])) + newer[:25]
+            has_more = len(older) > 25
+            has_newer = len(newer) > 25
+        else:
+            messages = list(
+                await session.scalars(
+                    query.order_by(Message.created_at.desc(), Message.id.desc()).limit(51)
+                )
+            )
+            page = list(reversed(messages[:50]))
+            has_more = len(messages) > 50
     attachments = (
         list(
             await session.scalars(
@@ -544,6 +555,7 @@ async def list_messages(
             session,
             [visible_message(session, message, by_message.get(message.id, [])) for message in page],
         ),
+        missed_calls=missed_calls,
         has_more=has_more,
         has_newer=has_newer,
     )

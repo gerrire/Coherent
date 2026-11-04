@@ -16,6 +16,54 @@
 .message-avatar { flex-shrink: 0; }
 .message-content { position: relative; flex: 0 1 auto; min-width: 0; }
 .message-content > .message-entry { box-sizing: border-box; width: 100%; max-width: none; }
+.message-entry.message-entry-with-attachments { grid-template-columns: minmax(0, 1fr); row-gap: 5px; }
+.attachment-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  width: 302px;
+  max-width: 100%;
+  min-height: 56px;
+  padding: 5px 5px 5px 8px;
+  border: 1px solid var(--theme-border);
+  border-radius: 9px;
+  background: var(--theme-surface);
+}
+.attachment-icon, .attachment-card .attachment-action {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--theme-accent-text);
+}
+.attachment-icon { width: 34px; height: 34px; background: var(--theme-hover); }
+.attachment-card .attachment-action { width: 44px; height: 44px; background: transparent; cursor: pointer; }
+.attachment-card .attachment-action:hover:not(:disabled) { background: var(--theme-hover); color: var(--theme-text); }
+.attachment-copy { display: grid; min-width: 0; gap: 2px; }
+.attachment-copy strong { overflow: hidden; color: var(--theme-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-copy small, .attachment-status { color: var(--theme-muted); font-size: 11px; }
+.missed-call-row { display: flex; align-items: center; padding-inline-start: 35px; min-height: 48px; }
+.missed-call-row.missed-call-own { justify-content: flex-end; padding-inline-start: 0; }
+.missed-call-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(224px, 100%);
+  min-height: 44px;
+  padding: 5px 12px 5px 14px;
+  border: 1px solid color-mix(in srgb, #b96d83 28%, var(--theme-border));
+  border-radius: 12px;
+}
+.missed-call-card > svg { flex: 0 0 17px; color: #db7b90; }
+.missed-call-card > span { display: grid; min-width: 0; gap: 1px; }
+.missed-call-card strong { color: var(--theme-text); font-size: 12px; }
+.missed-call-card small { color: var(--theme-muted); font-size: 11px; overflow-wrap: anywhere; }
+.missed-call-card time { white-space: nowrap; }
+:root[data-theme="purple"] .missed-call-card { border-color: #533749; }
+:root[data-theme="purple"] .missed-call-card > svg { color: #f2a4b1; }
+:root[data-theme="purple"] .attachment-card { background: #2a223a; border-color: #57456d; }
+:root[data-theme="purple"] .attachment-icon { background: #49365f; }
 :root[data-theme] .message-deleted .message-entry p { color: var(--theme-muted); }
 .message-content .message-edit-form { max-width: 100%; }
 .message-action-trigger { display: none; }
@@ -99,6 +147,7 @@
   .message-row, .message-row.message-own { max-width: 100%; padding: 0; }
   .message-content { max-width: calc(100% - 35px); }
   .message-own .message-content { max-width: 100%; }
+  .attachment-card { width: 264px; }
   .message-content:has(.message-action-menu) .message-entry { min-height: 40px; }
   .message-content:has(.message-action-menu) .message-meta { min-height: 24px; justify-content: flex-end; padding-right: 32px; }
   .message-action-trigger {

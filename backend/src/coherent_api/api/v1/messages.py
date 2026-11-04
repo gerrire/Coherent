@@ -285,9 +285,10 @@ async def get_messages(
     session: SessionDep,
     before: UUID | None = None,
     around: UUID | None = None,
+    timeline: bool = False,
 ) -> MessagesResponse:
     try:
-        return await list_messages(session, user, conversation_id, before, around)
+        return await list_messages(session, user, conversation_id, before, around, timeline)
     except ConversationNotFoundError as error:
         raise HTTPException(status_code=404, detail="Беседа не найдена") from error
     except MessageCursorNotFoundError as error:

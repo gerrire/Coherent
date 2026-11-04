@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from coherent_api.api.v1 import calls as calls_api
 from coherent_api.core.config import Settings
 from coherent_api.models.call import Call
+from coherent_api.models.message import Message
 from coherent_api.services import call_cleanup
 
 
@@ -51,6 +52,71 @@ def _active_call(client: TestClient, csrf_token: str) -> tuple[str, str, str, st
     )
     assert accepted.status_code == 200
     return call_id, alice_id, bob_id, alice_token, bob_token
+
+
+def test_missed_call_is_a_paginated_history_entry(client: TestClient, csrf_token: str) -> None:
+    alice, alice_token = _register(client, csrf_token, "alice")
+    bob, bob_token = _register(client, csrf_token, "bob")
+    _, outsider = _register(client, csrf_token, "outsider")
+    client.cookies.delete("coherent_session")
+    response = client.post(
+        "/api/v1/conversations",
+        headers=_headers(alice_token, csrf_token),
+        json={"user_id": bob},
+    )
+    conversation_id = UUID(response.json()["id"])
+    base = datetime.now(UTC) - timedelta(minutes=5)
+
+    async def seed():
+        async with client.app.state.session_factory() as session:
+            missed = Call(
+                conversation_id=conversation_id,
+                caller_id=UUID(alice),
+                callee_id=UUID(bob),
+                status="missed",
+                created_at=base,
+                expires_at=base + timedelta(seconds=30),
+                ended_at=base + timedelta(seconds=30),
+            )
+            session.add(missed)
+            session.add_all(
+                Message(
+                    conversation_id=conversation_id,
+                    sender_id=UUID(alice),
+                    body=f"Message {index}",
+                    created_at=base + timedelta(seconds=index + 1),
+                )
+                for index in range(50)
+            )
+            await session.commit()
+            return str(missed.id)
+
+    missed_id = asyncio.run(seed())
+    url = f"/api/v1/conversations/{conversation_id}/messages"
+    headers = _headers(bob_token, csrf_token)
+    legacy = client.get(url, headers=headers).json()
+    assert len(legacy["messages"]) == 50 and not legacy["has_more"]
+    latest = client.get(url, headers=headers, params={"timeline": "true"}).json()
+    assert len(latest["messages"]) == 50 and latest["has_more"]
+    assert latest["missed_calls"] == []
+    cursor = latest["messages"][0]["id"]
+    older = client.get(url, headers=headers, params={"timeline": "true", "before": cursor}).json()
+    assert not older["messages"] and not older["has_more"]
+    assert [event["id"] for event in older["missed_calls"]] == [missed_id]
+    assert older["missed_calls"][0]["caller_username"] == "alice"
+    before_call = client.get(
+        url, headers=headers, params={"timeline": "true", "before": missed_id}
+    ).json()
+    assert not before_call["messages"] and not before_call["missed_calls"]
+    around = client.get(url, headers=headers, params={"timeline": "true", "around": cursor}).json()
+    assert around["messages"][0]["id"] == cursor
+    assert around["missed_calls"][0]["id"] == missed_id
+    assert (
+        client.get(
+            url, headers=_headers(outsider, csrf_token), params={"timeline": True}
+        ).status_code
+        == 404
+    )
 
 
 def test_leaving_disconnects_participant_and_last_exit_closes_room(
