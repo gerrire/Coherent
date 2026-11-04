@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -12,9 +13,13 @@ from test_calls import _active_call, _headers
 from coherent_api.api.v1 import calls as calls_api
 from coherent_api.models.chat_policy import ChatPolicy
 from coherent_api.models.conversation import Conversation
-from coherent_api.models.e2ee import E2eeAccount
+from coherent_api.models.e2ee import E2eeAccount, E2eeDevice
 from coherent_api.models.message import Message
+from coherent_api.models.mls import MlsState
 from coherent_api.models.user import User
+from coherent_api.schemas.mls import LeaseRequest
+from coherent_api.services.auth_security import token_digest
+from coherent_api.services.mls import lease
 from coherent_api.tools.reset_chat_history import reset
 
 
@@ -27,7 +32,7 @@ def test_call_identity_is_volatile_scoped_and_needs_no_recovery(client, csrf_tok
     )
     monkeypatch.setattr(calls_api, "remove_livekit_participant", AsyncMock())
     monkeypatch.setattr(calls_api, "close_livekit_room", AsyncMock())
-    call_id, alice, _, token, _ = _active_call(client, csrf_token)
+    call_id, alice, _, token, bob_token = _active_call(client, csrf_token)
     headers = _headers(token, csrf_token)
     joined = client.post(f"/api/v1/calls/{call_id}/join", headers=headers)
     assert joined.status_code == 200
@@ -97,13 +102,51 @@ def test_call_identity_is_volatile_scoped_and_needs_no_recovery(client, csrf_tok
         ).status_code
         == 403
     )
-    assert client.post(f"/api/v1/calls/{call_id}/end", headers=headers).status_code == 200
+    other_headers = _headers(other, csrf_token)
+    assert client.post(f"/api/v1/calls/{call_id}/join", headers=other_headers).status_code == 200
+    assert client.post(f"/api/v1/calls/{call_id}/end", headers=headers).status_code == 409
     assert (
         client.get(
-            f"/api/v1/security/key-packages/count?device_id={device['device_id']}", headers=headers
+            f"/api/v1/security/key-packages/count?device_id={device['device_id']}",
+            headers=other_headers,
         ).status_code
         == 403
     )
+    assert client.post(
+        f"/api/v1/calls/{call_id}/end", headers=_headers(bob_token, csrf_token)
+    ).status_code == 200
+
+    async def acquire_after_transfer():
+        async with client.app.state.session_factory() as session:
+            session.info["auth_session_digest"] = token_digest(other)
+            now = datetime.now(UTC)
+            replacement = E2eeDevice(
+                id=uuid4(),
+                user_id=UUID(alice),
+                signature_key=base64.b64encode(
+                    Ed25519PrivateKey.generate().public_key().public_bytes_raw()
+                ).decode(),
+                label="Replacement",
+                platform="browser",
+                approved_at=now,
+                call_id=UUID(call_id),
+            )
+            abandoned = uuid4()
+            session.add_all([replacement, MlsState(
+                conversation_id=UUID(media),
+                lease_id=abandoned,
+                lease_device_id=UUID(device["device_id"]),
+                lease_expires_at=now + timedelta(minutes=2),
+            )])
+            await session.commit()
+            user = await session.get(User, UUID(alice))
+            grant = await lease(session, user, UUID(media), LeaseRequest(
+                device_id=replacement.id, request_id=uuid4(), operation="init"
+            ))
+            assert grant["roster"] == [str(replacement.id)]
+            assert grant["lease_id"] != str(abandoned)
+
+    asyncio.run(acquire_after_transfer())
 
     async def counts():
         async with client.app.state.session_factory() as session:

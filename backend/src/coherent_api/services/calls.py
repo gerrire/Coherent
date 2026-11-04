@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from coherent_api.core.config import Settings
 from coherent_api.models.call import Call
 from coherent_api.models.call_member import CallMember
+from coherent_api.models.e2ee import E2eeDevice
 from coherent_api.models.user import User
 from coherent_api.schemas.calls import (
     CallJoinResponse,
@@ -272,6 +273,7 @@ async def accept_call(session: AsyncSession, user: User, call_id: UUID) -> CallR
         or 0
     )
     member.state = "joined"
+    member.session_digest = None
     member.joined_at = now
     member.left_at = None
     if call.status == "ringing":
@@ -287,14 +289,19 @@ async def accept_call(session: AsyncSession, user: User, call_id: UUID) -> CallR
     return await call_response(session, call)
 
 
-async def end_call(session: AsyncSession, user: User, call_id: UUID) -> tuple[CallResponse, bool]:
+async def end_call(
+    session: AsyncSession, user: User, call_id: UUID, *, expected_session: str | None = None
+) -> tuple[CallResponse, bool]:
     call = await get_call(session, user, call_id)
     member = await session.get(CallMember, (call_id, user.id))
     assert member is not None
     if call.status not in ("ringing", "active") or member.state not in ("invited", "joined"):
         return await call_response(session, call), False
+    if expected_session is not None and member.session_digest and (
+        member.session_digest != expected_session
+    ):
+        raise CallForbiddenError
     now = datetime.now(UTC)
-    was_active = False
     member.state = "declined" if member.state == "invited" else "left"
     member.left_at = now
     if call.status == "ringing" and user.id == call.caller_id:
@@ -315,7 +322,6 @@ async def end_call(session: AsyncSession, user: User, call_id: UUID) -> tuple[Ca
         )
         if not joined:
             call.status = "ended"
-            was_active = True
         elif joined == 1:
             call.expires_at = now + timedelta(minutes=LAST_PARTICIPANT_MINUTES)
     if call.status not in ("ringing", "active"):
@@ -323,7 +329,7 @@ async def end_call(session: AsyncSession, user: User, call_id: UUID) -> tuple[Ca
         await release_members(session, call.id, now)
     await sync_members(session, call)
     await session.commit()
-    return await call_response(session, call), was_active
+    return await call_response(session, call), True
 
 
 async def invite_to_call(
@@ -391,12 +397,24 @@ async def join_call(
     settings: Settings,
     session_digest: str | None = None,
 ) -> CallJoinResponse:
+    # Serialize session transfers with ephemeral device registration.
+    await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
     call = await get_call(session, user, call_id)
     member = await session.get(CallMember, (call_id, user.id))
     if call.status != "active" or is_expired(call) or member is None or member.state != "joined":
         raise CallStateError
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     token = issue_join_token(settings, call.id, user.id, user.public_name)
+    if member.session_digest and member.session_digest != session_digest:
+        devices = await session.scalars(
+            select(E2eeDevice).where(
+                E2eeDevice.call_id == call.id,
+                E2eeDevice.user_id == user.id,
+                E2eeDevice.revoked_at.is_(None),
+            )
+        )
+        for device in devices:
+            device.revoked_at = datetime.now(UTC)
     member.session_digest = session_digest
     media_id = await sync_members(session, call)
     await session.commit()

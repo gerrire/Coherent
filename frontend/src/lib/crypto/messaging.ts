@@ -51,6 +51,7 @@ export class MlsMessaging {
   close() { this.closed=true; this.crypto.close(); this.decoded.clear(); }
   private async lock<T>(work: () => Promise<T>, scope = "account"): Promise<T> {
     const guarded = async () => {
+      if (this.closed) throw new Error("Звонок уже закрыт");
       try { return await work(); }
       finally {
         const leases = [...this.acquired.values()].filter(entry => entry.conversation.id === scope);
@@ -63,7 +64,14 @@ export class MlsMessaging {
         }
       }
     };
-    if (navigator.locks) return withDeviceState(this.account,"shared",() => navigator.locks.request(`coherent-transport-v2-${this.account}-${scope}`, { mode: "exclusive" }, guarded));
+    if (navigator.locks) {
+      const name = `coherent-transport-v2-${this.account}-${scope}`;
+      // Ephemeral calls have their own vault and never need the chat vault lock.
+      if (this.callId) return navigator.locks.request(name, {
+        mode: "exclusive", signal: AbortSignal.timeout(15000),
+      }, guarded);
+      return withDeviceState(this.account, "shared", () => navigator.locks.request(name, { mode: "exclusive" }, guarded));
+    }
     if (!isTauri()) throw new MessagingAccessError("device", "Для защищённой переписки нужен современный браузер и HTTPS");
     return guarded();
   }
@@ -98,7 +106,10 @@ export class MlsMessaging {
     return this.initialization;
   }
   private async packages(): Promise<void> {
-    if (navigator.locks) return navigator.locks.request(`coherent-key-packages-v1-${this.account}`, {mode:"exclusive"}, () => this.publishPackages());
+    if (navigator.locks) {
+      const scope = this.callId ? `${this.account}-call-${this.callId}` : this.account;
+      return navigator.locks.request(`coherent-key-packages-v1-${scope}`, { mode: "exclusive" }, () => this.publishPackages());
+    }
     return this.publishPackages();
   }
   private async publishPackages(): Promise<void> {
@@ -308,7 +319,7 @@ export class MlsMessaging {
       catch (error) { const retry = !(error instanceof ApiError) || error.status >= 500 || (error.status === 409 && error.message.includes("Другая отправка")); if (!retry || attempt >= 3) throw error; await pause(1100); }
     }
   }
-  private async ensureGroup(conversation: Conversation, directory: Directory, repair = false): Promise<void> {
+  private async ensureGroup(conversation: Conversation, directory: Directory, repair = false, remaining = 4): Promise<void> {
     const desired = directory.eligible_devices; const state = directory.state;
     const local = state.group_id ? await this.crypto.execute({ operation: "group_status", conversation_id: state.group_id }) : null;
     const recover = !!state.group_id && state.roster.includes(this.device!.device_id) && (repair || !local?.result.exists);
@@ -327,7 +338,10 @@ export class MlsMessaging {
     await this.post(item);
     directory.state = (await this.directory(conversation.id)).state;
     await this.pull(conversation, directory);
-    if (!same(directory.state.roster, directory.eligible_devices)) await this.ensureGroup(conversation, directory);
+    if (!same(directory.state.roster, directory.eligible_devices)) {
+      if (remaining === 0) throw new MessagingAccessError("changed", "Состав беседы изменился. Повтори подключение");
+      await this.ensureGroup(conversation, directory, false, remaining - 1);
+    }
   }
   private async prepare(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     for (let attempt=0;;attempt++) {

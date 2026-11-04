@@ -130,10 +130,22 @@ async def answer_call(
 async def finish_call(
     call_id: UUID, request: Request, user: CurrentUser, session: SessionDep
 ) -> CallResponse:
+    return await finish_session_call(
+        call_id, request, user, session, session.info.get("auth_session_digest") or ""
+    )
+
+
+async def finish_session_call(
+    call_id: UUID, request: Request, user: CurrentUser, session: SessionDep, digest: str
+) -> CallResponse:
     try:
-        call, _ = await end_call(session, user, call_id)
+        call, changed = await end_call(session, user, call_id, expected_session=digest)
     except CallNotFoundError as error:
         raise HTTPException(status_code=404, detail="Звонок не найден") from error
+    except CallForbiddenError as error:
+        raise HTTPException(status_code=409, detail="Звонок открыт в другой сессии") from error
+    if not changed:
+        return call
     if call.status not in ("ringing", "active"):
         await close_livekit_room(request.app.state.settings, call.id)
     elif call.status == "active":

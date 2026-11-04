@@ -277,6 +277,15 @@ async def eligible_devices(session, conversation, requester=None, reset=False):
     return sorted(set(allowed) & (current | available))
 
 
+def clear_lease(state: MlsState) -> None:
+    state.lease_id = None
+    state.lease_device_id = None
+    state.lease_request_id = None
+    state.lease_nonce = None
+    state.lease_expires_at = None
+    state.lease_payload = None
+
+
 async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dict:
     if body.recover and body.operation != "reset":
         raise HTTPException(
@@ -311,6 +320,11 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
         session.add(state)
         await session.flush()
     now = datetime.now(UTC)
+    if device.call_id is not None and state.lease_device_id is not None:
+        # A transferred or departed device cannot publish its pending commit.
+        # Its reserved packages stay consumed, but the active devices can proceed.
+        if state.lease_device_id not in await desired_devices(session, conversation):
+            clear_lease(state)
     if state.lease_expires_at and state.lease_expires_at.replace(tzinfo=UTC) > now:
         if state.lease_device_id == body.device_id and state.lease_request_id == body.request_id:
             return json.loads(state.lease_payload)
@@ -746,12 +760,7 @@ async def publish(
             message_id=message.id if message else None,
         )
         session.add(event)
-        state.lease_id = None
-        state.lease_device_id = None
-        state.lease_request_id = None
-        state.lease_nonce = None
-        state.lease_expires_at = None
-        state.lease_payload = None
+        clear_lease(state)
         if not migrating:
             conversation.updated_at = now
         await session.commit()

@@ -278,7 +278,7 @@ async def terminate_session(
     await revoke_record(session, row)
     await request.app.state.message_events.disconnect_session(row.digest)
     # End only calls joined from this login, preserving other devices' calls.
-    from coherent_api.api.v1.calls import finish_call
+    from coherent_api.api.v1.calls import finish_session_call
     from coherent_api.models.call_member import CallMember
 
     calls = list(
@@ -291,7 +291,11 @@ async def terminate_session(
         )
     )
     for call_id in calls:
-        await finish_call(call_id, request, user, session)
+        try:
+            await finish_session_call(call_id, request, user, session, row.digest)
+        except HTTPException as error:
+            if error.status_code not in (404, 409):
+                raise
 
 
 @router.patch("/profile", response_model=UserResponse)
