@@ -331,6 +331,8 @@ function CallRoom({
   const [join, setJoin] = useState<(CallJoin & { callId: string }) | null>(null);
   const [joinAttempt, setJoinAttempt] = useState(0);
   const currentAttempt = useRef(0);
+  const transferRequested = useRef<string | null>(null);
+  const [transferRequired, setTransferRequired] = useState(false);
   const [error, setError] = useState("");
   const [mediaError, setMediaError] = useState("");
   const [keyNotice, setKeyNotice] = useState("");
@@ -371,10 +373,15 @@ function CallRoom({
     let active = true;
     setJoin(null);
     setEncryptedRoom(null);
-    api.joinCall(call.id).then((result) => {
+    const transfer = transferRequested.current === call.id;
+    transferRequested.current = null;
+    api.joinCall(call.id, transfer).then((result) => {
       if (active) setJoin({ ...result, callId: call.id });
     }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Не удалось подключиться к звонку.");
+      if (!active) return;
+      setTransferRequired(reason instanceof ApiError && reason.status === 409
+        && reason.message === "Звонок открыт на другом устройстве");
+      setError(reason instanceof Error ? reason.message : "Не удалось подключиться к звонку.");
     });
     return () => { active = false; };
   }, [call.id, joinAttempt]);
@@ -447,6 +454,8 @@ function CallRoom({
   }, [call.id, currentUserId, joinAttempt, connected, error]);
 
   function retryConnection() {
+    if (transferRequired) transferRequested.current = call.id;
+    setTransferRequired(false);
     currentAttempt.current += 1;
     closeCallMessaging(currentUserId,call.id);
     setError("");
@@ -492,7 +501,7 @@ function CallRoom({
   );
 
   if (error) {
-    return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>Повторить подключение</button><button onClick={onEnd}>Выйти</button></div></div></>;
+    return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>{transferRequired ? "Перенести звонок сюда" : "Повторить подключение"}</button>{!transferRequired && <button onClick={onEnd}>Выйти</button>}</div></div></>;
   }
   if (!join || join.callId !== call.id || !encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note" role="status">{join ? "Согласуем ключи звонка…" : "Получаем доступ к звонку…"}</div></>;
 

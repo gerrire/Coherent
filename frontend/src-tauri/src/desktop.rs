@@ -266,7 +266,7 @@ pub async fn desktop_show_call_overlay(
     call_id: String,
 ) -> Result<(), String> {
     let _operation = state.overlay_operation.lock().await;
-    // Check before creating an auxiliary WebView/GPU surface over a game.
+    // Exclusive fullscreen may prevent Windows from composing an overlay.
     if let Some(reason) = crate::call_presentation::suppression_reason() {
         crate::diagnostics::event(
             "call.overlay_suppressed", serde_json::json!({"reason": reason}),
@@ -293,7 +293,7 @@ pub async fn desktop_show_call_overlay(
     }
     position_call_overlay(&app, &window)?;
     // Recheck on the UI thread: a game may have become foreground while the
-    // WebView was being created. Never activate or make the window topmost.
+    // WebView was being created. The preview never activates itself.
     let presentation = window.clone();
     window
         .run_on_main_thread(move || {
@@ -390,6 +390,12 @@ pub fn desktop_theme_set(app: AppHandle, theme: String) -> Result<(), String> {
 }
 
 fn position_call_overlay(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    if let Some(area) = crate::call_presentation::foreground_work_area() {
+        let x = area.left + (area.right - area.left - size.width as i32) / 2;
+        let y = area.top + (area.bottom - area.top - size.height as i32) / 2;
+        return window.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string());
+    }
     let main = app
         .get_webview_window("main")
         .ok_or("Главное окно недоступно")?;
@@ -399,7 +405,6 @@ fn position_call_overlay(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
         .or(main.primary_monitor().map_err(|e| e.to_string())?)
         .ok_or("Монитор недоступен")?;
     let work_area = monitor.work_area();
-    let size = window.outer_size().map_err(|e| e.to_string())?;
     let x = work_area.position.x + (work_area.size.width as i32 - size.width as i32) / 2;
     let y = work_area.position.y + (work_area.size.height as i32 - size.height as i32) / 2;
     window

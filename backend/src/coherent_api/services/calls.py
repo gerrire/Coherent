@@ -38,6 +38,10 @@ class CallNotFoundError(Exception):
     pass
 
 
+class CallSessionConflictError(Exception):
+    pass
+
+
 class CallBusyError(Exception):
     pass
 
@@ -396,6 +400,8 @@ async def join_call(
     call_id: UUID,
     settings: Settings,
     session_digest: str | None = None,
+    *,
+    transfer: bool = False,
 ) -> CallJoinResponse:
     # Serialize session transfers with ephemeral device registration.
     await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
@@ -406,6 +412,8 @@ async def join_call(
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     token = issue_join_token(settings, call.id, user.id, user.public_name)
     if member.session_digest and member.session_digest != session_digest:
+        if not transfer:
+            raise CallSessionConflictError
         devices = await session.scalars(
             select(E2eeDevice).where(
                 E2eeDevice.call_id == call.id,
