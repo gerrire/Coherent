@@ -1,6 +1,6 @@
 [package]
 name = "coherent-desktop"
-version = "0.1.13"
+version = "0.1.14"
 description = "Coherent for Windows"
 authors = ["Coherent"]
 license = ""
