@@ -1,7 +1,7 @@
 import GroupMembersDialog from "./GroupMembersDialog";
 import { useScrollActivity } from "../lib/useScrollActivity";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Check, Clock3, FilePlus2, MessageCircle, MoreHorizontal, Pencil, Reply, Send, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
+import { Check, Clock3, MessageCircle, MoreHorizontal, Paperclip, Pencil, Reply, Send, ShieldCheck, Trash2, UserCheck, UserPlus, UsersRound, X } from "lucide-react";
 import ChatSecurityNotice from "./ChatSecurityNotice";
 import { messagingFor, MessagingAccessError, type KeyReview } from "../lib/crypto/messaging";
 import { apiRequest, api, displayName, attachmentObjectUrl, conversationTitle, type Conversation, type Message, type MessageReply, type UserSearchResult } from "../lib/api";
@@ -14,8 +14,8 @@ interface MessagesPanelProps {
   onRead: (conversationId: string, messageId: string) => Promise<void>;
   callError: string;
   inCall?: boolean;
+  showConversationDetails: boolean;
   onRename: (conversationId: string, name: string) => Promise<void>;
-  peerOnline?: boolean;
   incomingFiles?: { nonce: number; conversationId: string; files: File[] } | null;
   onFilesConsumed: (nonce: number) => void;
 }
@@ -109,8 +109,8 @@ export default function MessagesPanel({
   onRead,
   callError,
   inCall = false,
+  showConversationDetails,
   onRename,
-  peerOnline,
   incomingFiles,
   onFilesConsumed,
 }: MessagesPanelProps) {
@@ -225,10 +225,19 @@ export default function MessagesPanel({
     const textarea = draftRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    const height = Math.min(140, Math.max(39, textarea.scrollHeight));
+    const height = Math.min(140, Math.max(32, textarea.scrollHeight));
     textarea.style.height = `${height}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 140 ? "auto" : "hidden";
   }, [draft, conversation.id]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const observer = new ResizeObserver(() => {
+      if (nearBottom.current) list.scrollTop = list.scrollHeight;
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
 
   function addFiles(next: File[]) {
     if (sending || pendingRef.current) { setError("Сначала заверши или отмени текущую отправку"); return; }
@@ -606,11 +615,9 @@ export default function MessagesPanel({
 
   return (
     <div className="messages-panel" ref={panelRef}>
-      <div className="messages-intro" hidden={inCall}>
-        <span className="avatar avatar-user">{conversation.kind === "group" ? <UsersRound size={25} /> : title[0]?.toUpperCase()}</span>
+      <div className="messages-intro" id="conversation-details" hidden={!showConversationDetails}>
         <div className="messages-intro-copy">
           <div className="messages-intro-heading">
-            <h1>{title}</h1>
             {conversation.kind === "group" && !conversation.server_id && (
               <button className="chat-friend-button" title="Участники группы" onClick={() => setMembersOpen(true)}><UsersRound size={16} /> Участники</button>
             )}
@@ -637,7 +644,7 @@ export default function MessagesPanel({
           </div>
           <p>{conversation.server_id ? `Текстовый канал · ${conversation.members.length} участников · Файлы хранятся 3 дня.` : conversation.kind === "group"
             ? `Общий чат · ${conversation.members.map(displayName).join(", ")} · Файлы хранятся только 3 дня.`
-            : `${peerOnline ? "В сети" : "Не в сети"} · Личная беседа. Сообщения сохраняются в Coherent. Файлы хранятся только 3 дня.`}</p>
+            : "Личная беседа. Файлы хранятся 3 дня."}</p>
         </div>
       </div>
       {membersOpen && <GroupMembersDialog conversation={conversation} account={currentUserId} onClose={() => setMembersOpen(false)} onUpdated={() => { setMembersOpen(false); onSent(); }} onLeft={() => { setMembersOpen(false); onSent(); }} />}
@@ -678,23 +685,23 @@ export default function MessagesPanel({
         )}
         {messages.map((message, index) => {
           const own = message.sender_id === currentUserId;
-          const author = own ? "Ты" : (conversation.members.find((member) => member.id === message.sender_id) ? displayName(conversation.members.find((member) => member.id === message.sender_id)!) : "Участник");
+          const sender = conversation.members.find((member) => member.id === message.sender_id);
+          const author = own ? "Ты" : sender ? displayName(sender) : "Участник";
+          const previous = messages[index - 1];
+          const startsDay = !previous || dayKey(previous.created_at) !== dayKey(message.created_at);
+          const grouped = previous && !startsDay && previous.sender_id === message.sender_id
+            && Date.parse(message.created_at) - Date.parse(previous.created_at) <= 5 * 60_000;
+          const showAuthor = conversation.kind === "group" && !own && !grouped;
           const attachmentsExpired = message.attachments_expired || (message.attachment_count > 0 && now >= Date.parse(message.created_at) + 3 * 24 * 60 * 60 * 1000);
           return (
             <Fragment key={message.id}>
-            {(index === 0 || dayKey(messages[index - 1].created_at) !== dayKey(message.created_at)) && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>}
-            <div className={`message-row ${own ? "message-own" : ""} ${message.deleted_at ? "message-deleted" : ""} ${highlightedId === message.id ? "message-highlighted" : ""}`} data-message-id={message.id} key={message.id} tabIndex={-1}>
-              <span className="avatar avatar-user message-avatar">
-                {own ? "Я" : author[0]?.toUpperCase()}
-              </span>
+            {startsDay && <div className="message-date-divider"><time dateTime={message.created_at}>{dayLabel(message.created_at, now)}</time></div>}
+            <div className={`message-row ${own ? "message-own" : ""} ${grouped ? "message-grouped" : ""} ${message.deleted_at ? "message-deleted" : ""} ${highlightedId === message.id ? "message-highlighted" : ""}`} data-message-id={message.id} tabIndex={-1}>
+              {!own && <span className="avatar avatar-user message-avatar" aria-hidden="true">{author[0]?.toUpperCase()}</span>}
               <div className="message-content">
               <div className="message-entry">
-                <div className="message-meta">
-                  <strong>{author}</strong>
-                  <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
-                  {message.edited_at && !message.deleted_at && <span className="message-edited" title={new Date(message.edited_at).toLocaleString("ru-RU")}>изменено</span>}
-                  {secure && <span className="message-encryption-label">{message.crypto ? "E2EE" : "Облачная история"}</span>}
-                </div>
+                <strong className={showAuthor ? "message-author" : "message-author visually-hidden"}>{author}</strong>
+                <div className="message-body">
                 {message.reply_to && !message.deleted_at && <button type="button" className="message-reply-quote" disabled={!!jumpingId} aria-label={`Перейти к сообщению: ${replyText(message.reply_to)}`} onClick={() => void jumpToMessage(message.reply_to!.id)}>
                   <span className="reply-copy"><strong>{message.reply_to.sender_id === currentUserId ? "Ты" : message.reply_to.sender_name}</strong><span>{replyText(message.reply_to)}</span></span>
                 </button>}
@@ -716,6 +723,12 @@ export default function MessagesPanel({
                   accountId={currentUserId}
                   onPreview={(url) => setPreview({ url, name: attachment.filename })}
                 />)}
+                </div>
+                <div className="message-meta">
+                  <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+                  {message.edited_at && !message.deleted_at && <span className="message-edited" title={new Date(message.edited_at).toLocaleString("ru-RU")}>изменено</span>}
+                  {secure && <span className="message-encryption-label">{message.crypto ? "E2EE" : "Облачная история"}</span>}
+                </div>
               </div>
               {!secure && !message.deleted_at && <div className="message-action-menu" onBlur={event => {
                 if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setMessageActionsId(null);
@@ -765,7 +778,7 @@ export default function MessagesPanel({
         {files.length > 0 && <div className="composer-files">{files.map((file, index) => <span key={`${file.name}-${index}`}>{file.name}<button type="button" onClick={() => setFiles((current) => current.filter((_, position) => position !== index))} aria-label={`Убрать ${file.name}`}><X size={13} /></button></span>)}</div>}
         <div className="composer-field">
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-          <button type="button" className="composer-attach" disabled={sending || !!pendingId} onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файлы" title="Прикрепить файлы"><FilePlus2 size={19} /></button>
+          <button type="button" className="composer-attach" disabled={sending || !!pendingId} onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файлы" title="Прикрепить файлы"><Paperclip size={17} /></button>
           <textarea
             ref={draftRef}
             readOnly={sending || !!pendingId}
@@ -778,6 +791,7 @@ export default function MessagesPanel({
             rows={1}
           />
           <button
+            className="composer-submit"
             type="submit"
             aria-label="Отправить сообщение"
             title="Отправить сообщение"
@@ -787,8 +801,10 @@ export default function MessagesPanel({
           </button>
         </div>
         <div className="composer-footer">
-          <span className="composer-hint">Enter — отправить · Shift+Enter — новая строка · Ctrl+V — вставить файл или скриншот</span>
-          {!secure && !inCall && <small className="composer-security-note" title="TLS защищает передачу, сообщения шифруются при хранении на сервере. Сервер расшифровывает историю для участников беседы; это не сквозное шифрование.">Защита при передаче и хранении на сервере</small>}
+          <small className="composer-security-note" title={secure ? "Сквозное шифрование применяется к новым защищённым сообщениям." : "TLS защищает передачу, сообщения шифруются при хранении на сервере. Сервер расшифровывает историю для участников беседы; это не сквозное шифрование."}>
+            <ShieldCheck size={12} aria-hidden="true" /> {conversation.server_id ? "Текстовый канал" : conversation.kind === "group" ? "Групповая беседа" : "Личная беседа"} · файлы хранятся 3 дня
+          </small>
+          <span className="composer-hint" title="Ctrl+V — вставить файл или скриншот">Enter — отправить · Shift+Enter — новая строка</span>
         </div>
       </form>
       {preview && <div className="image-preview-backdrop" role="presentation" onMouseDown={(event) => {

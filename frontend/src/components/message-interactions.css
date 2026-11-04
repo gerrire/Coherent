@@ -98,15 +98,17 @@
 @media (max-width: 680px), (hover: none), (pointer: coarse) {
   .message-row, .message-row.message-own { max-width: 100%; padding: 0; }
   .message-content { max-width: calc(100% - 35px); }
-  .message-content:has(.message-action-menu) .message-meta { min-height: 20px; padding-right: 24px; }
+  .message-own .message-content { max-width: 100%; }
+  .message-content:has(.message-action-menu) .message-entry { min-height: 40px; }
+  .message-content:has(.message-action-menu) .message-meta { min-height: 24px; justify-content: flex-end; padding-right: 32px; }
   .message-action-trigger {
     position: absolute;
-    top: 0;
-    right: 2px;
+    bottom: 0;
+    right: 0;
     display: grid;
     place-items: center;
-    width: 32px;
-    height: 32px;
+    width: 38px;
+    height: 40px;
     padding: 0;
     border: 0;
     border-radius: 8px;
@@ -116,8 +118,9 @@
   }
   .message-action-trigger:hover, .message-action-trigger[aria-expanded="true"] { background: var(--theme-hover); color: var(--theme-text); }
   .message-actions, .message-own .message-actions {
-    top: 0;
-    right: 38px;
+    top: auto;
+    bottom: 0;
+    right: 40px;
     left: auto;
     z-index: 2;
     display: none;

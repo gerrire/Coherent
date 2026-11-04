@@ -74,6 +74,17 @@ const CallPanel = lazy(() => import("./CallPanel"));
 export default function ChatShell({ user, onLogout, onUserChange }: ChatShellProps) {
   const [updateConversation] = useState(() => isTauri() ? readUpdateConversation(user.id) : null);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const mobileMenuButton = useRef<HTMLButtonElement>(null);
+  const mobileDrawerClose = useRef<HTMLButtonElement>(null);
+  const [detailsConversationId, setDetailsConversationId] = useState<string | null>(null);
+  useEffect(() => {
+    if (mobileNavigationOpen) mobileDrawerClose.current?.focus({ preventScroll: true });
+  }, [mobileNavigationOpen]);
+
+  function closeMobileNavigation() {
+    setMobileNavigationOpen(false);
+    mobileMenuButton.current?.focus({ preventScroll: true });
+  }
   const [servers, setServers] = useState<CommunityServer[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [serverDialogOpen, setServerDialogOpen] = useState(false);
@@ -212,6 +223,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   dismissedNotificationIdsRef.current = dismissedNotificationIds;
   const initial = displayName(user).slice(0, 1).toUpperCase();
   const selectedConversation = showWelcome ? undefined : channelConversation?.id === activeConversationId ? channelConversation : conversations.find((item) => item.id === activeConversationId);
+  const headerConversation = section === "messages" ? selectedConversation : undefined;
+  const showConversationDetails = !!headerConversation && headerConversation.id === detailsConversationId;
+  const headerPeerOnline = !!headerConversation?.other_user && onlineIds.has(headerConversation.other_user.id);
   const busyInCall = Boolean(currentCall?.participants.some((participant) =>
     participant.user_id === user.id && (participant.state === "joined" || participant.state === "invited")
   ));
@@ -306,8 +320,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       if (!shell) return;
       if (window.matchMedia("(max-width: 680px), (max-height: 520px) and (pointer: coarse)").matches) {
         shell.style.setProperty("--coherent-visible-height", `${Math.round(viewport.height + viewport.offsetTop)}px`);
+        shell.toggleAttribute("data-compact-keyboard", viewport.scale === 1 && window.innerHeight - viewport.height > 100);
       } else {
         shell.style.removeProperty("--coherent-visible-height");
+        shell.removeAttribute("data-compact-keyboard");
       }
     };
     updateHeight();
@@ -1036,9 +1052,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
 
   return (
     <main className="app-shell" ref={shellRef}>
-      {mobileNavigationOpen && <button className="mobile-drawer-backdrop" aria-label="Закрыть меню бесед" onClick={() => setMobileNavigationOpen(false)} />}
-      <div className={`workspace-navigation ${mobileNavigationOpen ? "is-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape") setMobileNavigationOpen(false); }}>
-      <button className="mobile-drawer-close" aria-label="Закрыть меню бесед" onClick={() => setMobileNavigationOpen(false)}><X size={21} /></button>
+      {mobileNavigationOpen && <button className="mobile-drawer-backdrop" aria-label="Закрыть меню бесед" onClick={closeMobileNavigation} />}
+      <div id="workspace-navigation" className={`workspace-navigation ${mobileNavigationOpen ? "is-open" : ""}`} onKeyDown={(event) => { if (event.key === "Escape" && mobileNavigationOpen) closeMobileNavigation(); }}>
+      <button ref={mobileDrawerClose} className="mobile-drawer-close" aria-label="Закрыть меню бесед" onClick={closeMobileNavigation}><X size={21} /></button>
       <aside className="server-rail">
         <button className="rail-home active" aria-label="Главная Coherent" title="Главная" onClick={openHome}>
           <span className="brand-mark"><span /><span /><span /></span>
@@ -1100,12 +1116,6 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         </label>
 
         <div className="sidebar-nav">
-          <button
-            className={`sidebar-nav-item ${section === "messages" ? "active" : ""}`}
-            onClick={openMessages}
-          >
-            <MessageCircle size={18} /> Сообщения
-          </button>
           <div className={`sidebar-nav-friends ${section === "friends" ? "active" : ""}`}>
             <button className="sidebar-nav-item" onClick={() => openFriends("all")}>
               <Users size={18} /> Друзья
@@ -1115,7 +1125,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         </div>
 
         <div className="sidebar-section-title">
-          <span>БЕСЕДЫ</span>
+          <span>Беседы</span>
           <button aria-label="Создать группу" title="Создать групповой звонок" onClick={() => setShowGroupPicker(true)} disabled={busyInCall || callPending}>
             <Plus size={16} />
           </button>
@@ -1157,25 +1167,33 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         )}
 
         <div className="sidebar-bottom-note">
-          <span className="sidebar-note-icon"><SparkleGlyph /></span>
-          <div>
-            <strong>Когерент в разработке</strong>
-            <small>Мы создаём место для общения</small>
-          </div>
+          <i aria-hidden="true" />
+          <span>Когерент в разработке</span>
         </div>
         </>}
       </aside>
       </div>
 
-      <section className="content-area">
+      <section className={`content-area ${headerConversation ? "content-area--conversation" : ""}`}>
         <header className="content-header">
-          <button className="mobile-menu-toggle header-icon" onClick={() => setMobileNavigationOpen(true)} aria-label="Открыть меню бесед и серверов" aria-expanded={mobileNavigationOpen}><Menu size={22} /></button>
-          <div className="header-location">
+          <button ref={mobileMenuButton} className="mobile-menu-toggle header-icon" onClick={() => setMobileNavigationOpen(true)} aria-label="Открыть меню бесед и серверов" aria-controls="workspace-navigation" aria-expanded={mobileNavigationOpen}><Menu size={21} /></button>
+          {headerConversation ? (
+            <button className="header-contact" aria-controls="conversation-details" aria-expanded={showConversationDetails}
+              title="Сведения о беседе" onClick={() => setDetailsConversationId(showConversationDetails ? null : headerConversation.id)}>
+              <span className="avatar avatar-user" aria-hidden="true">{headerConversation.kind === "group" ? <UsersRound size={17} /> : conversationTitle(headerConversation)[0]?.toUpperCase()}</span>
+              <span className="header-contact-copy">
+                <strong>{conversationTitle(headerConversation)}</strong>
+                <small>{headerConversation.other_user && headerPeerOnline && <i aria-hidden="true" />}
+                  {headerConversation.server_id ? "Текстовый канал" : headerConversation.kind === "group" ? `Участники: ${headerConversation.members.length}` : headerPeerOnline ? "В сети" : "Не в сети"}
+                </small>
+              </span>
+            </button>
+          ) : <div className="header-location">
             <MessageCircle size={19} />
-            <span>{section === "messages" ? selectedConversation ? conversationTitle(selectedConversation) : (currentCall?.status === "active" ? "Групповой звонок" : "Сообщения") : "Друзья"}</span>
+            <span>{section === "messages" ? (currentCall?.status === "active" ? "Групповой звонок" : "Сообщения") : "Друзья"}</span>
             <span className="header-divider" />
             <span className="header-subtle">{selectedServer?.name || "Личное пространство"}</span>
-          </div>
+          </div>}
           <div className="mobile-nav" aria-label="Разделы">
             <button className={section === "messages" ? "active" : ""} onClick={openMessages} aria-label="Сообщения"><MessageCircle size={18} /></button>
             <button className={section === "friends" ? "active" : ""} onClick={() => openFriends("all")} aria-label="Друзья"><Users size={18} /></button>
@@ -1211,7 +1229,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             <button className="header-icon" aria-label="Помощь" title="Помощь" aria-expanded={popover === "help"} onClick={() => togglePopover("help")}>
               <CircleHelp size={18} />
             </button>
-            <span className="header-user">{displayName(user)}</span>
+            {!headerConversation && <span className="header-user">{displayName(user)}</span>}
           </div>
         </header>
 
@@ -1269,7 +1287,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             onRead={markConversationRead}
             callError={currentCall ? "" : callError}
             inCall={currentCall?.status === "active" && busyInCall}
-            peerOnline={selectedConversation.other_user ? onlineIds.has(selectedConversation.other_user.id) : undefined}
+            showConversationDetails={showConversationDetails}
             onRename={renameGroup}
             incomingFiles={pendingFiles}
             onFilesConsumed={(nonce) => setPendingFiles((current) => current?.nonce === nonce ? null : current)}
@@ -1305,10 +1323,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
         </div>
         )}
 
-        <footer className="app-statusbar">
+        {!headerConversation && <footer className="app-statusbar">
           <span><i className="status-dot" /> Сессия активна</span>
           <span>Когерент</span>
-        </footer>
+        </footer>}
       </section>
 
       {popover && <button className="shell-popover-dismiss" aria-label="Закрыть меню" onClick={() => setPopover(null)} />}
@@ -1472,16 +1490,5 @@ function WelcomeArt() {
       <div className="art-micro-dot dot-b" />
       <div className="art-micro-dot dot-c" />
     </div>
-  );
-}
-
-function SparkleGlyph() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path
-        d="M10 1.5 11.7 8l6.8 2-6.8 2L10 18.5 8.3 12l-6.8-2 6.8-2L10 1.5Z"
-        fill="currentColor"
-      />
-    </svg>
   );
 }
