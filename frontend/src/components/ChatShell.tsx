@@ -907,6 +907,22 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     }
   }
 
+  async function transferCall() {
+    if (!currentCall || callPending) return;
+    setCallPending(true);
+    setCallError("");
+    try {
+      await updateMedia({ cameraEnabled: false });
+      await api.joinCall(currentCall.id, true);
+      callsRevision.current += 1;
+      await refreshCalls();
+    } catch (reason) {
+      setCallError(reason instanceof Error ? reason.message : "Не удалось перенести звонок");
+    } finally {
+      setCallPending(false);
+    }
+  }
+
   async function endCall() {
     if (!currentCall || callPending) return;
     setCallPending(true);
@@ -1274,6 +1290,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
               onMediaChange={changeMedia}
               onRoomReady={setActiveRoom}
               onOwnershipChange={onCallOwnershipChange}
+              onTransfer={() => void transferCall()}
               onInvite={inviteToCall}
               onAccept={() => void acceptCall()}
               onEnd={() => void endCall()}

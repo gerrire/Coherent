@@ -119,6 +119,7 @@ interface CallPanelProps {
   onMediaChange: (patch: Partial<MediaPreferences>) => Promise<void>;
   onRoomReady: (room: Room | null) => void;
   onOwnershipChange: (callId: string, owned: boolean) => void;
+  onTransfer: () => void;
   onInvite: (userIds: string[]) => Promise<void>;
   onAccept: () => void;
   onEnd: () => void;
@@ -141,6 +142,7 @@ export default function CallPanel({
   onMediaChange,
   onRoomReady,
   onOwnershipChange,
+  onTransfer,
   onInvite,
   onAccept,
   onEnd,
@@ -233,8 +235,15 @@ export default function CallPanel({
       <div className="call-invite-avatar"><Phone size={22} /></div>
       <div className="call-invite-copy">
         <strong>{title}</strong>
-        <small>{call.joined_here && ownership === "checking" ? "Подготавливаем подключение…" : "Звонок открыт в другой вкладке или на другом устройстве. Продолжи его там; для перехода сначала выйди из звонка на том устройстве."}</small>
+        <small>{error || (call.joined_here
+          ? ownership === "checking" ? "Подготавливаем подключение…" : "Звонок открыт в другой вкладке"
+          : "Звонок открыт на другом устройстве")}</small>
       </div>
+      {!call.joined_here && <div className="call-invite-actions">
+        <button className="call-invite-accept call-invite-rejoin" onClick={onTransfer} disabled={pending}>
+          <Phone size={16} /><span>{pending ? "Переносим…" : "Перенести звонок сюда"}</span>
+        </button>
+      </div>}
     </aside>;
   }
 
