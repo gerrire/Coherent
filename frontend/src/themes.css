@@ -147,16 +147,18 @@
   .client-settings-header > button:hover, .call-focus-button:hover) {
   background: var(--theme-hover); color: var(--theme-text);
 }
-:root[data-theme] :is(.rail-home, .rail-item.selected, .brand-mark, .primary-button, .auth-submit,
+:root[data-theme] :is(.rail-item.selected, .brand-mark, .primary-button, .auth-submit,
   .composer-field button[type="submit"], .friend-search-button, .profile-password-actions button,
   .tab-count-alert, .media-voice-profiles button.active) {
   background: var(--theme-accent); color: white; border-color: var(--theme-accent); box-shadow: none;
 }
-:root[data-theme] :is(.rail-home:hover, .primary-button:hover, .auth-submit:hover,
+:root[data-theme] :is(.primary-button:hover, .auth-submit:hover,
   .composer-field button[type="submit"]:hover:not(:disabled), .profile-password-actions button:hover) {
   background: var(--theme-accent-hover); box-shadow: none;
 }
-:root[data-theme="purple"] .app-shell .rail-home { background-image: linear-gradient(145deg, #b25eff, #752fe0); }
+:root[data-theme] .rail-home { background: var(--theme-accent); color: white; box-shadow: none; }
+:root[data-theme] .rail-home:hover { background-color: var(--theme-accent-hover); }
+:root[data-theme="purple"] .rail-home { background-image: linear-gradient(145deg, #b25eff, #752fe0); }
 :root[data-theme] .rail-item.selected::before { background: var(--theme-accent-hover); }
 :root[data-theme] .brand-mark span { background: white; }
 :root[data-theme] .rail-home .brand-mark,
