@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import {
   AudioTrack,
-  LiveKitRoom,
+  RoomContext,
   StartAudio,
   TrackToggle,
   useIsSpeaking,
@@ -37,8 +37,8 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { AudioPresets, ConnectionQuality, ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type Participant } from "livekit-client";
-import { api, ApiError, displayName, type Call, type CallJoin } from "../lib/api";
+import { AudioPresets, ConnectionQuality, DisconnectReason, ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type Participant } from "livekit-client";
+import { api, ApiError, displayName, type Call } from "../lib/api";
 import {
   cameraCapture,
   cameraPublish,
@@ -170,6 +170,7 @@ export default function CallPanel({
   useEffect(() => {
     if (!call.joined_here || self?.state !== "joined") return;
     let stopped = false;
+    const abort = new AbortController();
     let release: (() => void) | undefined;
     const hold = new Promise<void>((resolve) => { release = resolve; });
     const own = async () => {
@@ -177,14 +178,16 @@ export default function CallPanel({
       setOwnership("local");
       onOwnershipChange(call.id, true);
       await hold;
-      onOwnershipChange(call.id, false);
-      closeCallMessaging(currentUserId, call.id);
     };
     setOwnership("checking");
     if (navigator.locks) {
       void navigator.locks.request(`coherent-call-owner-${currentUserId}`, { ifAvailable: true }, async (lock) => {
         if (stopped) return;
-        if (!lock) { setOwnership("other"); return; }
+        if (!lock) {
+          setOwnership("other");
+          void navigator.locks.request(`coherent-call-owner-${currentUserId}`, { signal: abort.signal }, own).catch(() => {});
+          return;
+        }
         await own();
       }).catch(() => { if (!stopped) setOwnership("other"); });
     } else {
@@ -192,6 +195,7 @@ export default function CallPanel({
     }
     return () => {
       stopped = true;
+      abort.abort();
       onOwnershipChange(call.id, false);
       release?.();
     };
@@ -376,11 +380,10 @@ function CallRoom({
   onEnd: () => void;
   pending: boolean;
 }) {
-  const [join, setJoin] = useState<(CallJoin & { callId: string }) | null>(null);
   const [joinAttempt, setJoinAttempt] = useState(0);
-  const currentAttempt = useRef(0);
   const transferRequested = useRef<string | null>(null);
   const [transferRequired, setTransferRequired] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState("Получаем доступ к звонку…");
   const [error, setError] = useState("");
   const [mediaError, setMediaError] = useState("");
   const [keyNotice, setKeyNotice] = useState("");
@@ -409,6 +412,8 @@ function CallRoom({
     try { localStorage.setItem(SCREEN_VOLUME_STORAGE_KEY, JSON.stringify(screenVolumes)); } catch { /* Storage may be disabled. */ }
   }, [screenVolumes]);
 
+  useEffect(() => () => closeCallMessaging(currentUserId, call.id), [currentUserId, call.id]);
+
   function changeParticipantVolume(userId: string, volume: number) {
     setParticipantVolumes((current) => ({ ...current, [userId]: volume }));
   }
@@ -419,100 +424,164 @@ function CallRoom({
 
   useEffect(() => {
     let active = true;
-    setJoin(null);
-    setEncryptedRoom(null);
-    const transfer = transferRequested.current === call.id;
-    transferRequested.current = null;
-    api.joinCall(call.id, transfer).then((result) => {
-      if (active) setJoin({ ...result, callId: call.id });
-    }).catch((reason: unknown) => {
-      if (!active) return;
-      setTransferRequired(reason instanceof ApiError && reason.status === 409
-        && reason.message === "Звонок открыт на другом устройстве");
-      setError(reason instanceof Error ? reason.message : "Не удалось подключиться к звонку.");
-    });
-    return () => { active = false; };
-  }, [call.id, joinAttempt]);
-
-  useEffect(() => {
-    if (!join || join.callId !== call.id || error) return;
-    let active = true;
     let room: Room | undefined;
     let worker: Worker | undefined;
+    let retryTimer: number | undefined;
     let refreshTimer: number | undefined;
-    let refreshKey: (() => void) | undefined;
-    async function prepareEncryption() {
-      if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
-      if (!join?.media_conversation_id) throw new Error("Обнови клиент для защищённых звонков.");
-      const provider = new ExternalE2EEKeyProvider();
-      worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
-      room = new Room({ ...roomOptions, encryption: { keyProvider: provider, worker } });
-      // Warm up DNS/TLS while MLS runs; never connect/publish without its key.
-      void room.prepareConnection(join.server_url, join.token);
-      const mediaKey = await callMessagingFor(currentUserId,call.id,join?.crypto_protocol??"account_mls_v1").mediaKey(call.id);
-      if (!active) return;
-      await provider.setKey(mediaKey.key);
-      await room.setE2EEEnabled(true);
-      const fingerprint = await keyFingerprint(mediaKey.key);
-      if (!active) { void room.disconnect(); worker.terminate(); return; }
-      if (active) setEncryptedRoom({ callId: call.id, room, fingerprint });
-      let previousKey = mediaKey.key, refreshing = false, failureSince = 0;
-      refreshKey = () => {
-        if (!active || refreshing) return; refreshing = true;
-        void callMessagingFor(currentUserId,call.id,join?.crypto_protocol??"account_mls_v1").mediaKey(call.id).then(async next => {
-          if (active) { failureSince = 0; setKeyNotice(""); }
-          if (!active || next.key === previousKey) return;
-          await provider.setKey(next.key); previousKey = next.key;
-          const nextFingerprint = await keyFingerprint(next.key);
-          if (active && room) setEncryptedRoom({callId:call.id,room,fingerprint:nextFingerprint});
-        }).catch(reason => {
-          if (!active) return;
-          const temporary = reason instanceof TypeError || (reason instanceof DOMException && ["TimeoutError", "AbortError"].includes(reason.name)) || (reason instanceof CryptoOperationError && reason.code === "CRYPTO_TIMEOUT") || (reason instanceof ApiError && (reason.status >= 500 || reason.status === 429 || reason.status === 409))
-            || (reason instanceof MessagingAccessError && reason.kind === "changed" && reason.message.includes("Состав беседы изменился"));
-          if (temporary) {
-            failureSince ||= Date.now();
-            if (Date.now() - failureSince < 30000) { setKeyNotice("Восстанавливаем соединение…"); return; }
-          }
-          setError(reason instanceof Error ? reason.message : "Не удалось обновить ключ звонка");
-          void room?.disconnect();
-        }).finally(() => { refreshing = false; });
-      };
-      window.addEventListener("coherent-media-membership", refreshKey);
-      refreshTimer = window.setInterval(refreshKey, 5000);
-    }
-    void prepareEncryption().catch((reason: unknown) => {
-      if (room) void room.disconnect();
-      worker?.terminate();
-      if (active) setError(reason instanceof Error ? reason.message : "Не удалось включить шифрование звонка.");
-    });
-    return () => {
-      active = false;
-      if (refreshTimer) window.clearInterval(refreshTimer);
-      if (refreshKey) window.removeEventListener("coherent-media-membership", refreshKey);
-      if (room) void room.disconnect();
-      worker?.terminate();
-    };
-  }, [join, roomOptions, call.id, currentUserId, error]);
+    let refreshing = false;
+    let refreshPending = false;
+    let connecting = false;
+    let failures = 0;
+    let previousKey = "";
+    let mediaId: string | null = null;
+    let messaging: ReturnType<typeof callMessagingFor> | undefined;
+    let nextPacketRefresh = 0;
+    setEncryptedRoom(null);
+    setConnected(false);
+    setConnectionStatus("Получаем доступ к звонку…");
+    let transfer = transferRequested.current === call.id;
+    transferRequested.current = null;
+    const provider = new ExternalE2EEKeyProvider();
 
-  useEffect(() => {
-    if (connected || error) return;
-    const timer = window.setTimeout(() => {
-      closeCallMessaging(currentUserId, call.id);
-      setError("Подключение заняло слишком много времени. Попробуй ещё раз");
-    }, 40000);
-    return () => window.clearTimeout(timer);
-  }, [call.id, currentUserId, joinAttempt, connected, error]);
+    function stop(reason: string) {
+      active = false;
+      setConnected(false);
+      setError(reason);
+      dispose();
+    }
+    function isTemporary(reason: unknown) {
+      return reason instanceof TypeError
+        || reason instanceof DOMException && ["TimeoutError", "AbortError"].includes(reason.name)
+        || reason instanceof CryptoOperationError && reason.code === "CRYPTO_TIMEOUT"
+        || reason instanceof ApiError && (reason.status >= 500 || reason.status === 429 || reason.status === 409)
+        || reason instanceof MessagingAccessError && (reason.kind === "waiting" || reason.kind === "changed");
+    }
+    async function applyKey() {
+      if (!messaging || !room) return;
+      const next = await messaging.mediaKey(call.id);
+      if (!active || next.key === previousKey) return;
+      await provider.setKey(next.key);
+      if (!active) return;
+      if (!previousKey) await room.setE2EEEnabled(true);
+      previousKey = next.key;
+      const fingerprint = await keyFingerprint(next.key);
+      if (active) setEncryptedRoom({ callId: call.id, room, fingerprint });
+    }
+    function refreshKey() {
+      if (!active || !previousKey) return;
+      if (refreshing || connecting) { refreshPending = true; return; }
+      refreshing = true;
+      void applyKey().then(() => {
+        if (active) setKeyNotice("");
+      }).catch(reason => {
+        if (!active) return;
+        if (isTemporary(reason)) setKeyNotice("Обновляем ключ звонка…");
+        else stop(reason instanceof Error ? reason.message : "Не удалось обновить ключ звонка");
+      }).finally(() => {
+        refreshing = false;
+        if (refreshPending && active) { refreshPending = false; refreshKey(); }
+      });
+    }
+    function membershipChanged(event: Event) {
+      const changedMedia = (event as CustomEvent<string | undefined>).detail;
+      if (!changedMedia || changedMedia === mediaId) refreshKey();
+    }
+    function encryptionError(reason: Error) {
+      // The worker prefixes packet-level failures. An in-flight packet can
+      // still use the previous MLS epoch while this participant catches up.
+      if (/^(InvalidKey|MissingKey):/.test(reason.message)) {
+        if (Date.now() >= nextPacketRefresh) {
+          nextPacketRefresh = Date.now() + 1000;
+          refreshKey();
+        }
+        return;
+      }
+      if (active) stop(`Ошибка шифрования: ${reason.message}`);
+    }
+    function retry(reason: string) {
+      if (!active || retryTimer !== undefined) return;
+      if (failures >= 3) { stop(reason); return; }
+      const delay = [350, 1000, 2500][failures++];
+      setConnected(false);
+      setConnectionStatus("Восстанавливаем соединение…");
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, delay);
+    }
+    function disconnected(reason?: DisconnectReason) {
+      if (!active || connecting || reason === DisconnectReason.CLIENT_INITIATED) return;
+      if (reason === DisconnectReason.DUPLICATE_IDENTITY || reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.ROOM_DELETED) {
+        stop("Соединение со звонком завершилось. Подключись повторно.");
+        return;
+      }
+      retry("Не удалось восстановить соединение со звонком.");
+    }
+    function connectedToRoom() {
+      if (!active) return;
+      failures = 0;
+      setConnected(true);
+      if (room && isTauri()) void room.startAudio().catch(() => undefined);
+    }
+    async function connect() {
+      connecting = true;
+      let transportStarted = false;
+      try {
+        if (!isE2EESupported()) throw new Error("Этот браузер не поддерживает сквозное шифрование звонков.");
+        const join = await api.joinCall(call.id, transfer);
+        transfer = false;
+        if (!active) return;
+        if (!join.media_conversation_id) throw new Error("Обнови клиент для защищённых звонков.");
+        mediaId = join.media_conversation_id;
+        messaging ??= callMessagingFor(currentUserId, call.id, join.crypto_protocol ?? "account_mls_v1");
+        if (!room) {
+          worker = new Worker(new URL("livekit-client/e2ee-worker", import.meta.url), { type: "module" });
+          room = new Room({ ...roomOptions, encryption: { keyProvider: provider, worker } });
+          room.on(RoomEvent.EncryptionError, encryptionError).on(RoomEvent.Disconnected, disconnected)
+            .on(RoomEvent.Connected, connectedToRoom);
+        }
+        void room.prepareConnection(join.server_url, join.token);
+        setConnectionStatus("Согласуем ключи звонка…");
+        await applyKey();
+        if (!active) return;
+        setConnectionStatus("Подключаем звук…");
+        transportStarted = true;
+        await room.connect(join.server_url, join.token, { websocketTimeout: 8000, peerConnectionTimeout: 12000 });
+        if (active && refreshTimer === undefined) refreshTimer = window.setInterval(refreshKey, 4000);
+      } catch (reason) {
+        if (!active) return;
+        const message = reason instanceof Error ? reason.message : "Не удалось подключиться к звонку.";
+        const conflict = reason instanceof ApiError && reason.status === 409;
+        if (conflict && message === "Звонок открыт на другом устройстве") {
+          setTransferRequired(true);
+          stop(message);
+        } else if (transportStarted || (!conflict && isTemporary(reason))) retry(message);
+        else stop(message);
+      } finally {
+        connecting = false;
+        if (refreshPending && active) { refreshPending = false; refreshKey(); }
+      }
+    }
+    function dispose() {
+      window.clearTimeout(retryTimer);
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("coherent-media-membership", membershipChanged);
+      if (room) void room.disconnect().catch(() => undefined).finally(() => worker?.terminate());
+      else worker?.terminate();
+    }
+    window.addEventListener("coherent-media-membership", membershipChanged);
+    void connect();
+    return () => { if (active) { active = false; dispose(); } };
+  }, [call.id, currentUserId, joinAttempt, roomOptions]);
 
   function retryConnection() {
     if (transferRequired) transferRequested.current = call.id;
     setTransferRequired(false);
-    currentAttempt.current += 1;
-    closeCallMessaging(currentUserId,call.id);
+    closeCallMessaging(currentUserId, call.id);
     setError("");
     setKeyNotice("");
-    setJoin(null);
     setConnected(false);
-    setJoinAttempt(currentAttempt.current);
+    setJoinAttempt(attempt => attempt + 1);
   }
 
   useEffect(() => {
@@ -529,7 +598,7 @@ function CallRoom({
       <span className={`call-connected-dot ${error ? "is-error" : connected ? "is-connected" : ""}`} aria-hidden="true" />
       <div className="call-surface-title">
         <strong>{title}</strong>
-        <small>{error || (connected ? `${joinedCount} в звонке · ${time}` : "Подключение...")}</small>
+        <small>{error || (connected ? `${joinedCount} в звонке · ${time}` : connectionStatus)}</small>
       </div>
       {connected && encryptedRoom?.callId === call.id && <span className="call-encryption" title={`Сквозное шифрование медиа. Ключ создают устройства через MLS. Серверы Когерента и LiveKit его не получают. Сверь эмодзи и код с собеседниками: ${encryptedRoom.fingerprint.code}`}><LockKeyhole size={13} /> Шифрование <span>{encryptedRoom.fingerprint.emoji}</span></span>}
       {compact ? (
@@ -553,41 +622,24 @@ function CallRoom({
   if (error) {
     return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>{transferRequired ? "Перенести звонок сюда" : "Повторить подключение"}</button>{!transferRequired && <button onClick={onEnd}>Выйти</button>}</div></div></>;
   }
-  if (!join || join.callId !== call.id || !encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note" role="status">{join ? "Согласуем ключи звонка…" : "Получаем доступ к звонку…"}</div></>;
+  if (!encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note" role="status">{connectionStatus}</div></>;
 
   return (
-    <LiveKitRoom
-      serverUrl={join.server_url}
-      token={join.token}
-      room={encryptedRoom.room}
-      connect
-      audio={false}
-      video={false}
-      onConnected={() => {
-        if (currentAttempt.current !== joinAttempt) return;
-        setConnected(true);
-        if (isTauri()) void encryptedRoom.room.startAudio().catch(() => undefined);
-      }}
-      onDisconnected={() => {
-        if (currentAttempt.current !== joinAttempt) return;
-        setConnected(false);
-        setError(current => current || "Соединение со звонком завершилось. Подключись повторно.");
-      }}
-      onError={(reason) => setError(reason.message)}
-      onEncryptionError={(reason) => { setError(`Ошибка шифрования: ${reason.message}`); void encryptedRoom.room.disconnect(); }}
-    >
-      <CallMediaBridge connected={connected} media={media} onRoomReady={onRoomReady} onError={setMediaError} />
-      <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
-      {header}
-      <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
-      <div className="call-surface-controls">
-        {keyNotice && <span className="call-key-notice" role="status">{keyNotice}</span>}
-        <CallConnectionNotice />
-        <StartAudio className="call-start-audio" label="Включить звук" />
-        <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
-      </div>
-      {mediaError && <p className="call-surface-error" role="alert">{mediaError}</p>}
-    </LiveKitRoom>
+    <div className="lk-room-container">
+      <RoomContext.Provider value={encryptedRoom.room}>
+        <CallMediaBridge connected={connected} media={media} onRoomReady={onRoomReady} onError={setMediaError} />
+        <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
+        {header}
+        <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
+        <div className="call-surface-controls">
+          {keyNotice && <span className="call-key-notice" role="status">{keyNotice}</span>}
+          <CallConnectionNotice />
+          <StartAudio className="call-start-audio" label="Включить звук" />
+          <CallControls media={media} onMediaChange={onMediaChange} onError={setMediaError} onEnd={onEnd} pending={pending} />
+        </div>
+        {mediaError && <p className="call-surface-error" role="alert">{mediaError}</p>}
+      </RoomContext.Provider>
+    </div>
   );
 }
 

@@ -115,8 +115,7 @@
 :root[data-theme="purple"] .message-entry { background: #282136; }
 :root[data-theme="purple"] .message-own .message-entry { background: #3a2854; }
 :root[data-theme] .composer-field .composer-attach:not(:hover) { background: transparent; color: var(--theme-muted); }
-:root[data-theme="purple"] .composer-field .composer-submit:not(:hover),
-:root[data-theme="purple"] .app-shell .rail-home:not(:hover) { background: #7446c2; }
+:root[data-theme="purple"] .composer-field .composer-submit:not(:hover) { background: #7446c2; }
 :root[data-theme] :is(.conversation-item:hover, .conversation-item.active, .sidebar-nav-item:hover,
   .sidebar-nav-item.active, .sidebar-nav-friends.active, .friend-row:hover, .participant-picker-user:hover,
   .shell-popover > button:hover, .profile-menu > button:hover, .friends-tabs button:hover,
@@ -167,12 +166,6 @@
   background: linear-gradient(145deg, var(--theme-avatar-top), var(--theme-avatar-bottom));
   border-color: var(--theme-border); color: white;
 }
-:root[data-theme] .app-shell :is(.conversation-item, .header-contact, .message-row, .account-profile) .avatar-user {
-  background: var(--theme-avatar-bottom);
-  border: 0;
-  box-shadow: none;
-}
-:root[data-theme="purple"] .app-shell :is(.conversation-item, .header-contact, .message-row, .account-profile) .avatar-user { background: #573e7b; }
 :root[data-theme] :is(.workspace-symbol, .empty-bubble, .friends-empty-icon,
   .progress-icon, .card-icon, .scene-core, .art-main-icon) {
   background: var(--theme-veil); border-color: var(--theme-border); color: var(--theme-accent-text);

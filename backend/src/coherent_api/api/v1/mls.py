@@ -11,6 +11,8 @@ from sqlalchemy import func, select
 
 from coherent_api.api.dependencies import CurrentUser, SessionDep
 from coherent_api.api.v1.e2ee import verify_device_request
+from coherent_api.models.call_media import CallMediaSession
+from coherent_api.models.conversation import Conversation
 from coherent_api.models.mls import MlsEvent, MlsPackage, MlsState
 from coherent_api.schemas.e2ee import EnrollRequest, StrictModel
 from coherent_api.schemas.mls import CancelPayload, CancelRequest, LeaseRequest, TransportRequest
@@ -25,6 +27,16 @@ router = APIRouter(tags=["Защищённая переписка"])
 class PackagesPayload(StrictModel):
     operation: str = Field(pattern="^publish_packages$")
     packages: list[str] = Field(min_length=1, max_length=16)
+
+
+async def publish_media_change(request, session, conversation_id):
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        return
+    members = await conversation_member_ids(session, conversation)
+    await request.app.state.message_events.publish(
+        members, {"type": "call_media", "conversation_id": str(conversation_id)}
+    )
 
 
 @router.get("/security/key-packages/count")
@@ -111,6 +123,11 @@ async def publish_packages(
     )
     session.add_all(added)
     await session.commit()
+    if device.call_id is not None:
+        link = await session.get(CallMediaSession, device.call_id)
+        if link is not None and added:
+            await publish_media_change(request, session, link.conversation_id)
+        return {"published": True}
     from coherent_api.services.security_events import notify_security
 
     await notify_security(request, session, user)
@@ -130,13 +147,13 @@ async def acquire_lease(
     user: CurrentUser,
     session: SessionDep,
 ) -> dict:
-    if not request.app.state.settings.e2ee_messaging_enabled:
+    device = await mls.active_device(session, user, body.device_id, conversation_id)
+    if device.call_id is None and not request.app.state.settings.e2ee_messaging_enabled:
         state = await session.get(MlsState, conversation_id)
         if state is None or state.group_id is None:
             raise HTTPException(
                 status_code=409, detail="Новая защищённая переписка ещё не включена"
             )
-    device = await mls.active_device(session, user, body.device_id, conversation_id)
     if not body.challenge_id or not body.proof:
         raise HTTPException(status_code=403, detail="Подтверди отправку ключом устройства")
     payload = json.dumps(
@@ -211,6 +228,11 @@ async def publish(body, conversation_id, files, request, user, session, backgrou
     if event.get("duplicate"):
         return event
     packet = json.loads(body.payload)
+    from coherent_api.services.conversation_access import is_call_media
+
+    if await is_call_media(session, conversation_id):
+        await publish_media_change(request, session, conversation_id)
+        return event
     conversation = await get_conversation(session, user, conversation_id)
     members = await conversation_member_ids(session, conversation)
     if packet["operation"] in ("message", "migrate"):
