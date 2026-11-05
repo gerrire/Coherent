@@ -113,6 +113,7 @@
   .call-surface-expanded .call-stage-sharing > .call-tile { align-self: center; width: 100%; max-height: 100%; }
   .call-surface-expanded.call-surface .call-stage-sharing .call-stage-sidebar {
     display: flex;
+    flex-direction: row;
     align-items: stretch;
     width: 100%;
     min-height: 0;
@@ -124,6 +125,8 @@
   .call-surface-expanded .call-sidebar-preview { height: 42px; }
   .call-surface-expanded .call-sidebar-preview .call-tile-avatar { width: 32px; height: 32px; font-size: 14px; }
   .call-surface-expanded :is(.call-screen-fullscreen-button, .call-screen-volume-button, .call-tile-volume-button) { width: 44px; height: 44px; }
+  .call-surface-expanded .call-tile-screen .call-tile-resolution { top: 10px; bottom: auto; }
+  .call-surface-expanded .call-tile-screen .call-tile-name { max-width: calc(100% - 64px); }
 
   .call-surface-expanded .call-surface-controls {
     flex-wrap: wrap;
