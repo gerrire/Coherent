@@ -156,6 +156,7 @@
   .composer-field button[type="submit"]:hover:not(:disabled), .profile-password-actions button:hover) {
   background: var(--theme-accent-hover); box-shadow: none;
 }
+:root[data-theme="purple"] .app-shell .rail-home { background-image: linear-gradient(145deg, #b25eff, #752fe0); }
 :root[data-theme] .rail-item.selected::before { background: var(--theme-accent-hover); }
 :root[data-theme] .brand-mark span { background: white; }
 :root[data-theme] .rail-home .brand-mark,
