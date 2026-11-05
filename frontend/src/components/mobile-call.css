@@ -1,0 +1,213 @@
+.call-mobile-only { display: none; }
+
+@media (max-width: 680px), (max-height: 520px) and (pointer: coarse) {
+  .call-desktop-only { display: none; }
+
+  .content-area:has(> .call-surface-expanded) > :not(.call-surface-expanded),
+  .app-shell:has(.call-surface-expanded) .account-bar { visibility: hidden; }
+
+  .call-surface.call-surface-expanded:not(:fullscreen) {
+    position: fixed;
+    z-index: 180;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    height: var(--coherent-visible-height, 100dvh);
+    border: 0;
+    background: var(--theme-panel);
+  }
+  .call-surface-expanded .lk-room-container { flex: 1; }
+  .call-surface-expanded .call-surface-header {
+    position: relative;
+    z-index: 6;
+    gap: 8px;
+    height: auto;
+    min-height: calc(62px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--theme-border);
+    background: var(--theme-surface);
+  }
+  .call-surface-expanded .call-surface-title { flex: 1; }
+  .call-surface-expanded .call-surface-title strong { font-size: 15px; }
+  .call-surface-expanded .call-surface-title small { font-size: 12px; }
+  .call-surface .call-encryption { display: none; }
+  .call-surface .call-focus-button.call-mobile-only,
+  .call-mobile-tools > .call-focus-button {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: auto;
+    min-width: 44px;
+    height: 44px;
+    margin: 0;
+    padding-inline: 8px;
+    border-radius: 12px;
+    background: var(--theme-hover);
+    color: var(--theme-text);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .call-surface .call-focus-button.call-mobile-back { order: -1; padding-inline: 4px 8px; }
+  .call-mobile-tools { display: flex; }
+  .call-mobile-menu-dismiss { position: fixed; z-index: 1; inset: 0; border: 0; background: transparent; }
+  .call-mobile-menu {
+    position: absolute;
+    z-index: 2;
+    top: calc(100% + 6px);
+    right: max(12px, env(safe-area-inset-right));
+    display: grid;
+    width: min(270px, calc(100vw - 24px));
+    padding: 5px;
+    border: 1px solid var(--theme-border);
+    border-radius: 14px;
+    background: var(--theme-surface);
+    color: var(--theme-text);
+    box-shadow: 0 12px 36px #0005;
+  }
+  .call-mobile-menu > button, .call-mobile-fingerprint {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+  }
+  .call-mobile-menu > button:hover { background: var(--theme-hover); }
+  .call-mobile-menu svg { flex-shrink: 0; color: var(--theme-accent-text); }
+  .call-mobile-fingerprint { border-top: 1px solid var(--theme-border); border-radius: 0; }
+  .call-mobile-fingerprint small { display: block; margin-top: 3px; color: var(--theme-muted); overflow-wrap: anywhere; }
+
+  .call-surface-expanded .call-stage {
+    padding: 12px max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left));
+    overscroll-behavior: contain;
+  }
+  .call-surface-expanded .call-stage-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: safe center;
+    gap: 8px;
+  }
+  .call-surface-expanded .call-stage-grid > .call-tile { width: 100%; max-width: 440px; }
+  .call-surface-expanded .call-stage-with-screens > .call-tile-screen { grid-column: 1 / -1; max-width: 680px; }
+  .call-surface-expanded .call-stage-grid:not(.call-stage-group):not(.call-stage-with-screens) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .call-surface-expanded .call-tile-avatar { width: clamp(36px, 11vw, 58px); height: clamp(36px, 11vw, 58px); border-radius: 14px; font-size: 19px; }
+  .call-surface-expanded .call-tile-name { max-width: calc(100% - 12px); }
+  .call-surface-expanded .call-stage-sharing {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .call-surface-expanded .call-stage-sharing > .call-tile { align-self: center; width: 100%; max-height: 100%; }
+  .call-surface-expanded.call-surface .call-stage-sharing .call-stage-sidebar {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    min-height: 0;
+    max-height: min(126px, 33cqh);
+    padding: 4px 2px;
+    overflow: auto;
+  }
+  .call-surface-expanded .call-stage-sidebar :is(.call-sidebar-person, .call-share-picker) { flex: 0 0 124px; min-width: 0; }
+  .call-surface-expanded .call-sidebar-preview { height: 42px; }
+  .call-surface-expanded .call-sidebar-preview .call-tile-avatar { width: 32px; height: 32px; font-size: 14px; }
+  .call-surface-expanded :is(.call-screen-fullscreen-button, .call-screen-volume-button, .call-tile-volume-button) { width: 44px; height: 44px; }
+
+  .call-surface-expanded .call-surface-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    overflow: visible;
+    border-top: 1px solid var(--theme-border);
+    background: var(--theme-surface);
+  }
+  .call-surface-expanded .call-control-group { width: min(100%, 430px); gap: 7px; }
+  .call-surface-expanded .call-control {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    min-width: 44px;
+    height: 52px;
+    padding: 4px;
+  }
+  .call-surface-expanded .call-control-label { display: block; font-size: 11px; font-weight: 650; white-space: nowrap; }
+  .call-surface-expanded .call-control[data-off] { background: var(--theme-raised); color: var(--theme-muted); }
+  .call-surface-expanded .call-control-screen[data-share-unavailable] { display: none; }
+  .call-surface-expanded .call-key-notice, .call-surface-expanded .call-network-notice {
+    position: static;
+    margin: 0;
+    white-space: normal;
+    transform: none;
+  }
+  .call-surface-expanded .call-network-notice-text { display: inline; }
+  .call-surface-expanded .call-start-audio { min-height: 44px; margin: 0; }
+  .call-surface-expanded .call-connect-note { padding: 16px; text-align: center; }
+  .call-surface-expanded .call-connect-error button { min-height: 44px; }
+  .call-mobile-pending-actions { display: flex; justify-content: center; padding: 8px 12px max(12px, env(safe-area-inset-bottom)); }
+  .call-mobile-pending-actions button { display: flex; align-items: center; gap: 8px; width: auto; height: 48px; padding-inline: 18px; }
+
+  .call-surface-compact, .call-surface-compact .call-surface-header, .call-surface-compact .call-surface-controls {
+    height: 56px;
+    min-height: 56px;
+  }
+  .call-surface-compact .call-surface-header { justify-content: space-between; gap: 6px; padding: 0 6px 0 12px; }
+  .call-surface-compact .call-surface-title { flex: 1; }
+  .call-surface-compact .call-surface-controls { padding: 0 8px 0 0; overflow: visible; }
+  .call-surface-compact .call-control-group { gap: 5px; }
+  .call-surface-compact .call-control { width: 44px; height: 44px; }
+  .call-surface-compact :is(.call-key-notice, .call-network-notice, .call-start-audio) { display: none; }
+
+  .call-surface-expanded .call-view-menu { top: calc(68px + env(safe-area-inset-top, 0px)); }
+  .call-view-menu button { min-height: 44px; }
+  .call-surface-expanded .media-settings-panel {
+    position: absolute;
+    inset: auto 8px max(8px, env(safe-area-inset-bottom)) 8px;
+    width: auto;
+    max-height: calc(100% - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
+  .call-surface-expanded .media-settings-heading button { min-width: 44px; min-height: 44px; }
+
+  .incoming-call-backdrop {
+    inset: 0;
+    place-items: end center;
+    padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+    background: #0007;
+  }
+  .incoming-call-backdrop .incoming-call-card { width: min(100%, 440px); max-height: 100%; overflow-y: auto; padding: 18px 16px; }
+  .incoming-call-backdrop .incoming-call-actions button { min-height: 48px; font-size: 13px; }
+  .incoming-call-card .incoming-call-conversation { display: block; margin: 4px 0 0; color: var(--theme-muted); font-size: 13px; overflow-wrap: anywhere; }
+}
+
+@media (max-width: 680px) and (orientation: portrait) {
+  .call-surface-expanded .call-stage-group:not(.call-stage-dense, .call-stage-with-screens) > .call-tile:not(:has(video)) { aspect-ratio: 1; }
+  .call-surface-expanded .call-stage-group:not(.call-stage-with-screens) > .call-tile:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    width: calc((100% - 8px) / 2);
+  }
+}
+
+@media (max-height: 520px) and (pointer: coarse) and (orientation: landscape) {
+  .call-surface-expanded .call-stage-grid:not(.call-stage-group):not(.call-stage-with-screens) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .call-surface-expanded .call-stage-grid.call-stage-group { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .call-surface-expanded .call-stage-sharing {
+    grid-template-columns: minmax(0, 1fr) minmax(100px, 22%);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .call-surface-expanded.call-surface .call-stage-sharing .call-stage-sidebar { flex-direction: column; max-height: 100%; }
+  .call-surface-expanded .call-stage-sidebar :is(.call-sidebar-person, .call-share-picker) { flex-basis: auto; }
+}

@@ -1665,29 +1665,10 @@ a {
 @media (max-width: 680px), (max-height: 520px) and (pointer: coarse) {
   .messages-intro { padding: 14px 15px; }
   .call-invite { top: 62px; right: 10px; width: min(340px, calc(100% - 20px)); }
-  .call-surface-expanded:not(:fullscreen):not(.call-surface-maximized) { height: clamp(170px, 30dvh, 260px); }
-  .call-stage { padding: 8px; }
-  .call-stage-grid { --call-tile-width: min(100%, 480px) !important; }
-  .call-stage-sharing, .call-surface:fullscreen .call-stage-sharing, .call-surface-maximized .call-stage-sharing { display: flex; flex-direction: column; }
-  .call-stage-sharing > .call-tile { flex: 0 1 auto; width: min(100%, 177.78cqh); min-height: 0; }
-  .call-stage-sharing > .call-tile-screen { width: min(100%, var(--call-screen-width, 177.78cqh)); }
-  .call-stage-sharing:has(.call-stage-sidebar) { justify-content: center; }
-  .call-surface-expanded:not(:fullscreen):not(.call-surface-maximized) .call-stage-sidebar { display: none; }
-  .call-surface:fullscreen .call-stage-sharing > .call-tile-screen,
-  .call-surface-maximized .call-stage-sharing > .call-tile-screen {
-    width: min(100%, calc(var(--call-screen-width, 177.78cqh) - var(--call-screen-sidebar-width, 245px)));
-    max-height: calc(100% - 144px);
-  }
-  .call-stage-sidebar { flex: 0 0 130px; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .call-sidebar-heading { display: none; }
-  .call-sidebar-person, .call-share-picker { flex: 0 0 150px; }
-  .call-sidebar-preview { height: 68px; aspect-ratio: auto; }
   .call-waiting-label { display: none; }
-  .call-surface-controls { min-height: 58px; }
   .call-network-notice { left: 8px; padding: 4px; }
   .call-network-notice-text { display: none; }
-  .call-control { width: 38px; height: 38px; }
-  .call-control-group { gap: 7px; }
 }
 
 .message-list {
@@ -2953,9 +2934,6 @@ a {
   .app-statusbar { display: none; }
   .content-area:has(.message-composer:focus-within) .mobile-conversations,
   .content-area:has(.message-composer:focus-within) .messages-intro { display: none; }
-  .content-area:has(.message-composer:focus-within) .call-surface-expanded:not(:fullscreen):not(.call-surface-maximized) { height: 54px; }
-  .content-area:has(.message-composer:focus-within) .call-surface-expanded:not(:fullscreen):not(.call-surface-maximized) .call-stage,
-  .content-area:has(.message-composer:focus-within) .call-surface-expanded:not(:fullscreen):not(.call-surface-maximized) .call-surface-controls { display: none; }
   .messages-intro p {
     font-size: 10px;
   }

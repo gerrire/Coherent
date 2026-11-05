@@ -2,6 +2,7 @@ import { Phone, PhoneOff } from "lucide-react";
 
 interface IncomingCallCardProps {
   caller: string;
+  conversationName?: string;
   error?: string;
   busy: boolean;
   onDecline: () => void;
@@ -10,13 +11,14 @@ interface IncomingCallCardProps {
   showBrand?: boolean;
 }
 
-export default function IncomingCallCard({ caller, error, busy, onDecline, onAccept, onRetry, showBrand = false }: IncomingCallCardProps) {
+export default function IncomingCallCard({ caller, conversationName, error, busy, onDecline, onAccept, onRetry, showBrand = false }: IncomingCallCardProps) {
   return <div className="incoming-call-card">
     <div className="incoming-call-avatar">{showBrand
       ? <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
       : caller.slice(0, 1).toUpperCase() || "…"}</div>
     <span>Входящий звонок</span>
     <h2 title={caller}>{caller}</h2>
+    {conversationName && <p className="call-mobile-only incoming-call-conversation">{conversationName}</p>}
     {error && <p className="incoming-call-error" role="alert" title={error}>{error}</p>}
     <div className="incoming-call-actions">
       {error && busy && onRetry ? <button type="button" className="incoming-call-accept" onClick={onRetry}>Повторить</button> : <>

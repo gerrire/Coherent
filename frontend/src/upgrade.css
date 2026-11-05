@@ -100,9 +100,6 @@
   .account-name { overflow: hidden; }
   .account-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .account-controls button { width: 38px; height: 42px; }
-  .call-stage { min-height: 0; }
-  .call-surface-controls { overflow-x: auto; justify-content: flex-start; padding: 8px; }
-  .call-control { flex-shrink: 0; }
   .profile-settings-dialog { width: calc(100vw - 16px); height: calc(var(--coherent-visible-height, 100dvh) - 16px); max-height: calc(var(--coherent-visible-height, 100dvh) - 16px); }
   .admin-panel { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .profile-password-actions { flex-wrap: wrap; gap: 12px; }

@@ -31,6 +31,8 @@ import {
   Settings2,
   ChevronsDown,
   ChevronsUp,
+  ChevronLeft,
+  Ellipsis,
   UserPlus,
   Volume2,
   VolumeX,
@@ -389,6 +391,7 @@ function CallRoom({
   const [keyNotice, setKeyNotice] = useState("");
   const [connected, setConnected] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [participantVolumes, setParticipantVolumes] = useState(loadParticipantVolumes);
   const [screenVolumes, setScreenVolumes] = useState(loadScreenVolumes);
   const [encryptedRoom, setEncryptedRoom] = useState<{ callId: string; room: Room; fingerprint: { emoji: string; code: string } } | null>(null);
@@ -411,6 +414,8 @@ function CallRoom({
   useEffect(() => {
     try { localStorage.setItem(SCREEN_VOLUME_STORAGE_KEY, JSON.stringify(screenVolumes)); } catch { /* Storage may be disabled. */ }
   }, [screenVolumes]);
+
+  useEffect(() => { if (compact) setMobileMenuOpen(false); }, [compact]);
 
   useEffect(() => () => closeCallMessaging(currentUserId, call.id), [currentUserId, call.id]);
 
@@ -602,19 +607,39 @@ function CallRoom({
       </div>
       {connected && encryptedRoom?.callId === call.id && <span className="call-encryption" title={`Сквозное шифрование медиа. Ключ создают устройства через MLS. Серверы Когерента и LiveKit его не получают. Сверь эмодзи и код с собеседниками: ${encryptedRoom.fingerprint.code}`}><LockKeyhole size={13} /> Шифрование <span>{encryptedRoom.fingerprint.emoji}</span></span>}
       {compact ? (
-        <button className="call-focus-button" onClick={onFocus} aria-label="Развернуть звонок" title="Развернуть звонок">
-          <ChevronsDown size={17} />
-        </button>
-      ) : (
-        <div className="call-header-tools">
-          <button className="call-focus-button" onClick={onCollapse} aria-label="Свернуть звонок в полосу" title="Свернуть звонок"><ChevronsUp size={17} /></button>
-          <button className="call-focus-button" onClick={onInvite} disabled={!canInvite} aria-label="Добавить участников" title="Добавить участников"><UserPlus size={17} /></button>
-          <button className="call-focus-button" onClick={onToggleView} aria-label="Параметры отображения" title="Параметры отображения"><LayoutGrid size={17} /></button>
-          <button className="call-focus-button" onClick={onToggleSettings} aria-label="Настройки звука и видео" title="Настройки звука и видео"><Settings2 size={17} /></button>
-          <button className="call-focus-button" onClick={onToggleFullscreen} aria-label={isFullscreen ? "Выйти из полноэкранного режима" : "Открыть звонок на весь экран"} title={isFullscreen ? "Выйти из полноэкранного режима" : "На весь экран"}>
-            {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+        <>
+          <button className="call-focus-button call-desktop-only" onClick={onFocus} aria-label="Развернуть звонок" title="Развернуть звонок">
+            <ChevronsDown size={17} />
           </button>
-        </div>
+          <button className="call-focus-button call-mobile-only call-mobile-return" onClick={onFocus} aria-label="Вернуться к звонку">К звонку <ChevronsDown size={14} aria-hidden="true" /></button>
+        </>
+      ) : (
+        <>
+          <div className="call-header-tools call-desktop-only">
+            <button className="call-focus-button" onClick={onCollapse} aria-label="Свернуть звонок в полосу" title="Свернуть звонок"><ChevronsUp size={17} /></button>
+            <button className="call-focus-button" onClick={onInvite} disabled={!canInvite} aria-label="Добавить участников" title="Добавить участников"><UserPlus size={17} /></button>
+            <button className="call-focus-button" onClick={onToggleView} aria-label="Параметры отображения" title="Параметры отображения"><LayoutGrid size={17} /></button>
+            <button className="call-focus-button" onClick={onToggleSettings} aria-label="Настройки звука и видео" title="Настройки звука и видео"><Settings2 size={17} /></button>
+            <button className="call-focus-button" onClick={onToggleFullscreen} aria-label={isFullscreen ? "Выйти из полноэкранного режима" : "Открыть звонок на весь экран"} title={isFullscreen ? "Выйти из полноэкранного режима" : "На весь экран"}>
+              {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            </button>
+          </div>
+          <button className="call-focus-button call-mobile-only call-mobile-back" onClick={onCollapse} aria-label="Вернуться в чат"><ChevronLeft size={19} aria-hidden="true" /> Чат</button>
+          <div className="call-mobile-only call-mobile-tools" onKeyDown={(event) => {
+            if (event.key === "Escape") setMobileMenuOpen(false);
+          }}>
+            <button className="call-focus-button" onClick={() => setMobileMenuOpen(open => !open)} aria-label="Параметры звонка" aria-expanded={mobileMenuOpen}><Ellipsis size={21} aria-hidden="true" /></button>
+            {mobileMenuOpen && <>
+              <button className="call-mobile-menu-dismiss" tabIndex={-1} aria-hidden="true" onClick={() => setMobileMenuOpen(false)} />
+              <div className="call-mobile-menu" role="group" aria-label="Параметры звонка">
+                {canInvite && <button onClick={() => { setMobileMenuOpen(false); onInvite(); }}><UserPlus size={18} /> Добавить участников</button>}
+                <button onClick={() => { setMobileMenuOpen(false); onToggleSettings(); }}><Settings2 size={18} /> Настройки звука и видео</button>
+                <button onClick={() => { setMobileMenuOpen(false); onToggleView(); }}><LayoutGrid size={18} /> Отображение звонка</button>
+                {connected && encryptedRoom && <div className="call-mobile-fingerprint"><LockKeyhole size={16} aria-hidden="true" /><span>Сквозное шифрование<small>{encryptedRoom.fingerprint.emoji} · {encryptedRoom.fingerprint.code}</small></span></div>}
+              </div>
+            </>}
+          </div>
+        </>
       )}
     </div>
   );
@@ -622,7 +647,13 @@ function CallRoom({
   if (error) {
     return <>{header}<div className="call-connect-error" role="alert">{error}<div className="call-connect-error-actions"><button className="call-connect-retry" onClick={retryConnection}>{transferRequired ? "Перенести звонок сюда" : "Повторить подключение"}</button>{!transferRequired && <button onClick={onEnd}>Выйти</button>}</div></div></>;
   }
-  if (!encryptedRoom || encryptedRoom.callId !== call.id) return <>{header}<div className="call-connect-note" role="status">{connectionStatus}</div></>;
+  if (!encryptedRoom || encryptedRoom.callId !== call.id) return <>
+    {header}
+    <div className="call-connect-note" role="status">{connectionStatus}</div>
+    {!compact && <div className="call-mobile-only call-mobile-pending-actions">
+      <button className="call-control call-control-end" onClick={onEnd} disabled={pending} aria-label="Выйти из звонка"><PhoneOff size={19} /> Выйти</button>
+    </div>}
+  </>;
 
   return (
     <div className="lk-room-container">
@@ -837,17 +868,20 @@ function CallControls({
   }
   return (
     <div className="call-control-group">
-      <button className="call-control" onClick={() => change({ microphoneEnabled: !media.microphoneEnabled })} aria-label={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} title={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"}>
+      <button className="call-control" data-off={!media.microphoneEnabled || undefined} onClick={() => change({ microphoneEnabled: !media.microphoneEnabled })} aria-label={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"} title={media.microphoneEnabled ? "Выключить микрофон" : "Включить микрофон"}>
         {media.microphoneEnabled ? <Mic size={20} /> : <MicOff size={20} />}
+        <span className="call-mobile-only call-control-label">Микрофон</span>
       </button>
-      <button className="call-control call-control-camera" onClick={() => change({ cameraEnabled: !media.cameraEnabled })} aria-label={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} title={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"}>
+      <button className="call-control call-control-camera" data-off={!media.cameraEnabled || undefined} onClick={() => change({ cameraEnabled: !media.cameraEnabled })} aria-label={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"} title={media.cameraEnabled ? "Выключить камеру" : "Включить камеру"}>
         {media.cameraEnabled ? <Camera size={20} /> : <CameraOff size={20} />}
+        <span className="call-mobile-only call-control-label">Камера</span>
       </button>
       {isTauri() ? <button className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} disabled={shareStarting} onClick={() => { if (isScreenShareEnabled) void stopNativeShare(); else setSharePickerOpen(true); }}><MonitorUp size={20} /></button>
-        : <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)} onChange={onScreenShareChange} onClick={() => onError("")}><MonitorUp size={20} /></TrackToggle>}
+        : <TrackToggle source={Track.Source.ScreenShare} captureOptions={screenShareCapture(media)} publishOptions={screenSharePublish(media)} showIcon={false} className="call-control call-control-screen" data-share-unavailable={!navigator.mediaDevices?.getDisplayMedia || undefined} aria-label={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} title={isScreenShareEnabled ? "Остановить показ экрана" : "Показать экран"} onDeviceError={(reason) => onError(reason.message)} onChange={onScreenShareChange} onClick={() => onError("")}><MonitorUp size={20} /><span className="call-mobile-only call-control-label">Экран</span></TrackToggle>}
       {sharePickerOpen && <DesktopSharePicker onChoose={(source) => { void startNativeShare(source); }} onClose={() => { if (!shareStarting) setSharePickerOpen(false); }} busy={shareStarting} />}
       <button className="call-control call-control-end" onClick={onEnd} disabled={pending} aria-label="Выйти из звонка" title="Выйти из звонка">
         <PhoneOff size={20} />
+        <span className="call-mobile-only call-control-label">Выйти</span>
       </button>
     </div>
   );

@@ -8,6 +8,7 @@ import "./themes.css";
 import "./scrollbars.css";
 import "./upgrade.css";
 import "./components/message-interactions.css";
+import "./components/mobile-call.css";
 import { applyTheme, loadTheme } from "./lib/theme";
 import { isTauri } from "@tauri-apps/api/core";
 import { installDesktopMediaConsent } from "./lib/desktopPermissions";

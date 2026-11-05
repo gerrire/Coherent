@@ -183,7 +183,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   }, []);
   const callsRefresh = useRef<Promise<void> | null>(null);
   const callsRevision = useRef(0);
-  const [callCollapsed, setCallCollapsed] = useState(false);
+  const [collapsedCallId, setCollapsedCallId] = useState<string | null>(null);
   const [availableCalls, setAvailableCalls] = useState<Call[]>([]);
   const [callPending, setCallPending] = useState(false);
   const [callError, setCallError] = useState("");
@@ -243,7 +243,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const resumableCall = availableCalls.find((call) => call.conversation_id === activeConversationId
     && call.status === "active"
     && call.participants.some((participant) => participant.user_id === user.id && participant.state === "left"));
-  const callCompact = Boolean(currentCall && (callCollapsed || section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
+  const callConversation = conversations.find(item => item.id === currentCall?.conversation_id);
+  const callCompact = Boolean(currentCall && (collapsedCallId === currentCall.id || section !== "messages" || showWelcome || activeConversationId !== currentCall.conversation_id));
   const callPanelReady = Boolean(currentCall?.status === "active"
     && currentCall.id === ownedCallId
     && currentCall.participants.some((participant) => participant.user_id === user.id && participant.state === "joined")
@@ -899,6 +900,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       await updateMedia({ cameraEnabled: false });
       const call = await api.acceptCall(target.id);
       callsRevision.current += 1;
+      setCollapsedCallId(null);
+      setMobileNavigationOpen(false);
       setCurrentCall(call);
       setAvailableCalls((current) => current.map((item) => item.id === call.id ? call : item));
       setActiveConversationId(call.conversation_id);
@@ -1285,8 +1288,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             <CallPanel
               key={currentCall.id}
               call={currentCall}
-              conversationTitle={conversations.find((item) => item.id === currentCall.conversation_id)?.name ?? undefined}
-              isGroupConversation={conversations.find((item) => item.id === currentCall.conversation_id)?.kind === "group"}
+              conversationTitle={callConversation?.name ?? undefined}
+              isGroupConversation={callConversation?.kind === "group"}
               currentUserId={user.id}
               compact={callCompact}
               error={callError}
@@ -1302,9 +1305,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
               onInvite={inviteToCall}
               onAccept={() => void acceptCall()}
               onEnd={() => void endCall()}
-              onCollapse={() => setCallCollapsed(true)}
+              onCollapse={() => { setCollapsedCallId(currentCall.id); setCallSettingsOpen(false); }}
               onFocus={() => {
-                setCallCollapsed(false);
+                setCollapsedCallId(null);
+                setMobileNavigationOpen(false);
                 setActiveConversationId(currentCall.conversation_id);
                 setSection("messages");
                 setShowWelcome(false);
@@ -1448,7 +1452,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       {draggingFiles && <div className="file-drop-overlay" aria-hidden="true">Перетащи файл сюда, чтобы прикрепить к беседе</div>}
 
       {!isTauri() && incomingCallId && currentCall && <div className="incoming-call-backdrop" role="dialog" aria-modal="true" aria-label="Входящий звонок">
-        <IncomingCallCard caller={(currentCall.caller_display_name || currentCall.caller_username)} error={callError} busy={callPending} onDecline={() => void endCall()} onAccept={() => void acceptCall()} />
+        <IncomingCallCard caller={(currentCall.caller_display_name || currentCall.caller_username)} conversationName={callConversation?.kind === "group" ? conversationTitle(callConversation) : undefined} error={callError} busy={callPending} onDecline={() => void endCall()} onAccept={() => void acceptCall()} />
       </div>}
 
       <audio ref={ringtoneRef} loop preload="auto" aria-hidden="true">
