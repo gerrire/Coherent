@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -60,18 +61,21 @@ def test_call_identity_is_volatile_scoped_and_needs_no_recovery(client, csrf_tok
     assert challenge.status_code == 200
     challenge = challenge.json()
     payload = f"coherent/call-device/v1:{call_id}:{device['device_id']}:{device['signature_key']}"
-    signed = (
-        b"coherent/device-proof/v1\0action\0"
-        + UUID(alice).bytes
-        + UUID(device["device_id"]).bytes
-        + signer.public_key().public_bytes_raw()
-        + base64.b64decode(challenge["nonce"])
-        + hashlib.sha256(payload.encode()).digest()
-    )
+    def proof(nonce, payload):
+        signed = (
+            b"coherent/device-proof/v1\0action\0"
+            + UUID(alice).bytes
+            + UUID(device["device_id"]).bytes
+            + signer.public_key().public_bytes_raw()
+            + base64.b64decode(nonce)
+            + hashlib.sha256(payload.encode()).digest()
+        )
+        return base64.b64encode(signer.sign(signed)).decode()
+
     body = {
         "challenge_id": challenge["challenge_id"],
         "device": device,
-        "proof": base64.b64encode(signer.sign(signed)).decode(),
+        "proof": proof(challenge["nonce"], payload),
         "platform": "browser",
     }
     accepted = client.post(f"/api/v1/calls/{call_id}/crypto/devices", headers=headers, json=body)
@@ -86,6 +90,38 @@ def test_call_identity_is_volatile_scoped_and_needs_no_recovery(client, csrf_tok
     directory = client.get(f"/api/v1/conversations/{media}/secure", headers=headers)
     assert directory.status_code == 200
     assert directory.json()["call_devices"] == [device]
+    challenge = client.post(
+        "/api/v1/security/challenges",
+        headers=headers,
+        json={"purpose": "action", "call_id": call_id},
+    ).json()
+    request_id = str(uuid4())
+    payload = json.dumps(
+        {
+            "operation": "acquire_lease",
+            "conversation_id": media,
+            "device_id": device["device_id"],
+            "request_id": request_id,
+            "kind": "init",
+            "recover": False,
+            "recovery_group_id": None,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    initial = client.post(
+        f"/api/v1/conversations/{media}/secure/lease",
+        headers=headers,
+        json={
+            "device_id": device["device_id"],
+            "request_id": request_id,
+            "operation": "init",
+            "challenge_id": challenge["challenge_id"],
+            "proof": proof(challenge["nonce"], payload),
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["roster"] == [device["device_id"]]
     login = client.post(
         "/api/v1/auth/login",
         headers={"X-CSRF-Token": csrf_token},
@@ -134,13 +170,12 @@ def test_call_identity_is_volatile_scoped_and_needs_no_recovery(client, csrf_tok
                 approved_at=now,
                 call_id=UUID(call_id),
             )
-            abandoned = uuid4()
-            session.add_all([replacement, MlsState(
-                conversation_id=UUID(media),
-                lease_id=abandoned,
-                lease_device_id=UUID(device["device_id"]),
-                lease_expires_at=now + timedelta(minutes=2),
-            )])
+            abandoned = UUID(initial.json()["lease_id"])
+            state = await session.get(MlsState, UUID(media))
+            assert state.lease_id == abandoned
+            # Keep the abandoned lease live even on a slow test runner.
+            state.lease_expires_at = now + timedelta(minutes=2)
+            session.add(replacement)
             await session.commit()
             user = await session.get(User, UUID(alice))
             grant = await lease(session, user, UUID(media), LeaseRequest(

@@ -339,7 +339,9 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
     account_ids = set(
         await session.scalars(select(E2eeDevice.user_id).where(E2eeDevice.id.in_(desired)))
     )
-    if account_ids != set(await conversation_member_ids(session, conversation)):
+    if device.call_id is None and account_ids != set(
+        await conversation_member_ids(session, conversation)
+    ):
         raise HTTPException(
             status_code=409,
             detail="Участник ещё не подготовил ключи. Откройте Когерент на устройствах участников",
@@ -347,6 +349,12 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
     if body.device_id not in desired:
         raise HTTPException(status_code=403, detail="Устройство не входит в беседу")
     current = [UUID(x) for x in json.loads(state.roster)]
+    if (
+        device.call_id is not None
+        and body.operation == "reset"
+        and ((set(current) & set(await desired_devices(session, conversation))) - {body.device_id})
+    ):
+        raise HTTPException(409, "Ждём обновления ключей от участников звонка")
     if body.operation == "reset" and body.device_id in current and not body.recover:
         raise HTTPException(
             status_code=409, detail="Это устройство уже участвует в защищённой сессии"
@@ -392,7 +400,7 @@ async def lease(session, user, conversation_id: UUID, body: LeaseRequest) -> dic
     if body.operation == "remove" and not targets:
         raise HTTPException(409, "Состав защищённой сессии уже обновлён")
     lease_id = uuid4()
-    expires = now + timedelta(minutes=2)
+    expires = now + (timedelta(seconds=12) if device.call_id is not None else timedelta(minutes=2))
     packages = []
     for target in [] if body.operation == "remove" else targets:
         package = await session.scalar(
@@ -610,8 +618,10 @@ async def publish(
     account_ids = set(
         await session.scalars(select(E2eeDevice.user_id).where(E2eeDevice.id.in_(body.roster)))
     )
-    if body.operation != "remove" and account_ids != set(
-        await conversation_member_ids(session, conversation)
+    if (
+        device.call_id is None
+        and body.operation != "remove"
+        and account_ids != set(await conversation_member_ids(session, conversation))
     ):
         raise HTTPException(
             status_code=409, detail="В защищённой сессии отсутствует участник беседы"

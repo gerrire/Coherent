@@ -31,6 +31,9 @@ async def sync_members(session, call):
         await session.flush()
         link = CallMediaSession(call_id=call.id, conversation_id=conversation.id)
         session.add(link)
+    else:
+        # Serialize membership changes with MLS leases and commits.
+        await session.get(Conversation, link.conversation_id, with_for_update=True)
     current = set(
         await session.scalars(
             select(ConversationMember.user_id).where(

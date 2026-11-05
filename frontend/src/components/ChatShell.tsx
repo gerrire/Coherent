@@ -525,18 +525,6 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   }, [refreshCalls]);
 
   useEffect(() => {
-    if (!currentCall || !currentCall.participants.some((participant) =>
-      participant.user_id === user.id && participant.state === "joined"
-    )) {
-      return;
-    }
-    const callId = currentCall.id;
-    const handlePageHide = () => api.endCallOnPageHide(callId);
-    window.addEventListener("pagehide", handlePageHide);
-    return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [currentCall, user.id]);
-
-  useEffect(() => {
     let disconnect: (() => void) | null = null;
     let reconnectTimer: number | undefined;
     let stopped = false;
@@ -561,6 +549,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       }, (data) => {
         try {
           const payload = JSON.parse(data) as { type?: string; conversation_id?: string; removed_user_id?: string; message?: Message; call?: Pick<Call, "status" | "conversation_id"> };
+          if (payload.type === "call_media") {
+            window.dispatchEvent(new CustomEvent("coherent-media-membership", { detail: payload.conversation_id }));
+            return;
+          }
           if (payload.type === "call") {
             if (payload.call?.status === "missed" && payload.call.conversation_id === activeConversationRef.current) {
               setMessageVersion(current => current + 1);

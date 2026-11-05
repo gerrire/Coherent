@@ -7,7 +7,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from coherent_api.models.call import Call
+from coherent_api.models.call_media import CallMediaSession
 from coherent_api.models.call_member import CallMember
+from coherent_api.models.conversation import Conversation
 from coherent_api.models.e2ee import E2eeDevice
 from coherent_api.services.calls import is_expired
 
@@ -31,6 +33,9 @@ async def register_call_device(session, user, call_id, body):
 
     # Serialize two refreshes from the same account, including first registration.
     await session.scalar(select(User).where(User.id == user.id).with_for_update())
+    link = await session.get(CallMediaSession, call_id)
+    if link is not None:
+        await session.get(Conversation, link.conversation_id, with_for_update=True)
     await joined_call(session, user, call_id)
     if body.device.account_id != user.id:
         raise HTTPException(403, "Аккаунт устройства не совпадает")

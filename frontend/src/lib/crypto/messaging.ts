@@ -43,6 +43,9 @@ export class MlsMessaging {
   private initialization: Promise<void> | null = null;
   private acquired = new Map<string, { conversation: Conversation; lease: Lease }>();
   private callStreams = new Map<string,string>();
+  private callConversation: Conversation | null = null;
+  private callDevices = new Map<string, string>();
+  private nextPackageCheck = 0;
   private migrations = new Map<string, Promise<void>>();
   private migrated = new Set<string>();
   private decoded = new Map<string, { signature: string; message: Message }>();
@@ -91,7 +94,9 @@ export class MlsMessaging {
         const signed = await this.crypto.execute({operation:"sign_action",nonce:challenge.nonce,payload});
         if(this.closed) throw new Error("Звонок уже закрыт");
         await apiRequest(`/api/v1/calls/${this.callId}/crypto/devices`,{method:"POST",body:JSON.stringify({challenge_id:challenge.challenge_id,device:this.device,proof:signed.result.proof,platform:isTauri()?"windows":"browser"})});
-        await this.packages(); return;
+        await this.packages();
+        this.nextPackageCheck = Date.now() + 10000;
+        return;
       }
       const status = await api.securityStatus();
       if (!status.configured) throw new MessagingAccessError("setup", "Настрой ключ восстановления в профиле, чтобы открыть защищённую переписку");
@@ -114,10 +119,12 @@ export class MlsMessaging {
   }
   private async publishPackages(): Promise<void> {
     const device = this.device!;
+    const target = this.callId ? 4 : 16;
+    const minimum = this.callId ? 2 : 8;
     const count = await apiRequest<{ available: number }>(`/api/v1/security/key-packages/count?device_id=${device.device_id}`);
     let pending = (await this.crypto.pendingDeliveries()).filter(item => item.operation === "key_package").slice(0, 16);
-    if (count.available < 8) {
-      for (let i = pending.length; i < 16; i++) await this.crypto.execute({ operation: "key_package" });
+    if (count.available < minimum) {
+      for (let i = pending.length; i < target - (this.callId ? count.available : 0); i++) await this.crypto.execute({ operation: "key_package" });
       pending = (await this.crypto.pendingDeliveries()).filter(item => item.operation === "key_package").slice(0, 16);
     }
     if (!pending.length) return;
@@ -139,12 +146,13 @@ export class MlsMessaging {
   private async checkDirectory(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     const directory = await this.directory(conversation.id);
     if (this.callId) {
-      if (!directory.call_devices || !directory.ready || !same(Object.keys(directory.ready),conversation.members.map(m=>m.id))) throw new MessagingAccessError("changed","Состав звонка изменился. Повторяем подключение");
+      if (!directory.call_devices || !directory.ready) throw new MessagingAccessError("changed","Состав звонка изменился. Повторяем подключение");
       for (const device of directory.call_devices) {
+        if (this.callDevices.get(device.device_id) === device.signature_key) continue;
         if (device.device_id === this.device!.device_id && device.signature_key !== this.device!.signature_key) throw new Error("Ключ текущего устройства не совпадает");
         await this.crypto.execute({operation:"pin_device",device});
+        this.callDevices.set(device.device_id, device.signature_key);
       }
-      if (Object.values(directory.ready).some(ready=>!ready)) throw new MessagingAccessError("waiting","Подключаем защищённый звук участников…");
       return directory;
     }
     if (!same(directory.accounts.map(a => a.account_id), conversation.members.map(m => m.id))) throw new MessagingAccessError("changed", "Состав беседы изменился. Обнови её перед отправкой");
@@ -257,6 +265,7 @@ export class MlsMessaging {
     let verified = this.devices(directory);
     for (;;) {
       const cursor = Number((await this.crypto.execute({ operation: "stream_cursor", stream: conversation.id })).result.sequence);
+      if (this.callId && cursor >= directory.state.sequence) return;
       const page = await apiRequest<{ events: SecureEvent[]; has_more: boolean }>(`/api/v1/conversations/${conversation.id}/secure/events?device_id=${this.device!.device_id}&after=${cursor}`);
       for (const event of page.events) {
         const packet = JSON.parse(event.payload) as Operation;
@@ -316,7 +325,7 @@ export class MlsMessaging {
         if (typeof lease.group_id !== "string" || typeof lease.lease_id !== "string" || typeof lease.nonce !== "string" || !Array.isArray(lease.roster) || !Array.isArray(lease.packages)) throw new ApiError("Не удалось получить состояние защищённой отправки", 502);
         this.acquired.set(lease.lease_id, { conversation, lease }); return lease;
       }
-      catch (error) { const retry = !(error instanceof ApiError) || error.status >= 500 || (error.status === 409 && error.message.includes("Другая отправка")); if (!retry || attempt >= 3) throw error; await pause(1100); }
+      catch (error) { const retry = !(error instanceof ApiError) || error.status >= 500 || (error.status === 409 && error.message.includes("Другая отправка")); if (this.callId || !retry || attempt >= 3) throw error; await pause(1100); }
     }
   }
   private async ensureGroup(conversation: Conversation, directory: Directory, repair = false, remaining = 4): Promise<void> {
@@ -324,11 +333,23 @@ export class MlsMessaging {
     const local = state.group_id ? await this.crypto.execute({ operation: "group_status", conversation_id: state.group_id }) : null;
     const recover = !!state.group_id && state.roster.includes(this.device!.device_id) && (repair || !local?.result.exists);
     if (!recover && state.group_id && state.roster.includes(this.device!.device_id) && same(state.roster, desired)) return;
+    if (this.callId && state.group_id && (recover || !state.roster.includes(this.device!.device_id))
+      && state.roster.some(id => id !== this.device!.device_id && desired.includes(id))) {
+      throw new MessagingAccessError("waiting", "Ждём обновления ключей от участников звонка");
+    }
     const operation = !state.group_id ? "init" : recover || !state.roster.includes(this.device!.device_id) ? "reset" : state.roster.some(id => !desired.includes(id)) ? "remove" : "add";
     const lease = await this.acquire(conversation, operation, recover ? state.group_id : null);
+    if (this.callId && lease.expected_sequence !== state.sequence) {
+      // A peer committed between the directory read and the lease. Apply
+      // its commit before generating one against the new roster.
+      await this.cancelLease(conversation.id, lease);
+      this.acquired.delete(lease.lease_id);
+      throw new MessagingAccessError("waiting", "Состав звонка обновился");
+    }
     const fresh = await this.checkDirectory(conversation);
     directory.accounts = fresh.accounts;
     directory.eligible_devices = fresh.eligible_devices;
+    directory.call_devices = fresh.call_devices;
     await this.crypto.execute({ operation: "authorize_conversation", conversation_id: lease.group_id, device_ids: lease.roster });
     if (operation === "init" || operation === "reset") await this.crypto.execute({ operation: "create_group", conversation_id: lease.group_id });
     const result = await this.crypto.execute(operation === "remove"
@@ -355,7 +376,10 @@ export class MlsMessaging {
   }
   private async prepareOnce(conversation: Conversation, confirmed?: KeyReview[]): Promise<Directory> {
     await this.ready();
-    if(this.callId) await this.packages();
+    if (this.callId && Date.now() >= this.nextPackageCheck) {
+      await this.packages();
+      this.nextPackageCheck = Date.now() + 10000;
+    }
     const directory = await this.checkDirectory(conversation, confirmed);
     await this.resolveCandidates(conversation);
     try { await this.pull(conversation, directory); }
@@ -479,17 +503,19 @@ export class MlsMessaging {
     this.decoded.set(message.id, { signature, message: result }); return result;
   }
   async mediaKey(callId: string): Promise<{key: string; epoch: number; group: string}> {
-    let conversation = await api.callCrypto(callId);
+    const conversation = this.callConversation ?? await api.callCrypto(callId);
+    if (this.callId) this.callConversation = conversation;
     this.callStreams.set(callId,conversation.id);
     return this.lock(async () => {
       let directory:Directory;
-      for (let attempt=0;;attempt++) {
-        try { directory=await this.prepare(conversation); break; }
+      const deadline = Date.now() + 18000;
+      for (;;) {
+        try { directory=await (this.callId ? this.prepareOnce(conversation) : this.prepare(conversation)); break; }
         catch (error) {
-          const retryable = error instanceof MessagingAccessError && ["waiting","changed"].includes(error.kind) || error instanceof ApiError && error.status===409;
-          if (!this.callId || attempt>=29 || !retryable || this.closed) throw error;
-          await pause(500);
-          conversation=await api.callCrypto(callId);
+          const retryable = error instanceof MessagingAccessError && ["waiting","changed"].includes(error.kind)
+            || error instanceof ApiError && (error.status === 409 || error.status >= 500);
+          if (!this.callId || Date.now() >= deadline || !retryable || this.closed) throw error;
+          await pause(250 + Math.random() * 150);
         }
       }
       const result = await this.crypto.execute({operation:"media_key",conversation_id:directory.state.group_id!,call_id:callId});
