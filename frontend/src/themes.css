@@ -157,12 +157,9 @@
   .composer-field button[type="submit"]:hover:not(:disabled), .profile-password-actions button:hover) {
   background: var(--theme-accent-hover); box-shadow: none;
 }
-:root[data-theme] .rail-home { background: var(--theme-accent); color: white; box-shadow: none; }
-:root[data-theme] .rail-home:hover { background-color: var(--theme-accent-hover); }
-:root[data-theme="purple"] .rail-home { background-image: linear-gradient(145deg, #b25eff, #752fe0); }
+:root[data-theme]:not([data-theme="purple"]) .rail-home { background: var(--theme-accent); }
 :root[data-theme] .rail-item.selected::before { background: var(--theme-accent-hover); }
 :root[data-theme] .brand-mark span { background: white; }
-:root[data-theme] .rail-home .brand-mark,
 :root[data-theme] .art-main-icon .brand-mark { background: transparent; }
 :root[data-theme] :is(.avatar-user, .friend-row:nth-child(n) .friend-avatar, .call-invite-avatar,
   .call-tile-avatar, .art-avatar, .avatar-pink, .avatar-blue, .avatar-gold, .mini-avatars i) {

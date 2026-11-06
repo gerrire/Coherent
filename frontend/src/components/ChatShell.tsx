@@ -1129,7 +1129,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       <button ref={mobileDrawerClose} className="mobile-drawer-close" aria-label="Закрыть меню бесед" onClick={closeMobileNavigation}><X size={21} /></button>
       <aside className="server-rail">
         <button className="rail-home active" aria-label="Главная Coherent" title="Главная" onClick={openHome}>
-          <span className="brand-mark"><span /><span /><span /></span>
+          <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+            <path d="m5 8.5 1.1 4.2M10 6v8m5-5.5-1.1 4.2" />
+          </svg>
         </button>
         <div className="rail-separator" />
         {servers.map((server) => <button key={server.id} className={`rail-item community-rail-item ${selectedServerId === server.id ? "selected" : ""}`} title={server.name} aria-label={`Открыть сервер ${server.name}`} onClick={() => openServer(server)}>{server.name.slice(0, 2).toUpperCase()}</button>)}
