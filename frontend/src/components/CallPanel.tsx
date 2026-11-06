@@ -42,8 +42,8 @@ import { api, ApiError, displayName, type Call } from "../lib/api";
 import {
   cameraCapture,
   cameraPublish,
-  enableMicrophone,
   sameMicrophoneCapture,
+  updateVoiceQuality,
   microphoneError,
   screenShareCapture,
   screenSharePublish,
@@ -53,7 +53,7 @@ import {
 } from "../lib/media";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ParticipantPicker from "./ParticipantPicker";
-import { applyMicrophoneProcessing, restartCallMicrophone } from "../lib/microphoneProcessor";
+import { applyMicrophoneProcessing, browserMicrophoneFallback, enableCallMicrophone, MicrophoneProcessorError, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { NativeScreenAudio } from "../lib/nativeScreenAudio";
 import { NativeScreenShare, type ScreenSource } from "../lib/nativeScreenShare";
 import DesktopSharePicker from "./DesktopSharePicker";
@@ -604,12 +604,6 @@ function CallMediaBridge({
   mediaRef.current = media;
 
   useEffect(() => {
-    const fallback = () => onError("Обработка микрофона перестала выдавать звук. Шумоподавление временно отключено; голос передаётся с прежней громкостью.");
-    window.addEventListener("coherent-microphone-processing-fallback", fallback);
-    return () => window.removeEventListener("coherent-microphone-processing-fallback", fallback);
-  }, [onError]);
-
-  useEffect(() => {
     if (!connected) return;
     let active = true;
     async function prepare() {
@@ -617,28 +611,12 @@ function CallMediaBridge({
       await room.localParticipant.setAttributes({ "coherent.deafened": selected.deafened ? "true" : "false" }).catch(() => undefined);
       if (!active) return;
       if (selected.microphoneEnabled) {
-        await enableMicrophone(room, selected);
         try {
-          await applyMicrophoneProcessing(room, selected);
-        } catch (reason) {
-          const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-          await track?.stopProcessor().catch(() => undefined);
-          let browserFallback = false;
-          if (selected.noiseProcessor === "rnnoise" && active) {
-            const fallback: MediaPreferences = { ...selected, noiseProcessor: "browser", noiseSuppression: true };
-            try {
-              await restartCallMicrophone(room, fallback);
-              await applyMicrophoneProcessing(room, fallback);
-              browserFallback = true;
-            } catch {
-              // Keep a usable input if the browser cannot apply its filter.
-              await restartCallMicrophone(room, selected).catch(() => undefined);
-            }
-          }
-          // Retain the live input if optional DSP fails; never silently mute it.
-          if (active) onError(browserFallback
-            ? "RNNoise не запустился. Временно работает шумоподавление браузера."
-            : `Дополнительная обработка недоступна. Микрофон работает без неё. ${microphoneError(reason)}`);
+          await enableCallMicrophone(room, selected);
+        } catch (error) {
+          if (!active || !(error instanceof MicrophoneProcessorError)) throw error;
+          await enableCallMicrophone(room, browserMicrophoneFallback(selected));
+          if (active) onError("RNNoise не запустился. Временно работает обработка браузера.");
         }
       }
       if (selected.cameraEnabled) {
@@ -669,7 +647,7 @@ function CallMediaBridge({
       while (active && selected !== mediaRef.current) {
         const next = mediaRef.current;
         if (next.microphoneEnabled) {
-          if (!selected.microphoneEnabled) await enableMicrophone(room, next);
+          if (!selected.microphoneEnabled) await enableCallMicrophone(room, next);
           else if (!sameMicrophoneCapture(selected, next)) {
             await restartCallMicrophone(room, next);
           }
@@ -677,6 +655,7 @@ function CallMediaBridge({
         } else if (selected.microphoneEnabled) {
           await room.localParticipant.setMicrophoneEnabled(false);
         }
+        if (next.voiceQuality !== selected.voiceQuality) await updateVoiceQuality(room, next.voiceQuality);
         selected = next;
       }
     }

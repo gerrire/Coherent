@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Track, type Room } from "livekit-client";
-import { microphoneCapture, microphoneError, type MediaPreferences } from "../lib/media";
+import { microphoneCapture, microphoneError, microphoneProcessingConstraints, type MediaPreferences } from "../lib/media";
 import { resumeAudioContext } from "../lib/audioContext";
-import type { MicrophoneProcessor } from "../lib/microphoneProcessor";
+import { browserMicrophoneFallback, createMicrophoneProcessor, type MicrophoneProcessor } from "../lib/microphoneProcessor";
 import { createAudioLoopback } from "../lib/audioLoopback";
 
 export default function MicrophoneCheck({ media, room }: { media: MediaPreferences; room?: Room | null }) {
@@ -42,8 +42,9 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
       context = new AudioContext({ latencyHint: "interactive" });
       await resumeAudioContext(context);
       if (!active) return;
-      const live = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      let track = live && !live.isMuted && live.mediaStreamTrack.readyState === "live" ? live.mediaStreamTrack : undefined;
+      const published = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+      const live = published && !published.isMuted && published.mediaStreamTrack.readyState === "live" ? published : undefined;
+      let track = live?.mediaStreamTrack;
       if (!track) {
         try { ownedStream = await navigator.mediaDevices.getUserMedia({ audio: microphoneCapture(media) }); }
         catch (error) {
@@ -54,26 +55,25 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
       }
       if (!active) { cleanup(); return; }
       if (!track) throw new Error("Микрофон не передаёт звуковую дорожку.");
-      inputSource = context.createMediaStreamSource(new MediaStream([track]));
+      const input = live?.mediaStream?.getAudioTracks()[0] ?? track;
+      inputSource = context.createMediaStreamSource(new MediaStream([input]));
       inputAnalyser = context.createAnalyser(); inputAnalyser.fftSize = 1024;
       inputSource.connect(inputAnalyser);
       if (ownedStream) {
-        const rawTrack = track;
-        const { createMicrophoneProcessor } = await import("../lib/microphoneProcessor");
-        loopback = await createAudioLoopback(track, abort.signal);
-        if (!active) { cleanup(); return; }
-        // Exercise the same DSP graph used by calls, not a separate raw-input meter.
-        processor = createMicrophoneProcessor(media);
-        try {
-          await processor.init({ kind: Track.Kind.Audio, track, audioContext: context });
-          track = processor.processedTrack ?? track;
-          await loopback.replaceTrack(track);
-        } catch {
-          await processor.destroy(); processor = undefined;
-          await loopback.replaceTrack(rawTrack);
-          processingSkipped = true;
-          // Calls use the live source too if optional DSP cannot initialize.
+        if (media.noiseProcessor === "rnnoise") {
+          processor = createMicrophoneProcessor(media);
+          try {
+            await processor.init({ kind: Track.Kind.Audio, track, audioContext: context });
+            track = processor.processedTrack ?? track;
+          } catch {
+            await processor.destroy(); processor = undefined;
+            if (!active) { cleanup(); return; }
+            await track.applyConstraints(microphoneProcessingConstraints(browserMicrophoneFallback(media)));
+            processingSkipped = true;
+          }
         }
+        if (!active) { cleanup(); return; }
+        loopback = await createAudioLoopback(track, abort.signal);
         if (!active) { cleanup(); return; }
         track = loopback.track;
       }
@@ -99,8 +99,8 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
         setLevel(value);
         if (value > 2) {
           detected = true;
-          setStatus(live ? "Сигнал отправляемой дорожки звонка поступает." : processingSkipped || processor?.usesFallback()
-            ? "Звук передаётся. Неисправное шумоподавление автоматически обойдено."
+          setStatus(live ? "Сигнал отправляемой дорожки звонка поступает." : processingSkipped
+            ? "RNNoise не запустился. Звук передаётся с обработкой браузера."
             : "Звук проходит обработку и локальную передачу WebRTC.");
         }
         else if (!detected && Date.now() - started > 5000) setStatus("Сигнал не обнаружен. Проверь кнопку mute на микрофоне, устройство и разрешения Windows.");
@@ -111,7 +111,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
     void start().catch(error => { if (active) { setStatus(microphoneError(error)); setChecking(false); } cleanup(); });
     return () => { active = false; cleanup(); };
     // A changed input stops the previous capture before starting another one.
-  }, [checking, media.microphoneId, media.microphoneVolume, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, media.echoCancellation, media.autoGainControl, room]);
+  }, [checking, media.microphoneId, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, media.echoCancellation, media.autoGainControl, room]);
 
   return <div className="microphone-check">
     <button type="button" onClick={() => setChecking(current => !current)}>{checking ? "Остановить проверку" : "Проверить микрофон"}</button>
