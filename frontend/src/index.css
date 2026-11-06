@@ -786,25 +786,7 @@ a {
   border: 1px solid rgba(203, 165, 255, .18);
   border-radius: 11px;
   background: rgba(141, 70, 224, .16);
-}
-
-.workspace-symbol .brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  box-shadow: none;
-}
-
-.workspace-symbol .brand-mark span {
-  width: 2px;
-}
-
-.workspace-symbol .brand-mark span:nth-child(1), .workspace-symbol .brand-mark span:nth-child(3) {
-  height: 6px;
-}
-
-.workspace-symbol .brand-mark span:nth-child(2) {
-  height: 10px;
+  color: var(--purple-soft);
 }
 
 .workspace-name {
