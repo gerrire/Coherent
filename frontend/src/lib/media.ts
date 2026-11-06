@@ -120,7 +120,7 @@ export function loadMediaPreferences(): MediaPreferences {
       ...stored,
       cameraEnabled: false,
       microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
-        ? Math.min(100, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
+        ? Math.min(200, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
       noiseSuppression: strongNoiseSuppression || (legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression),
       noiseProcessor: saved.noiseProcessor === "rnnoise" ? "rnnoise" : "browser",
       rnnoisePreset: (["natural", "balanced", "strong"] as RnnoisePreset[]).includes(saved.rnnoisePreset as RnnoisePreset)
@@ -151,15 +151,27 @@ export function saveMediaPreferences(value: MediaPreferences): void {
   }
 }
 
-export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions {
+export function microphoneProcessingConstraints(value: MediaPreferences): AudioCaptureOptions {
   return {
-    deviceId: value.microphoneId || undefined,
     noiseSuppression: value.noiseProcessor === "browser" && value.noiseSuppression,
     echoCancellation: value.echoCancellation,
-    autoGainControl: value.autoGainControl,
+    autoGainControl: value.noiseProcessor === "browser" && value.autoGainControl,
     channelCount: 1,
     voiceIsolation: false,
   };
+}
+
+export function microphoneCapture(value: MediaPreferences): AudioCaptureOptions {
+  return {
+    ...microphoneProcessingConstraints(value),
+    // LiveKit's audio restart only forwards the other constraints when a
+    // deviceId is provided. An ideal default is portable across browsers.
+    deviceId: value.microphoneId ? { exact: value.microphoneId } : { ideal: "default" },
+  };
+}
+
+export function sameMicrophoneCapture(previous: MediaPreferences, next: MediaPreferences): boolean {
+  return JSON.stringify(microphoneCapture(previous)) === JSON.stringify(microphoneCapture(next));
 }
 
 export async function enableMicrophone(room: Room, value: MediaPreferences): Promise<void> {

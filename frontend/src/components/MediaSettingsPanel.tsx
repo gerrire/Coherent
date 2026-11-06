@@ -170,8 +170,8 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
         </label>
         <label className="media-volume-setting">
           <span>Громкость микрофона <strong>{media.microphoneVolume}%</strong></span>
-          <input type="range" min="0" max="100" step="5" value={media.microphoneVolume} onChange={(event) => void change({ microphoneVolume: Number(event.target.value) })} />
-          <small>100% — полный уровень. Голос усиливается и выравнивается автоматически, громкие пики ограничиваются.</small>
+          <input type="range" min="0" max="200" step="5" value={media.microphoneVolume} onChange={(event) => void change({ microphoneVolume: Number(event.target.value) })} />
+          <small>100% — обычный уровень. Можно усилить тихий микрофон до 200%. Громкие пики ограничиваются.</small>
         </label>
         <MicrophoneCheck media={media} room={room} />
         <label>
@@ -274,7 +274,7 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
             <button type="button" className={media.rnnoisePreset === "balanced" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "balanced" })}>Сбалансированный</button>
             <button type="button" className={media.rnnoisePreset === "strong" ? "active" : ""} disabled={busy} onClick={() => void change({ rnnoisePreset: "strong" })}>Подавление</button>
           </div>
-          <small>Все режимы передают один обработанный поток. Пресеты меняют приглушение фона в паузах, без смешивания с исходным голосом.</small>
+          <small>Все режимы передают один обработанный поток. Тихая речь усиливается автоматически. Пресеты меняют степень приглушения фона в паузах.</small>
         </div>}
         {media.noiseProcessor === "browser" && <>
         <div className="media-voice-profiles">
@@ -293,10 +293,10 @@ export default function MediaSettingsPanel({ media, audioProcessingState, onChan
           <input type="checkbox" disabled={busy || !processingSupported.echoCancellation} checked={media.echoCancellation && processingSupported.echoCancellation} onChange={(event) => void change({ echoCancellation: event.target.checked })} />
           <span className="media-setting-option">Подавление эха<small>{processingCaption("echoCancellation", media.echoCancellation)}</small></span>
         </label>
-        <label className="media-setting-check">
+        {media.noiseProcessor === "browser" && <label className="media-setting-check">
           <input type="checkbox" disabled={busy || !processingSupported.autoGainControl} checked={media.autoGainControl && processingSupported.autoGainControl} onChange={(event) => void change({ autoGainControl: event.target.checked })} />
           <span className="media-setting-option">Автоматическая громкость микрофона<small>{processingCaption("autoGainControl", media.autoGainControl)}</small></span>
-        </label>
+        </label>}
         <label className="media-setting-check">
           <input type="checkbox" disabled={busy} checked={media.deafened} onChange={(event) => void change({ deafened: event.target.checked })} />
           Не слышать собеседников

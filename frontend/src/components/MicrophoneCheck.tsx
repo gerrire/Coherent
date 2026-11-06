@@ -59,11 +59,11 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
       inputSource.connect(inputAnalyser);
       if (ownedStream) {
         const rawTrack = track;
-        const { MicrophoneProcessor } = await import("../lib/microphoneProcessor");
+        const { createMicrophoneProcessor } = await import("../lib/microphoneProcessor");
         loopback = await createAudioLoopback(track, abort.signal);
         if (!active) { cleanup(); return; }
         // Exercise the same DSP graph used by calls, not a separate raw-input meter.
-        processor = new MicrophoneProcessor(media.microphoneVolume, media.noiseSuppression ? "noisy" : "soft", media.noiseProcessor, media.rnnoisePreset);
+        processor = createMicrophoneProcessor(media);
         try {
           await processor.init({ kind: Track.Kind.Audio, track, audioContext: context });
           track = processor.processedTrack ?? track;
@@ -111,7 +111,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
     void start().catch(error => { if (active) { setStatus(microphoneError(error)); setChecking(false); } cleanup(); });
     return () => { active = false; cleanup(); };
     // A changed input stops the previous capture before starting another one.
-  }, [checking, media.microphoneId, media.microphoneVolume, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, room]);
+  }, [checking, media.microphoneId, media.microphoneVolume, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, media.echoCancellation, media.autoGainControl, room]);
 
   return <div className="microphone-check">
     <button type="button" onClick={() => setChecking(current => !current)}>{checking ? "Остановить проверку" : "Проверить микрофон"}</button>

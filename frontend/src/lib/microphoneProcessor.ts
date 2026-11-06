@@ -1,9 +1,9 @@
-import { LocalAudioTrack, Track, type AudioProcessorOptions, type Room, type TrackProcessor } from "livekit-client";
+import { LocalAudioTrack, Track, type AudioCaptureOptions, type AudioProcessorOptions, type Room, type TrackProcessor } from "livekit-client";
 import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
 import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url";
 import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
 import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
-import type { NoiseProcessor, RnnoisePreset } from "./media";
+import { enableMicrophone, microphoneCapture, microphoneProcessingConstraints, type MediaPreferences, type NoiseProcessor, type RnnoisePreset } from "./media";
 import { resumeAudioContext } from "./audioContext";
 import { AudioFlowGuard } from "./audioFlowGuard";
 
@@ -49,7 +49,10 @@ export async function prepareRnnoise(): Promise<void> {
 function loadSoftGate(context: AudioContext): Promise<void> {
   let loading = loadedWorklets.get(context);
   if (!loading) {
-    loading = context.audioWorklet.addModule("/mic-soft-gate.js");
+    loading = context.audioWorklet.addModule("/mic-soft-gate.js?v=2").catch((error: unknown) => {
+      loadedWorklets.delete(context);
+      throw error;
+    });
     loadedWorklets.set(context, loading);
   }
   return loading;
@@ -67,6 +70,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   private gain?: GainNode;
   private compressor?: DynamicsCompressorNode;
   private limiter?: DynamicsCompressorNode;
+  private ceiling?: WaveShaperNode;
   private highpass?: BiquadFilterNode;
   private destination?: MediaStreamAudioDestinationNode;
   private silentClock?: GainNode;
@@ -75,7 +79,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   private healthTimer?: ReturnType<typeof setInterval>;
   private bypassed = false;
 
-  constructor(private volume: number, private gateMode: "soft" | "noisy", private engine: NoiseProcessor, private preset: RnnoisePreset) {}
+  constructor(private volume: number, private gateMode: "soft" | "noisy", private engine: NoiseProcessor, private preset: RnnoisePreset, private capture: AudioCaptureOptions) {}
 
   async init({ track, audioContext }: AudioProcessorOptions): Promise<void> {
     this.hostContext = audioContext;
@@ -124,7 +128,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
       input.connect(this.rnnoise);
       input = this.rnnoise;
       // A parallel dry signal arrives earlier than RNNoise and sounds like a second voice.
-      // Presets adjust only a gate after the processed signal.
+      // Boost voiced segments after suppression and keep one audio path.
       try {
         await loadSoftGate(audioContext);
         this.gate = new AudioWorkletNode(audioContext, "coherent-soft-gate");
@@ -151,7 +155,14 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
     input.connect(this.gain);
     this.gain.connect(this.compressor);
     this.compressor.connect(this.limiter);
-    this.limiter.connect(this.destination);
+    this.ceiling = audioContext.createWaveShaper();
+    this.ceiling.curve = Float32Array.from({ length: 1025 }, (_, index) => {
+      const sample = (index - 512) / 512;
+      const level = Math.abs(sample);
+      return level <= 0.8 ? sample : Math.sign(sample) * (0.8 + 0.12 * (1 - Math.exp((0.8 - level) / 0.12)));
+    });
+    this.limiter.connect(this.ceiling);
+    this.ceiling.connect(this.destination);
     // WebView2 can render analysers while a destination-only capture stream
     // still emits zeroes. A silent output keeps the device clock pulling this
     // dedicated context; microphone audio is never played through the speakers.
@@ -200,7 +211,14 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
     const context = options.audioContext ?? this.hostContext;
     await this.destroy();
     if (!context) throw new Error("Звуковой движок недоступен.");
-    await this.init({ ...options, audioContext: context });
+    try {
+      // LiveKit's device-loss fallback requests only a default device.
+      await options.track.applyConstraints(this.capture);
+      await this.init({ ...options, audioContext: context });
+    } catch (error) {
+      await this.destroy();
+      throw error;
+    }
   }
 
   setVolume(volume: number): void {
@@ -221,6 +239,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   }
 
   getEngine(): NoiseProcessor { return this.engine; }
+  setCaptureProfile(media: MediaPreferences) { this.capture = microphoneProcessingConstraints(media); }
   usesFallback(): boolean { return this.bypassed; }
   signalHealth() {
     const input = new Float32Array(1024), output = new Float32Array(1024);
@@ -252,6 +271,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
     this.gain?.disconnect();
     this.compressor?.disconnect();
     this.limiter?.disconnect();
+    this.ceiling?.disconnect();
     this.destination?.disconnect();
     this.silentClock?.disconnect(); this.silentClock = undefined;
     this.processedTrack?.stop();
@@ -264,6 +284,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
     this.gain = undefined;
     this.compressor = undefined;
     this.limiter = undefined;
+    this.ceiling = undefined;
     this.destination = undefined;
     this.ownedContext = undefined;
     this.hostContext = undefined;
@@ -271,18 +292,38 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   }
 }
 
-export async function applyMicrophoneProcessing(room: Room, volume: number, gateMode: "soft" | "noisy", engine: NoiseProcessor, preset: RnnoisePreset): Promise<void> {
+export async function restartCallMicrophone(room: Room, media: MediaPreferences): Promise<void> {
+  const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+  if (track instanceof LocalAudioTrack) {
+    const processor = track.getProcessor();
+    if (processor instanceof MicrophoneProcessor) processor.setCaptureProfile(media);
+    await track.restartTrack(microphoneCapture(media));
+    if (track.isMuted) await track.unmute();
+  } else {
+    await enableMicrophone(room, media);
+  }
+}
+
+export function createMicrophoneProcessor(media: MediaPreferences) {
+  return new MicrophoneProcessor(media.microphoneVolume, media.noiseSuppression ? "noisy" : "soft",
+    media.noiseProcessor, media.rnnoisePreset, microphoneProcessingConstraints(media));
+}
+
+export async function applyMicrophoneProcessing(room: Room, media: MediaPreferences): Promise<void> {
+  const { microphoneVolume: volume, noiseProcessor: engine, rnnoisePreset: preset } = media;
+  const gateMode = media.noiseSuppression ? "noisy" : "soft";
   const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
   if (!(track instanceof LocalAudioTrack)) return;
   const processor = track.getProcessor();
-  if (processor instanceof MicrophoneProcessor && processor.getEngine() === engine) {
+  if (processor instanceof MicrophoneProcessor && processor.getEngine() === engine && !processor.usesFallback()) {
     await processor.resume();
+    processor.setCaptureProfile(media);
     processor.setVolume(volume);
     processor.setGateMode(gateMode);
     processor.setRnnoisePreset(preset);
     return;
   }
-  const replacement = new MicrophoneProcessor(volume, gateMode, engine, preset);
+  const replacement = createMicrophoneProcessor(media);
   try {
     await track.setProcessor(replacement);
   } catch (error) {

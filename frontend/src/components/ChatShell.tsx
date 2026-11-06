@@ -34,6 +34,7 @@ import {
   cameraPublish,
   loadMediaPreferences,
   microphoneCapture,
+  sameMicrophoneCapture,
   enableMicrophone,
   readAudioProcessing,
   saveMediaPreferences,
@@ -55,7 +56,7 @@ import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
 import AdminPanel from "./AdminPanel";
 import ServerDialog from "./ServerDialog";
-import { applyMicrophoneProcessing, prepareRnnoise } from "../lib/microphoneProcessor";
+import { applyMicrophoneProcessing, prepareRnnoise, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 import { connectAppEvents } from "../lib/events";
 import { desktopNotify, desktopRaiseIncomingCall, setDesktopMediaActive, setUpdateMediaBusy } from "../lib/desktop";
@@ -690,10 +691,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       if (room?.state === ConnectionState.Connected) {
         if (patch.noiseProcessor === "rnnoise" && next.microphoneEnabled) await prepareRnnoise();
         const participant = room.localParticipant;
-        const microphoneCaptureChanged = patch.noiseSuppression !== undefined
-          || (patch.noiseProcessor !== undefined && current.noiseSuppression)
-          || patch.echoCancellation !== undefined
-          || patch.autoGainControl !== undefined;
+        const microphoneCaptureChanged = !sameMicrophoneCapture(current, next);
         const cameraCaptureChanged = patch.videoCodec !== undefined
           || patch.videoQuality !== undefined;
 
@@ -727,46 +725,29 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             throw reason;
           }
         }
-        if (patch.microphoneId !== undefined && next.microphoneEnabled) {
-          if (!await room.switchActiveDevice("audioinput", next.microphoneId || "default")) {
-            throw new Error("Не удалось выбрать микрофон.");
-          }
-        }
         const actualProcessing = readAudioProcessing(room);
         const needsRefreshAfterUnmute = patch.microphoneEnabled === true && !current.microphoneEnabled
           && actualProcessing !== null
           && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== (next.noiseProcessor === "browser" && next.noiseSuppression))
             || (actualProcessing.echoCancellation !== null && actualProcessing.echoCancellation !== next.echoCancellation)
-            || (actualProcessing.autoGainControl !== null && actualProcessing.autoGainControl !== next.autoGainControl));
-        if (next.microphoneEnabled && (microphoneCaptureChanged || needsRefreshAfterUnmute)) {
-          const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
-          if (track) {
-            try {
-              await track.restartTrack(microphoneCapture(next));
-            } catch (reason) {
-              try {
-                await track.restartTrack(microphoneCapture(next));
-              } catch {
-                await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
-                throw reason;
-              }
-            }
-          }
-        }
+            || (actualProcessing.autoGainControl !== null && actualProcessing.autoGainControl !== microphoneCapture(next).autoGainControl));
         if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined || patch.microphoneVolume !== undefined
-          || patch.noiseProcessor !== undefined
-          || microphoneCaptureChanged || patch.microphoneId !== undefined || patch.rnnoisePreset !== undefined)) {
+          || patch.noiseProcessor !== undefined || microphoneCaptureChanged || patch.rnnoisePreset !== undefined)) {
           try {
-            await applyMicrophoneProcessing(room, next.microphoneVolume, next.noiseSuppression ? "noisy" : "soft", next.noiseProcessor, next.rnnoisePreset);
+            if (microphoneCaptureChanged || needsRefreshAfterUnmute) await restartCallMicrophone(room, next);
+            await applyMicrophoneProcessing(room, next);
           } catch (reason) {
-            const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
-            try {
-              await applyMicrophoneProcessing(room, current.microphoneVolume, current.noiseSuppression ? "noisy" : "soft", current.noiseProcessor, current.rnnoisePreset);
-            } catch {
-              if (track) {
-                await track.stopProcessor().catch(() => undefined);
-                await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+            if (current.microphoneEnabled) {
+              try {
+                if (microphoneCaptureChanged || needsRefreshAfterUnmute) await restartCallMicrophone(room, current);
+                await applyMicrophoneProcessing(room, current);
+              } catch {
+                const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
+                await track?.stopProcessor().catch(() => undefined);
+                await restartCallMicrophone(room, { ...current, microphoneId: "" }).catch(() => undefined);
               }
+            } else {
+              await participant.setMicrophoneEnabled(false).catch(() => undefined);
             }
             throw reason;
           }
@@ -787,10 +768,9 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
               && applied.noiseSuppression !== (next.noiseProcessor === "browser" && next.noiseSuppression))
             || (patch.echoCancellation !== undefined && applied?.echoCancellation != null
               && applied.echoCancellation !== next.echoCancellation)
-            || (patch.autoGainControl !== undefined && applied?.autoGainControl != null
-              && applied.autoGainControl !== next.autoGainControl)) {
-            const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
-            if (track) await track.restartTrack(microphoneCapture(current)).catch(() => undefined);
+            || ((patch.autoGainControl !== undefined || patch.noiseProcessor !== undefined) && applied?.autoGainControl != null
+              && applied.autoGainControl !== microphoneCapture(next).autoGainControl)) {
+            await restartCallMicrophone(room, current).then(() => applyMicrophoneProcessing(room, current)).catch(() => undefined);
             throw new Error("Браузер не применил обработку звука. Настройка сохранена прежней.");
           }
         }
@@ -809,6 +789,39 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     });
     mediaQueue.current = operation.catch(() => undefined);
     return operation;
+  }, []);
+
+  useEffect(() => {
+    const devices = navigator.mediaDevices;
+    if (!devices?.enumerateDevices) return;
+    let timer = 0;
+    function scheduleRecovery() {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const operation = mediaQueue.current.then(async () => {
+          const room = roomRef.current;
+          const selected = mediaRef.current;
+          const track = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+          if (room?.state !== ConnectionState.Connected || !selected.microphoneEnabled || !track) return;
+          const inputs = (await devices.enumerateDevices()).filter(device => device.kind === "audioinput");
+          if (roomRef.current !== room || !inputs.length) return;
+          const source = track.mediaStream?.getAudioTracks()[0];
+          const preferred = inputs.some(device => device.deviceId === selected.microphoneId)
+            ? selected.microphoneId : "";
+          const sourceId = source?.getSettings().deviceId;
+          const sourceMissing = Boolean(sourceId && sourceId !== "default" && !inputs.some(device => device.deviceId === sourceId));
+          if (!source || source.readyState !== "live" || track.isMuted || sourceMissing || (preferred && sourceId !== preferred)) {
+            await restartCallMicrophone(room, { ...selected, microphoneId: preferred });
+          }
+          await applyMicrophoneProcessing(room, selected);
+          if (roomRef.current === room) setAudioProcessingState(readAudioProcessing(room));
+        });
+        mediaQueue.current = operation.catch(() => undefined);
+        void operation.catch(() => setControlError("Не удалось восстановить микрофон. Проверь выбранный вход в настройках звука."));
+      }, 400);
+    }
+    devices.addEventListener("devicechange", scheduleRecovery);
+    return () => { devices.removeEventListener("devicechange", scheduleRecovery); window.clearTimeout(timer); };
   }, []);
 
   function changeMedia(patch: Partial<MediaPreferences>) {
