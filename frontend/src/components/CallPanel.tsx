@@ -45,6 +45,7 @@ import {
   cameraCapture,
   cameraPublish,
   enableMicrophone,
+  sameMicrophoneCapture,
   microphoneError,
   screenShareCapture,
   screenSharePublish,
@@ -54,7 +55,7 @@ import {
 } from "../lib/media";
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import ParticipantPicker from "./ParticipantPicker";
-import { applyMicrophoneProcessing } from "../lib/microphoneProcessor";
+import { applyMicrophoneProcessing, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { NativeScreenAudio } from "../lib/nativeScreenAudio";
 import { NativeScreenShare, type ScreenSource } from "../lib/nativeScreenShare";
 import DesktopSharePicker from "./DesktopSharePicker";
@@ -693,18 +694,32 @@ function CallMediaBridge({
     if (!connected) return;
     let active = true;
     async function prepare() {
-      const selected = mediaRef.current;
+      let selected = mediaRef.current;
       await room.localParticipant.setAttributes({ "coherent.deafened": selected.deafened ? "true" : "false" }).catch(() => undefined);
       if (!active) return;
       if (selected.microphoneEnabled) {
         await enableMicrophone(room, selected);
         try {
-          await applyMicrophoneProcessing(room, selected.microphoneVolume, selected.noiseSuppression ? "noisy" : "soft", selected.noiseProcessor, selected.rnnoisePreset);
+          await applyMicrophoneProcessing(room, selected);
         } catch (reason) {
           const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
           await track?.stopProcessor().catch(() => undefined);
+          let browserFallback = false;
+          if (selected.noiseProcessor === "rnnoise" && active) {
+            const fallback: MediaPreferences = { ...selected, noiseProcessor: "browser", noiseSuppression: true };
+            try {
+              await restartCallMicrophone(room, fallback);
+              await applyMicrophoneProcessing(room, fallback);
+              browserFallback = true;
+            } catch {
+              // Keep a usable input if the browser cannot apply its filter.
+              await restartCallMicrophone(room, selected).catch(() => undefined);
+            }
+          }
           // Retain the live input if optional DSP fails; never silently mute it.
-          if (active) onError(`Дополнительная обработка недоступна. Микрофон работает без неё. ${microphoneError(reason)}`);
+          if (active) onError(browserFallback
+            ? "RNNoise не запустился. Временно работает шумоподавление браузера."
+            : `Дополнительная обработка недоступна. Микрофон работает без неё. ${microphoneError(reason)}`);
         }
       }
       if (selected.cameraEnabled) {
@@ -729,6 +744,21 @@ function CallMediaBridge({
             if (active) onError("Не удалось выбрать выход звука. Проверь динамики в настройках звонка");
           }
         }
+      }
+      // The controls can change while the first capture or output device
+      // is still opening. Apply those preferences before handing off the room.
+      while (active && selected !== mediaRef.current) {
+        const next = mediaRef.current;
+        if (next.microphoneEnabled) {
+          if (!selected.microphoneEnabled) await enableMicrophone(room, next);
+          else if (!sameMicrophoneCapture(selected, next)) {
+            await restartCallMicrophone(room, next);
+          }
+          await applyMicrophoneProcessing(room, next);
+        } else if (selected.microphoneEnabled) {
+          await room.localParticipant.setMicrophoneEnabled(false);
+        }
+        selected = next;
       }
     }
     void prepare().catch((reason: unknown) => {

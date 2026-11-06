@@ -77,6 +77,7 @@
   color: var(--theme-text);
 }
 :root[data-theme] :is(.server-rail, .account-bar) { background: var(--theme-rail); }
+:root[data-theme] .account-bar { border-color: var(--theme-border); }
 :root[data-theme] :is(.channel-sidebar, .profile-settings-sidebar, .client-settings-sidebar) {
   background: var(--theme-sidebar); border-color: var(--theme-border);
 }

@@ -2404,6 +2404,7 @@ a {
   height: var(--account-height);
   padding: 0 12px;
   border-top: 1px solid rgba(193, 159, 234, .12);
+  border-inline-end: 1px solid var(--line);
   background: #110d1b;
 }
 

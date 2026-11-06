@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Track, type Room } from "livekit-client";
 import { microphoneCapture, microphoneError, type MediaPreferences } from "../lib/media";
 import { resumeAudioContext } from "../lib/audioContext";
+import type { createMicrophoneProcessor } from "../lib/microphoneProcessor";
 
 export default function MicrophoneCheck({ media, room }: { media: MediaPreferences; room?: Room | null }) {
   const [checking, setChecking] = useState(false);
@@ -15,11 +16,13 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
     let ownedStream: MediaStream | undefined;
     let source: MediaStreamAudioSourceNode | undefined;
     let analyser: AnalyserNode | undefined;
+    let processor: ReturnType<typeof createMicrophoneProcessor> | undefined;
     let interval = 0;
     let deadline = 0;
     const cleanup = () => {
       window.clearInterval(interval); window.clearTimeout(deadline);
       source?.disconnect(); analyser?.disconnect();
+      void processor?.destroy().catch(() => undefined);
       ownedStream?.getTracks().forEach(track => track.stop());
       if (context && context.state !== "closed") void context.close().catch(() => undefined);
     };
@@ -41,6 +44,14 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
       }
       if (!active) { cleanup(); return; }
       if (!track) throw new Error("Микрофон не передаёт звуковую дорожку.");
+      if (ownedStream) {
+        const { createMicrophoneProcessor } = await import("../lib/microphoneProcessor");
+        if (!active) return;
+        processor = createMicrophoneProcessor(media);
+        await processor.init({ kind: Track.Kind.Audio, track, audioContext: context });
+        if (!active) { cleanup(); return; }
+        track = processor.processedTrack ?? track;
+      }
       source = context.createMediaStreamSource(new MediaStream([track]));
       analyser = context.createAnalyser(); analyser.fftSize = 1024;
       source.connect(analyser);
@@ -54,7 +65,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
         const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
         const value = Math.min(100, Math.round(rms * 600));
         setLevel(value);
-        if (value > 2) { detected = true; setStatus(live && track === live.mediaStreamTrack ? "Сигнал дорожки звонка поступает." : "Сигнал микрофона поступает."); }
+        if (value > 2) { detected = true; setStatus(live && track === live.mediaStreamTrack ? "Сигнал дорожки звонка поступает." : "Сигнал после обработки поступает."); }
         else if (!detected && Date.now() - started > 5000) setStatus("Сигнал не обнаружен. Проверь кнопку mute на микрофоне, устройство и разрешения Windows.");
       }, 100);
       deadline = window.setTimeout(() => { setChecking(false); setStatus(detected ? "Проверка завершена: звук поступает." : "Звука нет. Выбери другой вход или проверь микрофон в настройках Windows."); }, 20_000);
@@ -62,7 +73,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
     void start().catch(error => { if (active) { setStatus(microphoneError(error)); setChecking(false); } cleanup(); });
     return () => { active = false; cleanup(); };
     // A changed input stops the previous capture before starting another one.
-  }, [checking, media.microphoneId, room]);
+  }, [checking, media.microphoneId, media.microphoneVolume, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, media.echoCancellation, media.autoGainControl, room]);
 
   return <div className="microphone-check">
     <button type="button" onClick={() => setChecking(current => !current)}>{checking ? "Остановить проверку" : "Проверить микрофон"}</button>
