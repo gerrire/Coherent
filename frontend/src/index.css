@@ -701,20 +701,17 @@ a {
 }
 
 .rail-home {
-  background: linear-gradient(145deg,#b25eff,#752fe0);
-  box-shadow: 0 7px 20px rgba(119,45,225,.3);
+  background: #8943e8;
+  color: white;
+}
+
+.rail-home:hover {
+  filter: brightness(1.08);
 }
 
 .rail-home:hover, .rail-item:hover {
   border-radius: 10px;
   color: #fff;
-}
-
-.rail-home .brand-mark {
-  width: 28px;
-  height: 28px;
-  background: transparent;
-  box-shadow: none;
 }
 
 .rail-separator {
