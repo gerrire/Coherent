@@ -25,7 +25,7 @@ import {
   VideoOff,
   VolumeX,
 } from "lucide-react";
-import { ConnectionState, Track, type Room } from "livekit-client";
+import { ConnectionState, RoomEvent, TrackEvent, Track, type Room } from "livekit-client";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api, displayName, conversationTitle, type Call, type Conversation, type Message, type FriendRequest, type User, type CommunityServer } from "../lib/api";
@@ -34,8 +34,9 @@ import {
   cameraPublish,
   loadMediaPreferences,
   microphoneCapture,
+  mergeMediaPreferences,
+  updateVoiceQuality,
   sameMicrophoneCapture,
-  enableMicrophone,
   readAudioProcessing,
   saveMediaPreferences,
   supportedAudioProcessing,
@@ -55,7 +56,7 @@ import ParticipantPicker from "./ParticipantPicker";
 import ProfileSettingsDialog from "./ProfileSettingsDialog";
 import AdminPanel from "./AdminPanel";
 import ServerDialog from "./ServerDialog";
-import { applyMicrophoneProcessing, prepareRnnoise, restartCallMicrophone } from "../lib/microphoneProcessor";
+import { applyMicrophoneProcessing, browserMicrophoneFallback, enableCallMicrophone, prepareRnnoise, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { disablePush, enablePush } from "../lib/push";
 import { connectAppEvents } from "../lib/events";
 import { desktopNotify, desktopRaiseIncomingCall, setDesktopMediaActive, setUpdateMediaBusy } from "../lib/desktop";
@@ -684,7 +685,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
     };
   }, [refreshConversations, refreshCalls, refreshPresence, refreshRequests, refreshServers, refreshOpenChannel, showNotification, user.id]);
 
+  const [mediaRoom, setMediaRoom] = useState<Room | null>(null);
+  const fallbackMicrophone = useRef<unknown>(null);
   const setActiveRoom = useCallback((room: Room | null) => {
+    if (room !== roomRef.current) fallbackMicrophone.current = null;
+    setMediaRoom(room);
     roomRef.current = room;
     setAudioProcessingState(readAudioProcessing(room));
   }, []);
@@ -692,7 +697,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   const updateMedia = useCallback((patch: Partial<MediaPreferences>): Promise<void> => {
     const operation = mediaQueue.current.then(async () => {
       const current = mediaRef.current;
-      const next = { ...current, ...patch };
+      const next = mergeMediaPreferences(current, patch);
       const supportedProcessing = supportedAudioProcessing();
       if (patch.noiseSuppression !== undefined && !supportedProcessing.noiseSuppression) {
         throw new Error("Этот браузер не поддерживает шумоподавление микрофона.");
@@ -705,7 +710,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       }
       const room = roomRef.current;
       if (room?.state === ConnectionState.Connected) {
-        if (patch.noiseProcessor === "rnnoise" && next.microphoneEnabled) await prepareRnnoise();
+        if (next.noiseProcessor === "rnnoise" && current.noiseProcessor !== next.noiseProcessor && next.microphoneEnabled) await prepareRnnoise();
         const participant = room.localParticipant;
         const microphoneCaptureChanged = !sameMicrophoneCapture(current, next);
         const cameraCaptureChanged = patch.videoCodec !== undefined
@@ -713,10 +718,11 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
 
         if (patch.microphoneEnabled !== undefined && next.microphoneEnabled !== current.microphoneEnabled) {
           try {
-            if (next.microphoneEnabled) await enableMicrophone(room, next);
+            if (next.microphoneEnabled) await enableCallMicrophone(room, next);
             else await participant.setMicrophoneEnabled(false);
           } catch (reason) {
-            await participant.setMicrophoneEnabled(current.microphoneEnabled, microphoneCapture(current)).catch(() => undefined);
+            if (current.microphoneEnabled) await enableCallMicrophone(room, current).catch(() => undefined);
+            else await participant.setMicrophoneEnabled(false).catch(() => undefined);
             throw reason;
           }
         }
@@ -747,9 +753,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
           && ((actualProcessing.noiseSuppression !== null && actualProcessing.noiseSuppression !== (next.noiseProcessor === "browser" && next.noiseSuppression))
             || (actualProcessing.echoCancellation !== null && actualProcessing.echoCancellation !== next.echoCancellation)
             || (actualProcessing.autoGainControl !== null && actualProcessing.autoGainControl !== microphoneCapture(next).autoGainControl));
-        if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined || patch.microphoneVolume !== undefined
+        if (next.microphoneEnabled && (patch.microphoneEnabled !== undefined
           || patch.noiseProcessor !== undefined || microphoneCaptureChanged || patch.rnnoisePreset !== undefined)) {
           try {
+            fallbackMicrophone.current = null;
             if (microphoneCaptureChanged || needsRefreshAfterUnmute) await restartCallMicrophone(room, next);
             await applyMicrophoneProcessing(room, next);
           } catch (reason) {
@@ -759,8 +766,8 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
                 await applyMicrophoneProcessing(room, current);
               } catch {
                 const track = participant.getTrackPublication(Track.Source.Microphone)?.track;
-                await track?.stopProcessor().catch(() => undefined);
-                await restartCallMicrophone(room, { ...current, microphoneId: "" }).catch(() => undefined);
+                if (track) fallbackMicrophone.current = track;
+                await restartCallMicrophone(room, browserMicrophoneFallback({ ...current, microphoneId: "" })).catch(() => undefined);
               }
             } else {
               await participant.setMicrophoneEnabled(false).catch(() => undefined);
@@ -790,6 +797,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
             throw new Error("Браузер не применил обработку звука. Настройка сохранена прежней.");
           }
         }
+        if (patch.voiceQuality !== undefined && patch.voiceQuality !== current.voiceQuality) await updateVoiceQuality(room, next.voiceQuality);
         if (patch.screenShareBitrateMbps !== undefined) {
           await updateScreenShareBitrate(room, next.screenShareBitrateMbps);
         }
@@ -800,7 +808,7 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
       }
       mediaRef.current = next;
       setMedia(next);
-      saveMediaPreferences(next);
+      saveMediaPreferences(next, current);
       setControlError("");
     });
     mediaQueue.current = operation.catch(() => undefined);
@@ -808,37 +816,93 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
   }, []);
 
   useEffect(() => {
+    if (!mediaRoom) return;
+    const room: Room = mediaRoom;
     const devices = navigator.mediaDevices;
-    if (!devices?.enumerateDevices) return;
+    const microphone = () => room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    let observed = microphone();
     let timer = 0;
+    let checkDevices = false;
+
+    function enqueue(work: () => Promise<void>) {
+      const operation = mediaQueue.current.then(async () => {
+        if (roomRef.current === room && room.state === ConnectionState.Connected && mediaRef.current.microphoneEnabled) await work();
+      });
+      mediaQueue.current = operation.catch(() => undefined);
+      void operation.catch(() => {
+        if (roomRef.current === room) setControlError("Не удалось восстановить обработку микрофона. Проверь вход в настройках звука.");
+      });
+    }
     function scheduleRecovery() {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        const operation = mediaQueue.current.then(async () => {
-          const room = roomRef.current;
+        const enumerate = checkDevices;
+        checkDevices = false;
+        enqueue(async () => {
+          const track = microphone();
+          if (!track) return;
           const selected = mediaRef.current;
-          const track = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-          if (room?.state !== ConnectionState.Connected || !selected.microphoneEnabled || !track) return;
-          const inputs = (await devices.enumerateDevices()).filter(device => device.kind === "audioinput");
-          if (roomRef.current !== room || !inputs.length) return;
           const source = track.mediaStream?.getAudioTracks()[0];
-          const preferred = inputs.some(device => device.deviceId === selected.microphoneId)
-            ? selected.microphoneId : "";
           const sourceId = source?.getSettings().deviceId;
-          const sourceMissing = Boolean(sourceId && sourceId !== "default" && !inputs.some(device => device.deviceId === sourceId));
-          if (!source || source.readyState !== "live" || track.isMuted || sourceMissing || (preferred && sourceId !== preferred)) {
-            await restartCallMicrophone(room, { ...selected, microphoneId: preferred });
+          const inputs = enumerate && devices?.enumerateDevices
+            ? (await devices.enumerateDevices()).filter(device => device.kind === "audioinput") : null;
+          if (roomRef.current !== room) return;
+          const preferred = !inputs || inputs.some(device => device.deviceId === selected.microphoneId)
+            ? selected.microphoneId : "";
+          const sourceMissing = inputs?.length && sourceId && sourceId !== "default" && !inputs.some(device => device.deviceId === sourceId);
+          const switched = Boolean(inputs?.length && (sourceMissing || (preferred && sourceId !== preferred)));
+          if (switched) fallbackMicrophone.current = null;
+          const profile = fallbackMicrophone.current === track ? browserMicrophoneFallback(selected) : selected;
+          if (switched || (inputs?.length && (!source || source.readyState !== "live" || track.isMuted))) {
+            await restartCallMicrophone(room, { ...profile, microphoneId: preferred });
+          } else if (!track.isMuted) {
+            await applyMicrophoneProcessing(room, profile);
           }
-          await applyMicrophoneProcessing(room, selected);
+          await updateVoiceQuality(room, selected.voiceQuality);
           if (roomRef.current === room) setAudioProcessingState(readAudioProcessing(room));
         });
-        mediaQueue.current = operation.catch(() => undefined);
-        void operation.catch(() => setControlError("Не удалось восстановить микрофон. Проверь выбранный вход в настройках звука."));
-      }, 400);
+      }, 300);
     }
-    devices.addEventListener("devicechange", scheduleRecovery);
-    return () => { devices.removeEventListener("devicechange", scheduleRecovery); window.clearTimeout(timer); };
-  }, []);
+    function deviceChanged() {
+      checkDevices = true;
+      scheduleRecovery();
+    }
+    function observeMicrophone() {
+      const track = microphone();
+      if (observed !== track) {
+        observed?.off(TrackEvent.Restarted, scheduleRecovery);
+        observed = track;
+        observed?.on(TrackEvent.Restarted, scheduleRecovery);
+      }
+      scheduleRecovery();
+    }
+    function processingFailed(event: Event) {
+      const track = (event as CustomEvent).detail;
+      if (track !== microphone()) return;
+      enqueue(async () => {
+        if (track !== microphone() || mediaRef.current.noiseProcessor !== "rnnoise") return;
+        fallbackMicrophone.current = track;
+        await restartCallMicrophone(room, browserMicrophoneFallback(mediaRef.current));
+        if (roomRef.current === room) {
+          setAudioProcessingState(readAudioProcessing(room));
+          setControlError("RNNoise прервался. Временно работает обработка браузера.");
+        }
+      });
+    }
+    observed?.on(TrackEvent.Restarted, scheduleRecovery);
+    room.on(RoomEvent.LocalTrackPublished, observeMicrophone);
+    room.on(RoomEvent.Reconnected, observeMicrophone);
+    devices?.addEventListener("devicechange", deviceChanged);
+    window.addEventListener("coherent-microphone-processing-fallback", processingFailed);
+    return () => {
+      window.clearTimeout(timer);
+      observed?.off(TrackEvent.Restarted, scheduleRecovery);
+      room.off(RoomEvent.LocalTrackPublished, observeMicrophone);
+      room.off(RoomEvent.Reconnected, observeMicrophone);
+      devices?.removeEventListener("devicechange", deviceChanged);
+      window.removeEventListener("coherent-microphone-processing-fallback", processingFailed);
+    };
+  }, [mediaRoom]);
 
   function changeMedia(patch: Partial<MediaPreferences>) {
     return updateMedia(patch).catch((reason: unknown) => {

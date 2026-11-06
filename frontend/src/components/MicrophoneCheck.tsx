@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Track, type Room } from "livekit-client";
 import { microphoneCapture, microphoneError, type MediaPreferences } from "../lib/media";
 import { resumeAudioContext } from "../lib/audioContext";
-import type { createMicrophoneProcessor } from "../lib/microphoneProcessor";
+import { createMicrophoneProcessor } from "../lib/microphoneProcessor";
 
 export default function MicrophoneCheck({ media, room }: { media: MediaPreferences; room?: Room | null }) {
   const [checking, setChecking] = useState(false);
@@ -44,8 +44,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
       }
       if (!active) { cleanup(); return; }
       if (!track) throw new Error("Микрофон не передаёт звуковую дорожку.");
-      if (ownedStream) {
-        const { createMicrophoneProcessor } = await import("../lib/microphoneProcessor");
+      if (ownedStream && media.noiseProcessor === "rnnoise") {
         if (!active) return;
         processor = createMicrophoneProcessor(media);
         await processor.init({ kind: Track.Kind.Audio, track, audioContext: context });
@@ -73,7 +72,7 @@ export default function MicrophoneCheck({ media, room }: { media: MediaPreferenc
     void start().catch(error => { if (active) { setStatus(microphoneError(error)); setChecking(false); } cleanup(); });
     return () => { active = false; cleanup(); };
     // A changed input stops the previous capture before starting another one.
-  }, [checking, media.microphoneId, media.microphoneVolume, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, media.echoCancellation, media.autoGainControl, room]);
+  }, [checking, media.microphoneId, media.noiseProcessor, media.noiseSuppression, media.rnnoisePreset, media.echoCancellation, media.autoGainControl, room]);
 
   return <div className="microphone-check">
     <button type="button" onClick={() => setChecking(current => !current)}>{checking ? "Остановить проверку" : "Проверить микрофон"}</button>

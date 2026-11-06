@@ -19,13 +19,14 @@ export type ScreenShareContent = "text" | "motion";
 export type ScreenShareFrameRate = 15 | 30 | 60;
 export type NoiseProcessor = "browser" | "rnnoise";
 export type RnnoisePreset = "natural" | "balanced" | "strong";
+export type VoiceQuality = "efficient" | "balanced" | "clear";
 
 export interface MediaPreferences {
   microphoneEnabled: boolean;
   cameraEnabled: boolean;
   deafened: boolean;
   microphoneId: string;
-  microphoneVolume: number;
+  voiceQuality: VoiceQuality;
   cameraId: string;
   speakerId: string;
   videoCodec: VideoCodec;
@@ -50,7 +51,7 @@ export interface AudioProcessingState {
 }
 
 export function supportedAudioProcessing(): { noiseSuppression: boolean; echoCancellation: boolean; autoGainControl: boolean } {
-  const supported = navigator.mediaDevices?.getSupportedConstraints();
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.();
   return {
     noiseSuppression: supported?.noiseSuppression === true,
     echoCancellation: supported?.echoCancellation === true,
@@ -71,13 +72,16 @@ export function readAudioProcessing(room: Room | null): AudioProcessingState | n
 }
 
 const STORAGE_KEY = "coherent.media-preferences";
+const VOICE_PROFILES_KEY = "coherent.microphone-profiles.v1";
+const VOICE_BITRATE: Record<VoiceQuality, number> = { efficient: 24000, balanced: 40000, clear: 56000 };
+type VoiceProfile = Pick<MediaPreferences, "noiseProcessor" | "noiseSuppression" | "rnnoisePreset" | "echoCancellation" | "autoGainControl">;
 
 export const defaultMediaPreferences: MediaPreferences = {
   microphoneEnabled: true,
   cameraEnabled: false,
   deafened: false,
   microphoneId: "",
-  microphoneVolume: 100,
+  voiceQuality: "balanced",
   cameraId: "",
   speakerId: "",
   videoCodec: "h264",
@@ -88,11 +92,11 @@ export const defaultMediaPreferences: MediaPreferences = {
   screenShareFrameRate: 30,
   screenShareBitrateMbps: 20,
   systemAudioEnabled: true,
-  noiseSuppression: false,
+  noiseSuppression: true,
   noiseProcessor: "browser",
   rnnoisePreset: "balanced",
   echoCancellation: true,
-  autoGainControl: false,
+  autoGainControl: true,
 };
 
 export function loadMediaPreferences(): MediaPreferences {
@@ -103,8 +107,9 @@ export function loadMediaPreferences(): MediaPreferences {
       screenShareDefaultsVersion?: number;
       screenShareBitrateDefaultsVersion?: number;
       strongNoiseSuppression?: boolean;
+      microphoneVolume?: number;
     };
-    const { strongNoiseSuppression, ...stored } = saved;
+    const { strongNoiseSuppression, microphoneVolume, ...stored } = saved;
     const codecs: VideoCodec[] = ["vp8", "h264", "vp9", "av1"];
     const qualities: VideoQuality[] = ["360p", "720p", "1080p"];
     const legacyDefaults = saved.qualityDefaultsVersion !== 2
@@ -119,8 +124,8 @@ export function loadMediaPreferences(): MediaPreferences {
       ...defaultMediaPreferences,
       ...stored,
       cameraEnabled: false,
-      microphoneVolume: typeof saved.microphoneVolume === "number" && Number.isFinite(saved.microphoneVolume)
-        ? Math.min(200, Math.max(0, Math.round(saved.microphoneVolume))) : 100,
+      microphoneEnabled: microphoneVolume === 0 ? false : saved.microphoneEnabled ?? true,
+      voiceQuality: saved.voiceQuality === "efficient" || saved.voiceQuality === "clear" ? saved.voiceQuality : "balanced",
       noiseSuppression: strongNoiseSuppression || (legacyAudioDefaults ? false : saved.noiseSuppression ?? defaultMediaPreferences.noiseSuppression),
       noiseProcessor: saved.noiseProcessor === "rnnoise" ? "rnnoise" : "browser",
       rnnoisePreset: (["natural", "balanced", "strong"] as RnnoisePreset[]).includes(saved.rnnoisePreset as RnnoisePreset)
@@ -143,19 +148,51 @@ export function loadMediaPreferences(): MediaPreferences {
   }
 }
 
-export function saveMediaPreferences(value: MediaPreferences): void {
+export function saveMediaPreferences(value: MediaPreferences, previous?: MediaPreferences): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...value, cameraEnabled: false, qualityDefaultsVersion: 2, audioDefaultsVersion: 1, screenShareDefaultsVersion: 1, screenShareBitrateDefaultsVersion: 1 }));
+    const profiles = readMicrophoneProfiles();
+    for (const profile of previous ? [previous, value] : [value]) {
+      const { microphoneId, noiseProcessor, noiseSuppression, rnnoisePreset, echoCancellation, autoGainControl } = profile;
+      profiles[microphoneId] = { noiseProcessor, noiseSuppression, rnnoisePreset, echoCancellation, autoGainControl };
+    }
+    localStorage.setItem(VOICE_PROFILES_KEY, JSON.stringify(profiles));
   } catch {
     // The current call still works when browser storage is unavailable.
   }
 }
 
+function readMicrophoneProfiles(): Record<string, VoiceProfile> {
+  const profiles: Record<string, VoiceProfile> = Object.create(null);
+  try {
+    const saved = JSON.parse(localStorage.getItem(VOICE_PROFILES_KEY) ?? "{}") as Record<string, VoiceProfile>;
+    for (const [id, profile] of Object.entries(saved)) {
+      if (profile && (profile.noiseProcessor === "browser" || profile.noiseProcessor === "rnnoise")
+        && (profile.rnnoisePreset === "natural" || profile.rnnoisePreset === "balanced" || profile.rnnoisePreset === "strong")
+        && typeof profile.noiseSuppression === "boolean" && typeof profile.echoCancellation === "boolean"
+        && typeof profile.autoGainControl === "boolean") {
+        const { noiseProcessor, rnnoisePreset, noiseSuppression, echoCancellation, autoGainControl } = profile;
+        profiles[id] = { noiseProcessor, rnnoisePreset, noiseSuppression, echoCancellation, autoGainControl };
+      }
+    }
+  } catch {
+    // An unavailable store leaves the current profile in place.
+  }
+  return profiles;
+}
+
+export function mergeMediaPreferences(current: MediaPreferences, patch: Partial<MediaPreferences>): MediaPreferences {
+  const saved = patch.microphoneId !== undefined && patch.microphoneId !== current.microphoneId
+    ? readMicrophoneProfiles()[patch.microphoneId] : undefined;
+  return { ...current, ...saved, ...patch };
+}
+
 export function microphoneProcessingConstraints(value: MediaPreferences): AudioCaptureOptions {
+  const supported = supportedAudioProcessing();
   return {
-    noiseSuppression: value.noiseProcessor === "browser" && value.noiseSuppression,
-    echoCancellation: value.echoCancellation,
-    autoGainControl: value.noiseProcessor === "browser" && value.autoGainControl,
+    ...(supported.noiseSuppression && { noiseSuppression: value.noiseProcessor === "browser" && value.noiseSuppression }),
+    ...(supported.echoCancellation && { echoCancellation: value.echoCancellation }),
+    ...(supported.autoGainControl && { autoGainControl: value.noiseProcessor === "browser" && value.autoGainControl }),
     channelCount: 1,
     voiceIsolation: false,
   };
@@ -174,15 +211,47 @@ export function sameMicrophoneCapture(previous: MediaPreferences, next: MediaPre
   return JSON.stringify(microphoneCapture(previous)) === JSON.stringify(microphoneCapture(next));
 }
 
-export async function enableMicrophone(room: Room, value: MediaPreferences): Promise<void> {
+export async function enableMicrophone(room: Room, value: MediaPreferences, prepare?: (track: LocalAudioTrack) => Promise<void>): Promise<void> {
+  const publish: TrackPublishOptions = {
+    audioPreset: { maxBitrate: VOICE_BITRATE[value.voiceQuality], priority: "high" },
+    forceStereo: false,
+    dtx: true,
+  };
+  const participant = room.localParticipant;
+  async function open(media: MediaPreferences) {
+    if (!prepare || participant.getTrackPublication(Track.Source.Microphone)) {
+      await participant.setMicrophoneEnabled(true, microphoneCapture(media), publish);
+      return;
+    }
+    const tracks = await participant.createTracks({ audio: microphoneCapture(media) });
+    const track = tracks.find(candidate => candidate instanceof LocalAudioTrack);
+    try {
+      if (!track) throw new Error("Микрофон не передаёт аудиодорожку.");
+      await prepare(track);
+      await participant.publishTrack(track, { ...publish, source: Track.Source.Microphone });
+    } catch (error) {
+      tracks.forEach(candidate => candidate.stop());
+      throw error;
+    }
+  }
   try {
-    await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture(value));
+    await open(value);
   } catch (error) {
     // USB device identifiers can change after reconnects or a WebView upgrade.
     // Retry only a missing saved device, never an OS/privacy permission denial.
     if (!value.microphoneId || !(error instanceof Error) || !["NotFoundError", "OverconstrainedError"].includes(error.name)) throw error;
-    await room.localParticipant.setMicrophoneEnabled(true, microphoneCapture({ ...value, microphoneId: "" }));
+    await open({ ...value, microphoneId: "" });
   }
+}
+
+export async function updateVoiceQuality(room: Room, quality: VoiceQuality): Promise<void> {
+  const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+  const sender = track instanceof LocalAudioTrack ? track.sender : undefined;
+  if (!sender || sender.transport?.state === "closed") return;
+  const params = sender.getParameters();
+  const maxBitrate = VOICE_BITRATE[quality];
+  if (!params.encodings.length || params.encodings.every(encoding => encoding.maxBitrate === maxBitrate)) return;
+  await sender.setParameters({ ...params, encodings: params.encodings.map(encoding => ({ ...encoding, maxBitrate })) });
 }
 
 export function microphoneError(error: unknown): string {

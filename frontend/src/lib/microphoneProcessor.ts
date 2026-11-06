@@ -1,253 +1,216 @@
 import { LocalAudioTrack, Track, type AudioCaptureOptions, type AudioProcessorOptions, type Room, type TrackProcessor } from "livekit-client";
-import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
-import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url";
 import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
 import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
-import { enableMicrophone, microphoneCapture, microphoneProcessingConstraints, type MediaPreferences, type NoiseProcessor, type RnnoisePreset } from "./media";
+import { enableMicrophone, microphoneCapture, microphoneProcessingConstraints, type MediaPreferences } from "./media";
 import { resumeAudioContext } from "./audioContext";
 
-const loadedWorklets = new WeakMap<AudioContext, Promise<void>>();
-const loadedRnnoiseWorklets = new WeakMap<AudioContext, Promise<void>>();
 let rnnoiseBinary: Promise<ArrayBuffer> | undefined;
 
-function loadRnnoiseProcessor(context: AudioContext): Promise<ArrayBuffer> {
-  rnnoiseBinary ??= loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl }).catch((error: unknown) => {
-    rnnoiseBinary = undefined;
-    throw error;
-  });
-  let worklet = loadedRnnoiseWorklets.get(context);
-  if (!worklet) {
-    worklet = context.audioWorklet.addModule(rnnoiseWorkletUrl).catch((error: unknown) => {
-      loadedRnnoiseWorklets.delete(context);
+function loadRnnoiseBinary(): Promise<ArrayBuffer> {
+  rnnoiseBinary ??= import("@sapphi-red/web-noise-suppressor")
+    .then(({ loadRnnoise }) => loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl }))
+    .catch((error: unknown) => {
+      rnnoiseBinary = undefined;
       throw error;
     });
-    loadedRnnoiseWorklets.set(context, worklet);
-  }
-  return Promise.all([rnnoiseBinary, worklet]).then(([binary]) => binary);
+  return rnnoiseBinary;
 }
 
 export async function prepareRnnoise(): Promise<void> {
-  rnnoiseBinary ??= loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl }).catch((error: unknown) => {
-    rnnoiseBinary = undefined;
-    throw error;
+  await loadRnnoiseBinary();
+}
+
+export class MicrophoneProcessorError extends Error {}
+
+function ready(node: AudioWorkletNode): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = (error?: Error) => {
+      window.clearTimeout(timer);
+      node.removeEventListener("processorerror", failed);
+      node.port.onmessage = null;
+      if (error) reject(error); else resolve();
+    };
+    const failed = () => finish(new MicrophoneProcessorError("RNNoise не смог запуститься."));
+    const timer = window.setTimeout(failed, 4500);
+    node.addEventListener("processorerror", failed, { once: true });
+    node.port.onmessage = ({ data }) => {
+      if (data?.type === "ready") finish();
+      if (data?.type === "error") failed();
+    };
   });
-  await rnnoiseBinary;
 }
 
-function loadSoftGate(context: AudioContext): Promise<void> {
-  let loading = loadedWorklets.get(context);
-  if (!loading) {
-    loading = context.audioWorklet.addModule("/mic-soft-gate.js?v=2").catch((error: unknown) => {
-      loadedWorklets.delete(context);
-      throw error;
-    });
-    loadedWorklets.set(context, loading);
-  }
-  return loading;
-}
-
-class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
-  readonly name = "coherent-microphone-level";
+export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
+  readonly name = "coherent-rnnoise";
   processedTrack?: MediaStreamTrack;
+  private capture: AudioCaptureOptions;
   private context?: AudioContext;
-  private hostContext?: AudioContext;
-  private ownedContext?: AudioContext;
   private source?: MediaStreamAudioSourceNode;
-  private gate?: AudioWorkletNode;
-  private rnnoise?: RnnoiseWorkletNode;
-  private gain?: GainNode;
-  private compressor?: DynamicsCompressorNode;
-  private limiter?: DynamicsCompressorNode;
-  private ceiling?: WaveShaperNode;
   private highpass?: BiquadFilterNode;
-  private destination?: MediaStreamAudioDestinationNode;
+  private node?: AudioWorkletNode;
+  private silentClock?: GainNode;
+  private timer = 0;
+  private failed = false;
 
-  constructor(private volume: number, private gateMode: "soft" | "noisy", private engine: NoiseProcessor, private preset: RnnoisePreset, private capture: AudioCaptureOptions) {}
+  constructor(private media: MediaPreferences, private readonly onFailure?: () => void) {
+    this.capture = microphoneProcessingConstraints(media);
+  }
 
-  async init({ track, audioContext }: AudioProcessorOptions): Promise<void> {
-    this.hostContext = audioContext;
-    if (this.engine === "rnnoise" && audioContext.sampleRate !== 48000) {
-      this.ownedContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
-      audioContext = this.ownedContext;
+  async init({ track }: AudioProcessorOptions): Promise<void> {
+    try {
+      // Keep the capture clock independent of the playback sink, including WebView2.
+      const context = this.context = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+      await resumeAudioContext(context);
+      if (!context.audioWorklet || context.sampleRate !== 48000) throw new Error("Нужен AudioWorklet с частотой 48 кГц.");
+      const [wasmBinary] = await Promise.all([loadRnnoiseBinary(), context.audioWorklet.addModule("/voice-rnnoise.js?v=1")]);
+      const node = this.node = new AudioWorkletNode(context, "coherent-soft-gate", {
+        numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: "explicit",
+        processorOptions: { wasmBinary, mode: `rnnoise-${this.media.rnnoisePreset}` },
+      });
+      await ready(node);
+      if (this.context !== context) throw new Error("Обработка остановлена.");
+      this.failed = false;
+      let lastFrame = performance.now();
+      const fail = () => {
+        if (this.node !== node || this.failed) return;
+        this.failed = true;
+        this.onFailure?.();
+      };
+      node.addEventListener("processorerror", fail, { once: true });
+      node.port.onmessage = ({ data }) => {
+        if (data?.type === "active") lastFrame = performance.now();
+        if (data?.type === "error") fail();
+      };
+      this.source = context.createMediaStreamSource(new MediaStream([track]));
+      this.highpass = context.createBiquadFilter();
+      this.highpass.type = "highpass";
+      this.highpass.frequency.value = 65;
+      this.highpass.channelCount = 1;
+      this.highpass.channelCountMode = "explicit";
+      this.source.connect(this.highpass);
+      this.highpass.connect(node);
+      const destination = new MediaStreamAudioDestinationNode(context, { channelCount: 1, channelCountMode: "explicit" });
+      node.connect(destination);
+      this.silentClock = context.createGain();
+      this.silentClock.gain.value = 0;
+      node.connect(this.silentClock);
+      this.silentClock.connect(context.destination);
+      this.processedTrack = destination.stream.getAudioTracks()[0];
+      this.timer = window.setInterval(() => {
+        if (context.state !== "running" || document.hidden || !track.enabled || track.muted || track.readyState !== "live") {
+          lastFrame = performance.now();
+          return;
+        }
+        if (performance.now() - lastFrame > 7500) fail();
+      }, 2000);
+    } catch (error) {
+      await this.destroy();
+      if (error instanceof MicrophoneProcessorError) throw error;
+      throw new MicrophoneProcessorError("RNNoise не смог запуститься.", { cause: error });
     }
-    this.context = audioContext;
-    // WebView2 can supply a suspended host context, even with a live USB input.
-    // Publishing its MediaStreamDestination would otherwise send silent audio.
-    await this.resume();
-    this.source = audioContext.createMediaStreamSource(new MediaStream([track]));
-    this.highpass = audioContext.createBiquadFilter();
-    this.highpass.type = "highpass";
-    this.highpass.frequency.value = 85;
-    this.gain = audioContext.createGain();
-    this.compressor = audioContext.createDynamicsCompressor();
-    this.compressor.threshold.value = -24;
-    this.compressor.knee.value = 18;
-    this.compressor.ratio.value = 3;
-    this.compressor.attack.value = 0.006;
-    this.compressor.release.value = 0.18;
-    this.limiter = audioContext.createDynamicsCompressor();
-    this.limiter.threshold.value = -3;
-    this.limiter.knee.value = 0;
-    this.limiter.ratio.value = 12;
-    this.limiter.attack.value = 0.002;
-    this.limiter.release.value = 0.08;
-    this.destination = audioContext.createMediaStreamDestination();
-    this.source.connect(this.highpass);
-    let input: AudioNode = this.highpass;
-    if (this.engine === "rnnoise") {
-      if (!audioContext.audioWorklet || audioContext.sampleRate !== 48000) {
-        throw new Error("RNNoise требует AudioWorklet с частотой 48 кГц. Выбери обработку браузера.");
-      }
-      const wasmBinary = await loadRnnoiseProcessor(audioContext);
-      this.rnnoise = new RnnoiseWorkletNode(audioContext, { wasmBinary, maxChannels: 1 });
-      input.connect(this.rnnoise);
-      input = this.rnnoise;
-      // A parallel dry signal arrives earlier than RNNoise and sounds like a second voice.
-      // Boost voiced segments after suppression and keep one audio path.
-      try {
-        await loadSoftGate(audioContext);
-        this.gate = new AudioWorkletNode(audioContext, "coherent-soft-gate");
-        input.connect(this.gate);
-        input = this.gate;
-      } catch {
-        // RNNoise still works when the optional gate cannot be loaded.
-      }
-      this.setRnnoisePreset(this.preset);
-    }
-    if (this.engine === "browser" && audioContext.audioWorklet && typeof AudioWorkletNode !== "undefined") {
-      try {
-        await loadSoftGate(audioContext);
-        this.gate = new AudioWorkletNode(audioContext, "coherent-soft-gate");
-        this.gate.port.postMessage({ mode: this.gateMode });
-        input.connect(this.gate);
-        input = this.gate;
-      } catch {
-        // The microphone level still works in browsers without AudioWorklet.
-      }
-    }
-    input.connect(this.gain);
-    this.gain.connect(this.compressor);
-    this.compressor.connect(this.limiter);
-    this.ceiling = audioContext.createWaveShaper();
-    this.ceiling.curve = Float32Array.from({ length: 1025 }, (_, index) => {
-      const sample = (index - 512) / 512;
-      const level = Math.abs(sample);
-      return level <= 0.8 ? sample : Math.sign(sample) * (0.8 + 0.12 * (1 - Math.exp((0.8 - level) / 0.12)));
-    });
-    this.limiter.connect(this.ceiling);
-    this.ceiling.connect(this.destination);
-    this.processedTrack = this.destination.stream.getAudioTracks()[0];
-    this.setVolume(this.volume);
   }
 
   async restart(options: AudioProcessorOptions): Promise<void> {
-    const context = options.audioContext ?? this.hostContext;
     await this.destroy();
-    if (!context) throw new Error("Звуковой движок недоступен.");
-    try {
-      // LiveKit's device-loss fallback requests only a default device.
-      await options.track.applyConstraints(this.capture);
-      await this.init({ ...options, audioContext: context });
-    } catch (error) {
-      await this.destroy();
-      throw error;
-    }
+    await options.track.applyConstraints(this.capture);
+    await this.init(options);
   }
 
-  setVolume(volume: number): void {
-    this.volume = volume;
-    if (this.gain && this.context) {
-      this.gain.gain.setTargetAtTime((volume / 100) * 2, this.context.currentTime, 0.015);
-    }
+  setProfile(media: MediaPreferences): void {
+    this.media = media;
+    this.capture = microphoneProcessingConstraints(media);
+    this.node?.port.postMessage({ mode: `rnnoise-${media.rnnoisePreset}` });
   }
 
-  setGateMode(mode: "soft" | "noisy"): void {
-    this.gateMode = mode;
-    if (this.engine === "browser") this.gate?.port.postMessage({ mode });
-  }
-
-  setRnnoisePreset(preset: RnnoisePreset): void {
-    this.preset = preset;
-    if (this.engine === "rnnoise") this.gate?.port.postMessage({ mode: `rnnoise-${preset}` });
-  }
-
-  getEngine(): NoiseProcessor { return this.engine; }
-  setCaptureProfile(media: MediaPreferences) { this.capture = microphoneProcessingConstraints(media); }
+  usesFallback(): boolean { return this.failed; }
 
   async resume(): Promise<void> {
-    const context = this.context;
-    if (!context) throw new Error("Звуковой движок недоступен.");
-    await resumeAudioContext(context);
+    if (!this.context) throw new MicrophoneProcessorError("Обработка не запущена.");
+    await resumeAudioContext(this.context);
   }
 
   async destroy(): Promise<void> {
+    window.clearInterval(this.timer);
+    const { context, node } = this;
+    this.context = this.node = undefined;
+    node?.port.postMessage({ type: "stop" });
+    node?.port.close();
+    node?.disconnect();
     this.source?.disconnect();
     this.highpass?.disconnect();
-    this.gate?.port.postMessage({ type: "stop" });
-    this.gate?.port.close();
-    this.gate?.disconnect();
-    this.rnnoise?.disconnect();
-    this.rnnoise?.destroy();
-    this.rnnoise?.port.close();
-    this.gain?.disconnect();
-    this.compressor?.disconnect();
-    this.limiter?.disconnect();
-    this.ceiling?.disconnect();
-    this.destination?.disconnect();
+    this.silentClock?.disconnect();
     this.processedTrack?.stop();
-    if (this.ownedContext && this.ownedContext.state !== "closed") await this.ownedContext.close();
-    this.processedTrack = undefined;
-    this.source = undefined;
-    this.highpass = undefined;
-    this.gate = undefined;
-    this.rnnoise = undefined;
-    this.gain = undefined;
-    this.compressor = undefined;
-    this.limiter = undefined;
-    this.ceiling = undefined;
-    this.destination = undefined;
-    this.ownedContext = undefined;
-    this.hostContext = undefined;
-    this.context = undefined;
+    this.processedTrack = this.source = this.highpass = this.silentClock = undefined;
+    if (context && context.state !== "closed") await context.close().catch(() => undefined);
   }
+}
+
+function microphoneTrack(room: Room): LocalAudioTrack | undefined {
+  const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+  return track instanceof LocalAudioTrack ? track : undefined;
+}
+
+export function browserMicrophoneFallback(media: MediaPreferences): MediaPreferences {
+  return { ...media, noiseProcessor: "browser", noiseSuppression: true, autoGainControl: true };
+}
+
+export function createMicrophoneProcessor(media: MediaPreferences): MicrophoneProcessor {
+  return new MicrophoneProcessor(media);
+}
+
+async function attachProcessor(track: LocalAudioTrack, media: MediaPreferences): Promise<void> {
+  const processor = new MicrophoneProcessor(media, () => {
+    window.dispatchEvent(new CustomEvent("coherent-microphone-processing-fallback", { detail: track }));
+  });
+  try {
+    await track.setProcessor(processor);
+  } catch (error) {
+    await processor.destroy();
+    if (track.getProcessor() === processor) await track.stopProcessor().catch(() => undefined);
+    throw error instanceof MicrophoneProcessorError ? error : new MicrophoneProcessorError("Не удалось подключить RNNoise.", { cause: error });
+  }
+}
+
+export async function enableCallMicrophone(room: Room, media: MediaPreferences): Promise<void> {
+  if (microphoneTrack(room)) await applyMicrophoneProcessing(room, media);
+  await enableMicrophone(room, media, media.noiseProcessor === "rnnoise" ? track => attachProcessor(track, media) : undefined);
 }
 
 export async function restartCallMicrophone(room: Room, media: MediaPreferences): Promise<void> {
-  const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-  if (track instanceof LocalAudioTrack) {
-    const processor = track.getProcessor();
-    if (processor instanceof MicrophoneProcessor) processor.setCaptureProfile(media);
-    await track.restartTrack(microphoneCapture(media));
-    if (track.isMuted) await track.unmute();
-  } else {
-    await enableMicrophone(room, media);
+  const track = microphoneTrack(room);
+  if (!track) { await enableCallMicrophone(room, media); return; }
+  const processor = track.getProcessor();
+  if (media.noiseProcessor === "browser" && processor instanceof MicrophoneProcessor) {
+    await track.mute();
+    await track.stopProcessor();
+  } else if (media.noiseProcessor === "rnnoise" && !(processor instanceof MicrophoneProcessor)) {
+    await attachProcessor(track, media);
+  } else if (processor instanceof MicrophoneProcessor) {
+    processor.setProfile(media);
   }
-}
-
-export function createMicrophoneProcessor(media: MediaPreferences) {
-  return new MicrophoneProcessor(media.microphoneVolume, media.noiseSuppression ? "noisy" : "soft",
-    media.noiseProcessor, media.rnnoisePreset, microphoneProcessingConstraints(media));
+  await track.restartTrack(microphoneCapture(media));
+  await applyMicrophoneProcessing(room, media);
+  if (track.isMuted) await track.unmute();
 }
 
 export async function applyMicrophoneProcessing(room: Room, media: MediaPreferences): Promise<void> {
-  const { microphoneVolume: volume, noiseProcessor: engine, rnnoisePreset: preset } = media;
-  const gateMode = media.noiseSuppression ? "noisy" : "soft";
-  const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-  if (!(track instanceof LocalAudioTrack)) return;
+  const track = microphoneTrack(room);
+  if (!track) return;
   const processor = track.getProcessor();
-  if (processor instanceof MicrophoneProcessor && processor.getEngine() === engine) {
-    await processor.resume();
-    processor.setCaptureProfile(media);
-    processor.setVolume(volume);
-    processor.setGateMode(gateMode);
-    processor.setRnnoisePreset(preset);
+  if (media.noiseProcessor === "browser") {
+    if (processor instanceof MicrophoneProcessor) await track.stopProcessor();
+    const source = track.mediaStream?.getAudioTracks()[0];
+    const capture = microphoneProcessingConstraints(media);
+    const active = source?.getConstraints();
+    if (source?.readyState === "live" && active && Object.entries(capture).some(([key, value]) => active[key as keyof MediaTrackConstraints] !== value)) {
+      await source.applyConstraints(capture);
+    }
     return;
   }
-  const replacement = createMicrophoneProcessor(media);
-  try {
-    await track.setProcessor(replacement);
-  } catch (error) {
-    await replacement.destroy();
-    throw error;
+  if (processor instanceof MicrophoneProcessor && !processor.usesFallback()) {
+    processor.setProfile(media);
+    await processor.resume();
+    return;
   }
+  await attachProcessor(track, media);
 }
