@@ -1169,8 +1169,10 @@ export default function ChatShell({ user, onLogout, onUserChange }: ChatShellPro
 
       <aside className="channel-sidebar">
         <button className="workspace-picker" onClick={() => { if (selectedServer) { setServerDialogManage(true); setServerDialogOpen(true); } else togglePopover("workspace"); }} aria-expanded={popover === "workspace"} aria-label={selectedServer ? "Управление сервером" : "Меню Coherent"}>
-          <span className="workspace-symbol">
-            <span className="brand-mark"><span /><span /><span /></span>
+          <span className="workspace-symbol" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="m5 8.5 1.1 4.2M10 6v8m5-5.5-1.1 4.2" />
+            </svg>
           </span>
           <span className="workspace-name">{selectedServer?.name || "Когерент"}</span>
           <ChevronDown size={16} />
