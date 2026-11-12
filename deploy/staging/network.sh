@@ -26,7 +26,8 @@ case "${1:?start or stop}" in
         [[ $namespace != "$(stat -Lc %i /proc/1/ns/net)" ]]
 
         if [[ -e /run/netns/$name && $(stat -Lc %i "/run/netns/$name") == "$namespace" ]] &&
-           ip link show "$link" >/dev/null 2>&1; then
+           ip link show "$link" >/dev/null 2>&1 &&
+           nft list table inet coherent_stage_net >/dev/null 2>&1; then
             exit 0
         fi
         if nft list table inet coherent_stage_net >/dev/null 2>&1; then

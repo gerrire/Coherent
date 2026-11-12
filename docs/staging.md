@@ -39,22 +39,23 @@ and TURN UDP 13478 with relay ports 14000–14031. The production media ports be
 
 ## Developer workflow
 
-Push application changes to `Gleb_test` and check the **Build for deployment**
-run for that exact commit under GitHub Actions. Pass the commit SHA to the
-owner for review. Use the HTTPS site and the test inbox after the owner
-deploys it. For an error, share the time, commit SHA and steps to reproduce.
-The owner can read API, web and LiveKit logs using the commands below.
+Use `Gleb_test` in the developer's fork and open a pull request targeting
+`Gleb_test` in Coherent. The owner reviews the code and workflow changes
+before accepting the revision into the shared repository. Check the
+**Build for deployment** run for the accepted commit under GitHub Actions.
+Use the staging site and inbox after the owner deploys that commit. To
+report a failure, include the time, commit SHA and steps to reproduce.
 
-An automatic deployment from arbitrary pushes is disabled. The shared
-GitHub repository has repository-level desktop signing secrets and the
-second developer has repository write access. A branch can modify its
-workflows and request its own token permissions. Branch naming and the
-rootless daemon do not protect GitHub credentials or production release
-assets. Automatic staging needs a separate GitHub trust boundary for the
-developer and staging workflows. The staging site also shares a cookie
-parent domain with production. Keep public staging revisions reviewed, or
-place arbitrary developer-controlled frontends on a separate registered
-domain before enabling automatic public deployments.
+Automatic deployment from arbitrary pushes is disabled. The shared
+repository still has repository-level desktop signing secrets and the
+developer already has write access. An unreviewed push to this repository
+can modify workflows. The fork workflow is a process boundary until
+the owner removes direct write access or moves signing to a separately
+protected workflow. Staging automation also needs a repository where the
+developer's token cannot change production releases. For unrestricted
+developer-controlled frontend deployments, use a separate registered
+domain so the staging page cannot set cookies for production's parent
+domain.
 
 ## Owner operations
 
