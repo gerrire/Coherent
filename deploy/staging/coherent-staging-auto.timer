@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Gleb_test for an approved Coherent staging deployment
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=3min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy an owner-approved Coherent staging revision after CI
+After=network-online.target coherent-staging-network.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u /usr/local/sbin/coherent-staging-auto
+UMask=0077
+TimeoutStartSec=35min

@@ -20,7 +20,12 @@ as_stage() (
 compose() {
     local version=$1
     shift
-    as_stage env STAGING_IMAGE_TAG="$version" docker compose --env-file "$home/stack/.env" -f "$home/stack/compose.yaml" "$@"
+    local app_env=production bypass=false
+    if [[ -f $config/email-test-revisions/$version ]]; then
+        app_env=staging
+        bypass=true
+    fi
+    as_stage env STAGING_IMAGE_TAG="$version" STAGING_APP_ENV="$app_env" STAGING_EMAIL_TEST="$bypass" docker compose --env-file "$home/stack/.env" -f "$home/stack/compose.yaml" "$@"
 }
 
 record() {
@@ -86,7 +91,7 @@ UPDATE chat_policy SET write_mode = :'mode' WHERE id = 1;
 SQL
         ;;
     deploy-reviewed)
-        [[ $# == 2 && -f $2 ]] || { echo 'Expected an operator-reviewed, uncompressed git archive' >&2; exit 2; }
+        [[ ( $# == 2 || ( $# == 3 && $3 == --reuse-crypto ) ) && -f $2 ]] || { echo 'Expected an operator-reviewed, uncompressed git archive' >&2; exit 2; }
         archive=$2
         target=$(git get-tar-commit-id <"$archive")
         [[ $target =~ ^[0-9a-f]{40}$ ]]
@@ -94,10 +99,25 @@ SQL
         reviewed_ci "$target"
 
         source=$(as_stage mktemp -d "$home/build.XXXXXXXX")
-        trap 'as_stage rm -rf -- "$source"' EXIT
+        container=
+        trap 'if [[ -n $container ]]; then as_stage docker rm "$container" >/dev/null; fi; as_stage rm -rf -- "$source"' EXIT
         as_stage tar --extract --no-same-owner --no-same-permissions -C "$source" <"$archive"
         as_stage docker build -f "$source/deploy/Dockerfile.api" -t "coherent-api:$target" "$source"
-        as_stage docker build -f "$source/deploy/Dockerfile.web" -t "coherent-web:$target" "$source"
+        if [[ ${3:-} == --reuse-crypto ]]; then
+            container=$(as_stage docker create --network none "coherent-web:$current")
+            as_stage mkdir -p "$source/frontend/public/crypto/v1"
+            as_stage docker cp "$container:/srv/crypto/v1/." "$source/frontend/public/crypto/v1/"
+            as_stage docker rm "$container" >/dev/null
+            container=
+            as_stage docker build -f /usr/local/share/coherent-staging/Dockerfile.web-runtime -t "coherent-web:$target" "$source"
+        else
+            as_stage docker build -f "$source/deploy/Dockerfile.web" -t "coherent-web:$target" "$source"
+        fi
+        if as_stage grep -Fxq -e '      APP_ENV: staging' -e '      APP_ENV: ${STAGING_APP_ENV:-staging}' "$source/deploy/staging/compose.yaml" &&
+           as_stage grep -Fxq -e '      TEST_EMAIL_VERIFICATION_BYPASS: "true"' -e '      TEST_EMAIL_VERIFICATION_BYPASS: ${STAGING_EMAIL_TEST:-true}' "$source/deploy/staging/compose.yaml"; then
+            install -d -m 0700 "$config/email-test-revisions"
+            touch "$config/email-test-revisions/$target"
+        fi
 
         # Schema changes are reviewed for backward compatibility before deploy.
         if compose "$target" run --rm --no-deps api alembic upgrade head && activate "$target"; then
@@ -108,11 +128,18 @@ SQL
             exit 1
         fi
         ;;
+    auto-pause)
+        touch "$config/auto-paused"
+        ;;
+    auto-resume)
+        rm -f "$config/auto-paused" "$config/auto-failed-sha"
+        ;;
     rollback)
         [[ -s $previous_file ]] || { echo 'No previous staging revision has been deployed' >&2; exit 2; }
         previous=$(<"$previous_file")
         [[ $previous =~ ^[0-9a-f]{40}$ ]]
         if activate "$previous"; then
+            touch "$config/auto-paused"
             record "$previous_file" "$current"
             record "$current_file" "$previous"
         else
@@ -121,7 +148,7 @@ SQL
         fi
         ;;
     *)
-        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-reviewed ARCHIVE|rollback}' >&2
+        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-reviewed ARCHIVE|rollback|auto-pause|auto-resume}' >&2
         exit 2
         ;;
 esac

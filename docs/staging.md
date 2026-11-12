@@ -69,23 +69,24 @@ and TURN UDP 13478 with relay ports 14000–14031. The production media ports be
 
 ## Developer workflow
 
-Use `Gleb_test` in the developer's fork and open a pull request targeting
-`Gleb_test` in Coherent. The owner reviews the code and workflow changes
-before accepting the revision into the shared repository. Check the
-**Build for deployment** run for the accepted commit under GitHub Actions.
-Use the staging site and inbox after the owner deploys that commit. To
-report a failure, include the time, commit SHA and steps to reproduce.
+GitHub checks pushes to `Gleb_test`. The server's staging timer checks the
+branch every three minutes. After reviewing the exact commit, the repository
+owner can leave the comment `deploy-staging` on that commit's GitHub page.
+The timer requires a successful push build for the same SHA and the owner
+comment before it fetches and builds the revision. The owner can also
+approve the exact SHA in the root-only file
+`/etc/coherent-staging/approved-sha`. The timer uses public read-only GitHub
+requests. Build and deployment output is available on the VPS with
+`journalctl -u coherent-staging-auto.service -n 100`.
 
-Automatic deployment from arbitrary pushes is disabled. The shared
-repository still has repository-level desktop signing secrets and the
-developer already has write access. An unreviewed push to this repository
-can modify workflows. The fork workflow is a process boundary until
-the owner removes direct write access or moves signing to a separately
-protected workflow. Staging automation also needs a repository where the
-developer's token cannot change production releases. For unrestricted
-developer-controlled frontend deployments, use a separate registered
-domain so the staging page cannot set cookies for production's parent
-domain.
+The developer can prepare changes in a fork and open a PR targeting
+`Gleb_test`. The owner reviews the code and workflow changes before accepting
+them into the shared repository. The owner gate stays in place because the
+shared repository contains desktop signing secrets and staging shares a
+cookie parent domain with production. Direct repository write access and
+repository-level Actions secrets are a separate GitHub permission issue.
+Unrestricted staging deployments require an isolated repository and a
+separate registered domain.
 
 ## Owner operations
 
@@ -99,6 +100,8 @@ coherent-staging restart
 coherent-staging stop
 coherent-staging start
 coherent-staging rollback
+coherent-staging auto-pause
+coherent-staging auto-resume
 coherent-staging chat-mode mls
 coherent-staging chat-mode cloud
 journalctl -u coherent-staging-proxy.service -n 50
@@ -123,8 +126,11 @@ Transfer it to the owner's private VPS directory and run
 requires successful branch CI for the exact commit, builds under the
 resource-limited rootless account, applies Alembic, checks readiness and
 records the previous revision. Review DB migrations for compatibility
-with the preceding app before deployment. Rollback switches application
-images and leaves staging database migrations in place.
+with the preceding app before deployment. Rollback switches application images, pauses automatic deployments and
+leaves staging database migrations in place. Run `coherent-staging auto-resume`
+when ready to resume deployment. Failed revisions retry after a 30-minute
+cooldown. The owner can also disable the timer with
+`systemctl disable --now coherent-staging-auto.timer`.
 
 To withdraw the staging route, run the following on the VPS. The refresh
 service stores the original production Caddyfile at

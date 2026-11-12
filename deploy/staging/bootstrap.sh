@@ -172,6 +172,8 @@ done
 compose up -d --wait postgres redis mailpit
 compose run --rm --no-deps api alembic upgrade head
 compose up -d --wait
+install -d -m 0700 "$cfg/email-test-revisions"
+touch "$cfg/email-test-revisions/$version"
 printf '%s\n' "$version" >"$cfg/deployed-sha"
 
 if [[ ! -s $cfg/access ]]; then
