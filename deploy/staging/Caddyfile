@@ -1,0 +1,26 @@
+{
+    admin off
+    auto_https off
+}
+
+:8080 {
+    encode zstd gzip
+    handle /api/* {
+        request_body {
+            max_size 55MB
+        }
+        reverse_proxy api:8000
+    }
+    handle_path /livekit/* {
+        reverse_proxy livekit:7880
+    }
+    handle /__mailpit/* {
+        reverse_proxy mailpit:8025
+    }
+    handle {
+        root * /srv
+        header Cache-Control "no-cache"
+        try_files {path} /index.html
+        file_server
+    }
+}

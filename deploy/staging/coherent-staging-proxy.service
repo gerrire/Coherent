@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply the approved Coherent staging route to the shared Caddy
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/coherent-staging-refresh-proxy
+UMask=0077
+TimeoutStartSec=45s

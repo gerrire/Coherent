@@ -1,0 +1,11 @@
+[Unit]
+Description=Bounded storage for Coherent staging
+
+[Mount]
+What=/var/lib/coherent-staging-disk.img
+Where=/var/lib/coherent-staging
+Type=ext4
+Options=loop,nodev,nosuid
+
+[Install]
+WantedBy=multi-user.target

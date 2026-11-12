@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore the approved staging route after production Caddy is replaced
+
+[Timer]
+OnBootSec=45s
+OnUnitInactiveSec=45s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

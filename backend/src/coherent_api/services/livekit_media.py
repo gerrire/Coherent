@@ -24,7 +24,7 @@ def livekit_ready(settings: Settings) -> bool:
 def livekit_client(settings: Settings) -> livekit_api.LiveKitAPI:
     assert settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     return livekit_api.LiveKitAPI(
-        url=settings.livekit_url,
+        url=settings.livekit_internal_url or settings.livekit_url,
         api_key=settings.livekit_api_key,
         api_secret=settings.livekit_api_secret.get_secret_value(),
     )

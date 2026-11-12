@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     access_token_ttl_minutes: int = 60 * 24 * 7
     livekit_url: str | None = None
+    livekit_internal_url: str | None = None
     livekit_api_key: str | None = None
     livekit_api_secret: SecretStr | None = None
     attachment_dir: str = "/tmp/coherent-attachments"
@@ -50,6 +51,9 @@ class Settings(BaseSettings):
             )
         if self.livekit_url and not self.livekit_url.startswith(("ws://", "wss://")):
             raise ValueError("LIVEKIT_URL must use ws:// or wss://")
+
+        if self.livekit_internal_url and not self.livekit_internal_url.startswith(("http://", "https://")):
+            raise ValueError("LIVEKIT_INTERNAL_URL must use http:// or https://")
 
         if self.app_env == "production":
             if not self.cloud_encryption_required or not self.chat_master_key_path:
