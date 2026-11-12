@@ -51,6 +51,7 @@ services:
       - /tmp:rw,noexec,nosuid,size=256m
     environment:
       APP_ENV: production
+      TEST_EMAIL_VERIFICATION_BYPASS: "false"
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in deploy/.env}
       DATABASE_URL: postgresql+asyncpg://coherent:${POSTGRES_PASSWORD}@database:5432/coherent
       CORS_ORIGINS: '["https://${PUBLIC_IP:?Set PUBLIC_IP in deploy/.env}","https://${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN in deploy/.env}","https://www.${PUBLIC_DOMAIN}"]'

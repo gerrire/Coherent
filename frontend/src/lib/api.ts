@@ -303,8 +303,8 @@ export async function attachmentObjectUrl(path: string): Promise<string> {
 }
 
 export const api = {
-  registrationCode: (email: string) => request<{ verification_id: string; expires_in_seconds: number; retry_after_seconds: number }>("/api/v1/auth/registration/code", { method: "POST", body: JSON.stringify({ email }) }),
-  registrationDelivery: (id: string) => request<{ delivery: "pending" | "sent" | "failed" }>(`/api/v1/auth/registration/${id}`),
+  registrationCode: (email: string) => request<{ verification_id: string; expires_in_seconds: number; retry_after_seconds: number; test_mode?: boolean }>("/api/v1/auth/registration/code", { method: "POST", body: JSON.stringify({ email }) }),
+  registrationDelivery: (id: string) => request<{ delivery: "pending" | "sent" | "failed" | "test" }>(`/api/v1/auth/registration/${id}`),
   securityStatus: () => request<{ setup_available: boolean; configured: boolean; recovery_confirmed: boolean; chat_encryption: string; history_revision?:string|null; roster_revision: number; devices: Array<{ id: string; label: string; platform: string; approved_at: string }> }>("/api/v1/security/status"),
   deviceChallenge: (purpose: "bootstrap" | "confirm_recovery" | "action", call_id?:string) => request<{ challenge_id: string; nonce: string }>("/api/v1/security/challenges", { method: "POST", body: JSON.stringify({ purpose,call_id:call_id??null }) }),
   recoveryMaterial: () => request<{ public_key: string; backup: import("./crypto/types").Envelope; rosters: import("./crypto/types").SignedRoster[] }>("/api/v1/security/recovery/material"),
@@ -334,7 +334,7 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     request<void>("/api/v1/auth/password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
   updateProfile: (display_name: string) => request<User>("/api/v1/auth/profile", { method: "PATCH", body: JSON.stringify({ display_name }) }),
-  requestEmailCode: (email: string, current_password: string) => request<{ expires_in_seconds: number; retry_after_seconds: number }>("/api/v1/auth/email/code", { method: "POST", body: JSON.stringify({ email, current_password }) }),
+  requestEmailCode: (email: string, current_password: string) => request<{ expires_in_seconds: number; retry_after_seconds: number; test_mode?: boolean }>("/api/v1/auth/email/code", { method: "POST", body: JSON.stringify({ email, current_password }) }),
   confirmEmailCode: (code: string) => request<User>("/api/v1/auth/email/confirm", { method: "POST", body: JSON.stringify({ code }) }),
   adminOverview: () => request<AdminOverview>("/api/v1/admin/overview"),
   adminMetrics: () => request<{ samples: ServerMetricSample[]; interval_seconds: number }>("/api/v1/admin/metrics"),

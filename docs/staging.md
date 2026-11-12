@@ -11,6 +11,36 @@ credentials privately. Access to the test site requires no VPS account.
   100 messages for seven days. SMTP stays on the staging Docker network.
 - Health: `/api/v1/health/ready`.
 
+## Test email confirmation
+
+The staging API uses `APP_ENV=staging` and
+`TEST_EMAIL_VERIFICATION_BYPASS=true`. Registration and profile email changes
+accept any unused, syntactically valid address and any six ASCII digits instead
+of a delivered code. No email is sent for these test requests. The UI identifies
+this mode from the API response and shows that any six digits are accepted.
+Passwords, CSRF, address binding, expiry, one-time challenges, uniqueness and
+request limits remain enforced. A profile email change still needs the current
+password. An address already belonging to another account cannot be claimed.
+
+This flag defaults to false. Production Compose explicitly sets it to false,
+and `APP_ENV=production` refuses to start if the flag is enabled. Staging keeps
+the same encryption, secret, HTTPS and secure-cookie requirements as production.
+The mode depends on the API configuration, not a Git branch name or client-side
+flag, so merging the code into `main` does not enable it on the main site.
+Test challenges carry a separate marker: switching the mode on does not bypass
+real codes, and switching it off invalidates outstanding test codes. The data
+schema is unchanged; staging accounts stay in its separate database.
+
+For local testing, explicitly set `APP_ENV=development` and
+`TEST_EMAIL_VERIFICATION_BYPASS=true`; the checked-in `.env.example` leaves it off.
+
+For an **existing installed staging stack**, the owner must apply the reviewed
+`APP_ENV: staging` and `TEST_EMAIL_VERIFICATION_BYPASS: "true"` environment settings
+to `/var/lib/coherent-staging/stack/compose.yaml` and recreate its API using the
+reviewed image. `deploy-reviewed` builds images but does not replace the installed
+Compose file. Deploy code that supports these settings before enabling them.
+A push to `Gleb_test` alone does not activate the mode on the running test site.
+
 ## Architecture
 
 The `coherent-staging` Compose project lives in a separate rootless Docker

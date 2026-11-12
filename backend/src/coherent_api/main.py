@@ -87,7 +87,7 @@ def create_app(
         title=app_settings.app_name,
         version="0.1.0",
         description="API сервиса Coherent",
-        docs_url="/api/docs" if app_settings.app_env != "production" else None,
+        docs_url="/api/docs" if not app_settings.is_production_like else None,
         redoc_url=None,
         lifespan=lifespan,
     )

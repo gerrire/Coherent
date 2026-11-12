@@ -22,7 +22,8 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
   const [email, setEmail] = useState("");
   const [verificationId, setVerificationId] = useState<string | null>(null);
   const [code, setCode] = useState("");
-  const [delivery, setDelivery] = useState<"pending" | "sent" | "failed">("pending");
+  const [delivery, setDelivery] = useState<"pending" | "sent" | "failed" | "test">("pending");
+  const testMode = delivery === "test";
   const [resendWait, setResendWait] = useState(0);
   const [createdUser, setCreatedUser] = useState<User | null>(null);
   useEffect(() => {
@@ -31,7 +32,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
     return () => window.clearTimeout(timer);
   }, [resendWait]);
   useEffect(() => {
-    if (!verificationId || createdUser) return;
+    if (!verificationId || createdUser || testMode) return;
     let active = true;
     let timer = 0;
     let attempts = 0;
@@ -46,7 +47,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
     }
     void refresh();
     return () => { active = false; window.clearTimeout(timer); };
-  }, [verificationId, createdUser]);
+  }, [verificationId, createdUser, testMode]);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,7 +60,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
     try {
       if (mode === "register" && !verificationId) {
         const challenge = await api.registrationCode(email.trim());
-        setDelivery("pending"); setVerificationId(challenge.verification_id); setResendWait(challenge.retry_after_seconds); setCode("");
+        setDelivery(challenge.test_mode === true ? "test" : "pending"); setVerificationId(challenge.verification_id); setResendWait(challenge.retry_after_seconds); setCode("");
         return;
       }
       const result = mode === "register"
@@ -85,13 +86,13 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
   function toggleMode() {
     setMode((current) => current === "register" ? "login" : "register");
     setError("");
-    setPassword(""); setCode(""); setVerificationId(null);
+    setPassword(""); setCode(""); setVerificationId(null); setDelivery("pending"); setResendWait(0);
   }
 
   async function resendCode() {
     if (busy || resendWait) return;
     setBusy(true); setError("");
-    try { const result = await api.registrationCode(email.trim()); setDelivery("pending"); setVerificationId(result.verification_id); setResendWait(result.retry_after_seconds); setCode(""); }
+    try { const result = await api.registrationCode(email.trim()); setDelivery(result.test_mode === true ? "test" : "pending"); setVerificationId(result.verification_id); setResendWait(result.retry_after_seconds); setCode(""); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Не удалось отправить код"); }
     finally { setBusy(false); }
   }
@@ -207,7 +208,17 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                 </span>
               </label>
               </>}
-              {verificationId && <><p className="auth-mail-note">{delivery === "pending" ? "Отправляем код на" : delivery === "failed" ? "Не удалось отправить код на" : "Код отправлен на"} <strong>{email}</strong>. Он действует 10 минут. Проверь также папку «Спам».</p><label className="field-label">Логин<span className="input-wrap"><UserRound size={17} /><input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9_]{3,32}" required /></span></label><label className="field-label">Код из письма<span className="input-wrap"><Mail size={17} /><input autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="000000" required /></span></label><div className="auth-code-actions"><button type="button" disabled={busy || resendWait > 0} onClick={() => void resendCode()}>{resendWait ? `Повторить через ${resendWait} с` : "Отправить ещё раз"}</button><button type="button" disabled={busy} onClick={() => { setVerificationId(null); setCode(""); setError(""); }}>Изменить адрес</button></div></>}
+              {verificationId && <>
+                {testMode
+                  ? <p className="auth-mail-note" role="status">Тестовый режим: письмо не отправляется. Введи любые 6 цифр. Адрес: <strong>{email}</strong>. Запрос действует 10 минут.</p>
+                  : <p className="auth-mail-note">{delivery === "pending" ? "Отправляем код на" : delivery === "failed" ? "Не удалось отправить код на" : "Код отправлен на"} <strong>{email}</strong>. Он действует 10 минут. Проверь также папку «Спам».</p>}
+                <label className="field-label">Логин<span className="input-wrap"><UserRound size={17} /><input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9_]{3,32}" required /></span></label>
+                <label className="field-label">{testMode ? "Любые 6 цифр" : "Код из письма"}<span className="input-wrap"><Mail size={17} /><input autoFocus inputMode="numeric" autoComplete="one-time-code" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="000000" required /></span></label>
+                <div className="auth-code-actions">
+                  <button type="button" disabled={busy || resendWait > 0} onClick={() => void resendCode()}>{resendWait ? `Повторить через ${resendWait} с` : testMode ? "Новый тестовый запрос" : "Отправить ещё раз"}</button>
+                  <button type="button" disabled={busy} onClick={() => { setVerificationId(null); setCode(""); setError(""); setDelivery("pending"); setResendWait(0); }}>Изменить адрес</button>
+                </div>
+              </>}
 
               {error && <div className="form-error" role="alert">{error}</div>}
 
@@ -216,7 +227,7 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
                   {busy
                     ? "Секунду..."
                     : mode === "register"
-                      ? (verificationId ? "Подтвердить и создать аккаунт" : "Получить код на почту")
+                      ? (verificationId ? testMode ? "Создать тестовый аккаунт" : "Подтвердить и создать аккаунт" : "Получить код на почту")
                       : "Войти в Coherent"}
                 </span>
                 <ArrowRight size={17} />
