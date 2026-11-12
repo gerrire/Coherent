@@ -5,7 +5,7 @@
     }
 }
 
-dev.coherent-web.ru {
+coherent-stage.31-76-77-197.sslip.io {
     @signal path /livekit/rtc /livekit/rtc/*
     @loginNeeded not header_regexp Cookie stageAccess "(^|;[ ]*)__Host-coherent_stage_gate=@STAGING_GATE_TOKEN@(;|$)"
 
@@ -28,4 +28,9 @@ dev.coherent-web.ru {
             import coherent-staging-upstream
         }
     }
+}
+
+dev.coherent-web.ru {
+    header Referrer-Policy "no-referrer"
+    redir https://coherent-stage.31-76-77-197.sslip.io{uri} 302
 }

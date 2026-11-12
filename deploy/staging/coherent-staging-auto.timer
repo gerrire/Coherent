@@ -1,5 +1,5 @@
 [Unit]
-Description=Check Gleb_test for an approved Coherent staging deployment
+Description=Check Gleb_test for a successful Coherent staging build
 
 [Timer]
 OnBootSec=3min

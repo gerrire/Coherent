@@ -38,25 +38,25 @@ services:
       TEST_EMAIL_VERIFICATION_BYPASS: ${STAGING_EMAIL_TEST:-true}
       SECRET_KEY: ${STAGING_SECRET_KEY:?}
       DATABASE_URL: postgresql+asyncpg://coherent:${STAGING_DB_PASSWORD:?}@postgres:5432/coherent_staging
-      CORS_ORIGINS: '["https://dev.coherent-web.ru"]'
+      CORS_ORIGINS: '["https://coherent-stage.31-76-77-197.sslip.io"]'
       COOKIE_SECURE: "true"
       CHAT_MASTER_KEY_PATH: /run/staging-master-key
       CLOUD_ENCRYPTION_REQUIRED: "true"
-      LIVEKIT_URL: wss://dev.coherent-web.ru/livekit
+      LIVEKIT_URL: wss://coherent-stage.31-76-77-197.sslip.io/livekit
       LIVEKIT_INTERNAL_URL: http://livekit:7880
       LIVEKIT_API_KEY: ${STAGING_LIVEKIT_KEY:?}
       LIVEKIT_API_SECRET: ${STAGING_LIVEKIT_SECRET:?}
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_STARTTLS: "false"
-      SMTP_FROM: noreply@dev.coherent-web.ru
+      SMTP_FROM: noreply@coherent-stage.31-76-77-197.sslip.io
       ATTACHMENT_DIR: /data/attachments
       ATTACHMENT_STORAGE_LIMIT_MB: "512"
       ATTACHMENT_MIN_FREE_MB: "256"
       E2EE_STORAGE_LIMIT_MB: "256"
       E2EE_MESSAGING_ENABLED: "true"
       VAPID_KEY_PATH: /data/vapid/private.pem
-      VAPID_SUBJECT: https://dev.coherent-web.ru
+      VAPID_SUBJECT: https://coherent-stage.31-76-77-197.sslip.io
     volumes:
       - attachments:/data/attachments
       - vapid:/data/vapid
@@ -117,7 +117,7 @@ services:
             includes: [edge0]
         turn:
           enabled: true
-          domain: dev.coherent-web.ru
+          domain: coherent-stage.31-76-77-197.sslip.io
           udp_port: 13478
           tls_port: 0
           relay_range_start: 14000

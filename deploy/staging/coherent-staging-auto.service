@@ -1,5 +1,5 @@
 [Unit]
-Description=Deploy an owner-approved Coherent staging revision after CI
+Description=Deploy a green Coherent staging revision from Gleb_test after CI
 After=network-online.target coherent-staging-network.service
 Wants=network-online.target
 
@@ -7,4 +7,6 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/bin/python3 -u /usr/local/sbin/coherent-staging-auto
 UMask=0077
+MemoryMax=384M
+CPUQuota=30%
 TimeoutStartSec=35min

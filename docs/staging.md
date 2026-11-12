@@ -1,13 +1,14 @@
 # Coherent staging
 
-Staging is available at https://dev.coherent-web.ru. Use a separate browser
+Staging is available at https://coherent-stage.31-76-77-197.sslip.io. The
+former dev.coherent-web.ru address redirects there. Use a separate browser
 profile with test accounts. The HTTPS gateway requests the staging access
 credentials before serving the application. The owner can share those
 credentials privately. Access to the test site requires no VPS account.
 
-- Application and API: `https://dev.coherent-web.ru/` and `/api/v1/`.
-- LiveKit signaling: `wss://dev.coherent-web.ru/livekit`.
-- Test mail: `https://dev.coherent-web.ru/__mailpit/`. Mailpit retains up to
+- Application and API: `https://coherent-stage.31-76-77-197.sslip.io/` and `/api/v1/`.
+- LiveKit signaling: `wss://coherent-stage.31-76-77-197.sslip.io/livekit`.
+- Test mail: `https://coherent-stage.31-76-77-197.sslip.io/__mailpit/`. Mailpit retains up to
   100 messages for seven days. SMTP stays on the staging Docker network.
 - Health: `/api/v1/health/ready`.
 
@@ -69,24 +70,18 @@ and TURN UDP 13478 with relay ports 14000–14031. The production media ports be
 
 ## Developer workflow
 
-GitHub checks pushes to `Gleb_test`. The server's staging timer checks the
-branch every three minutes. After reviewing the exact commit, the repository
-owner can leave the comment `deploy-staging` on that commit's GitHub page.
-The timer requires a successful push build for the same SHA and the owner
-comment before it fetches and builds the revision. The owner can also
-approve the exact SHA in the root-only file
-`/etc/coherent-staging/approved-sha`. The timer uses public read-only GitHub
-requests. Build and deployment output is available on the VPS with
+Push to `Gleb_test` as usual. The server checks the branch every three
+minutes and deploys the current SHA after **Build for deployment** succeeds
+for that exact push. The author can be any contributor who can push to
+the branch. Staging logs are available on the VPS with
 `journalctl -u coherent-staging-auto.service -n 100`.
 
-The developer can prepare changes in a fork and open a PR targeting
-`Gleb_test`. The owner reviews the code and workflow changes before accepting
-them into the shared repository. The owner gate stays in place because the
-shared repository contains desktop signing secrets and staging shares a
-cookie parent domain with production. Direct repository write access and
-repository-level Actions secrets are a separate GitHub permission issue.
-Unrestricted staging deployments require an isolated repository and a
-separate registered domain.
+The timer uses public read-only GitHub requests. Git fetch, archive
+extraction, builds and container execution run as the staging account.
+The source and build files use the bounded staging filesystem. The app
+runs on a different registrable domain from production and the old dev
+hostname serves a redirect. Repository write access and repository-level
+Actions secrets remain a separate GitHub permission issue.
 
 ## Owner operations
 
@@ -113,7 +108,7 @@ recovery and legacy MLS, close active staging calls and switch staging to
 with `chat-mode cloud` when finished. The command edits the policy row in
 `coherent_staging` and preserves existing data.
 
-To deploy an approved SHA, fetch `Gleb_test` locally and create an uncompressed
+To deploy a reviewed SHA manually, fetch `Gleb_test` locally and create an uncompressed
 archive of the exact reviewed commit:
 
 ```sh

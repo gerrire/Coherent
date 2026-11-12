@@ -14,7 +14,8 @@ flock -w 5 9
 
 as_stage() (
     cd "$home"
-    runuser -u "$account" -- env XDG_RUNTIME_DIR="$runtime" DOCKER_HOST="unix://$runtime/docker.sock" "$@"
+    runuser -u "$account" -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$home" \
+        XDG_RUNTIME_DIR="$runtime" DOCKER_HOST="unix://$runtime/docker.sock" "$@"
 )
 
 compose() {
@@ -37,7 +38,7 @@ activate() {
     compose "$1" up -d --wait --wait-timeout 120 --no-build --pull never
 }
 
-reviewed_ci() {
+check_ci() {
     python3 - "$1" <<'PY'
 import json
 import sys
@@ -90,20 +91,46 @@ case "${1:-}" in
 UPDATE chat_policy SET write_mode = :'mode' WHERE id = 1;
 SQL
         ;;
-    deploy-reviewed)
-        [[ ( $# == 2 || ( $# == 3 && $3 == --reuse-crypto ) ) && -f $2 ]] || { echo 'Expected an operator-reviewed, uncompressed git archive' >&2; exit 2; }
-        archive=$2
-        target=$(git get-tar-commit-id <"$archive")
+    deploy-head|deploy-reviewed)
+        [[ $# == 2 ]]
+        if [[ $1 == deploy-head ]]; then
+            target=$2
+        else
+            [[ -f $2 ]] || { echo 'Expected an uncompressed git archive' >&2; exit 2; }
+            target=$(git get-tar-commit-id <"$2")
+        fi
         [[ $target =~ ^[0-9a-f]{40}$ ]]
         [[ $target != "$current" ]] || exit 0
-        reviewed_ci "$target"
+        check_ci "$target"
 
-        source=$(as_stage mktemp -d "$home/build.XXXXXXXX")
+        scratch=$(as_stage mktemp -d "$home/build.XXXXXXXX")
+        source=$scratch/source
         container=
-        trap 'if [[ -n $container ]]; then as_stage docker rm "$container" >/dev/null; fi; as_stage rm -rf -- "$source"' EXIT
-        as_stage tar --extract --no-same-owner --no-same-permissions -C "$source" <"$archive"
+        reuse_crypto=false
+        trap 'if [[ -n $container ]]; then as_stage docker rm "$container" >/dev/null; fi; as_stage rm -rf -- "$scratch"' EXIT
+        as_stage mkdir "$source"
+        extract() {
+            as_stage tar --extract --no-same-owner --no-same-permissions -C "$source"
+        }
+        if [[ $1 == deploy-head ]]; then
+            repo=https://github.com/gerrire/Coherent.git
+            stage_git() {
+                as_stage env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+                    GIT_TERMINAL_PROMPT=0 git -c core.hooksPath=/dev/null --git-dir="$scratch/git" "$@"
+            }
+            stage_git init --bare --quiet
+            stage_git fetch --quiet --no-tags --depth=1 "$repo" "$target:refs/staging/target"
+            [[ $(stage_git rev-parse refs/staging/target) == "$target" ]]
+            stage_git archive --format=tar "$target" | extract
+            if stage_git fetch --quiet --no-tags --depth=1 "$repo" "$current:refs/staging/current" &&
+               stage_git diff --quiet "$current" "$target" -- crates/coherent-crypto deploy/Dockerfile.web; then
+                reuse_crypto=true
+            fi
+        else
+            extract <"$2"
+        fi
         as_stage docker build -f "$source/deploy/Dockerfile.api" -t "coherent-api:$target" "$source"
-        if [[ ${3:-} == --reuse-crypto ]]; then
+        if [[ $reuse_crypto == true ]]; then
             container=$(as_stage docker create --network none "coherent-web:$current")
             as_stage mkdir -p "$source/frontend/public/crypto/v1"
             as_stage docker cp "$container:/srv/crypto/v1/." "$source/frontend/public/crypto/v1/"
@@ -148,7 +175,7 @@ SQL
         fi
         ;;
     *)
-        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-reviewed ARCHIVE|rollback|auto-pause|auto-resume}' >&2
+        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-head SHA|deploy-reviewed ARCHIVE|rollback|auto-pause|auto-resume}' >&2
         exit 2
         ;;
 esac
