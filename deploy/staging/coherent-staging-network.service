@@ -1,0 +1,13 @@
+[Unit]
+Description=Isolated network namespace and ICE forwarding for Coherent staging
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/coherent-staging-network start
+ExecStop=/usr/local/sbin/coherent-staging-network stop
+
+[Install]
+WantedBy=multi-user.target

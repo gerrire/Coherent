@@ -1,15 +1,31 @@
-dev.coherent-web.ru {
-    basic_auth {
-        tester @STAGING_ACCESS_HASH@
+(coherent-staging-upstream) {
+    reverse_proxy 10.205.40.2:18080 {
+        header_up -Authorization
+        header_up Cookie "(^|;[ ]*)__Host-coherent_stage_gate=[^;]*" ""
     }
+}
+
+dev.coherent-web.ru {
+    @signal path /livekit/rtc /livekit/rtc/*
+    @loginNeeded not header_regexp Cookie stageAccess "(^|;[ ]*)__Host-coherent_stage_gate=@STAGING_GATE_TOKEN@(;|$)"
+
     header {
         X-Robots-Tag "noindex, nofollow"
         Referrer-Policy "no-referrer"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
     }
-    redir /__mailpit /__mailpit/ 308
-    reverse_proxy 127.0.0.1:18080 {
-        header_up -Authorization
+    handle @signal {
+        import coherent-staging-upstream
+    }
+    handle {
+        route {
+            basic_auth @loginNeeded {
+                tester @STAGING_ACCESS_HASH@
+            }
+            header @loginNeeded +Set-Cookie "__Host-coherent_stage_gate=@STAGING_GATE_TOKEN@; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800"
+            redir /__mailpit /__mailpit/ 308
+            import coherent-staging-upstream
+        }
     }
 }

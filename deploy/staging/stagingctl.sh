@@ -74,6 +74,17 @@ case "${1:-}" in
         compose "$current" restart
         activate "$current"
         ;;
+    chat-mode)
+        [[ $# == 2 ]]
+        case "$2" in
+            cloud) mode=cloud_v1 ;;
+            mls) mode=legacy_mls ;;
+            *) echo 'Expected cloud or mls' >&2; exit 2 ;;
+        esac
+        compose "$current" exec -T postgres psql -U coherent -d coherent_staging -v ON_ERROR_STOP=1 -v "mode=$mode" <<'SQL'
+UPDATE chat_policy SET write_mode = :'mode' WHERE id = 1;
+SQL
+        ;;
     deploy-reviewed)
         [[ $# == 2 && -f $2 ]] || { echo 'Expected an operator-reviewed, uncompressed git archive' >&2; exit 2; }
         archive=$2
@@ -110,7 +121,7 @@ case "${1:-}" in
         fi
         ;;
     *)
-        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|deploy-reviewed ARCHIVE|rollback}' >&2
+        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-reviewed ARCHIVE|rollback}' >&2
         exit 2
         ;;
 esac

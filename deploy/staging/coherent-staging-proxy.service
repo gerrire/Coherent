@@ -4,6 +4,7 @@ After=docker.service
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/local/sbin/coherent-staging-network start
 ExecStart=/usr/local/sbin/coherent-staging-refresh-proxy
 UMask=0077
-TimeoutStartSec=45s
+TimeoutStartSec=180s

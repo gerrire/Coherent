@@ -1,0 +1,26 @@
+table inet coherent_stage_net {
+    chain preroute {
+        type nat hook prerouting priority dstnat - 1; policy accept;
+        iifname "ens3" ip daddr 31.76.77.197 tcp dport 17881 dnat ip to 10.205.40.2
+        iifname { "ens3", "coh-stage-host" } ip daddr 31.76.77.197 udp dport { 13478, 14000-14031, 17882 } dnat ip to 10.205.40.2
+    }
+    chain postroute {
+        type nat hook postrouting priority srcnat - 1; policy accept;
+        oifname "ens3" ip saddr 10.205.40.2 masquerade
+        iifname "coh-stage-host" oifname "coh-stage-host" ip daddr 10.205.40.2 masquerade
+    }
+    chain protect_host {
+        type filter hook input priority -5; policy accept;
+        iifname "coh-stage-host" ct state established,related accept
+        iifname "coh-stage-host" reject
+    }
+    chain protect_private {
+        type filter hook forward priority -5; policy accept;
+        iifname "coh-stage-host" ct state established,related accept
+        iifname "coh-stage-host" oifname "coh-stage-host" ct status dnat udp dport { 13478, 14000-14031, 17882 } accept
+        iifname "coh-stage-host" meta nfproto ipv6 reject
+        iifname "coh-stage-host" ip saddr != 10.205.40.2 reject
+        iifname "coh-stage-host" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4 } reject
+        iifname "coh-stage-host" tcp dport != { 53, 80, 443 } reject
+    }
+}

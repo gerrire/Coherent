@@ -18,7 +18,9 @@ daemon under Linux user `coherent-stage`. It owns its PostgreSQL, Redis,
 LiveKit, API, frontend, Mailpit, volumes and networks. The API and Mailpit
 sit on an internal network. The rootless account is outside the production
 Docker and sudo groups. A separate nftables table rejects connections from
-that account to host services and private networks.
+that account to host services and private networks. Its daemon also has a
+dedicated network namespace. nftables forwards the exact media ports and
+filters traffic from the staging link.
 
 The VPS uses 2 vCPUs and 4 GiB RAM. The staging user slice is capped at one
 CPU, 1.5 GiB RAM, 256 MiB swap and 768 tasks. The daemon, application volumes
@@ -27,11 +29,13 @@ per-service memory, task and logging limits. The production SMTP service
 retains its existing configuration.
 
 The existing Caddy serves staging HTTPS on port 443. It forwards to
-`127.0.0.1:18080` and removes its access credential from upstream requests.
+`10.205.40.2:18080` and removes its access credential from upstream requests.
 The refresh timer validates the combined configuration before reloading
-Caddy and reapplies the staging route when production replaces its Caddy
-container. LiveKit has separate credentials and uses TCP 17881, UDP 17882
-and TURN UDP 13478. The production media ports belong to its existing server.
+Caddy and reapplies the staging route when production restarts or replaces its Caddy
+container. LiveKit signaling validates its own room JWTs, so WebSocket
+connections work without the site's HTTP authentication challenge. LiveKit
+has separate credentials and uses TCP 17881, UDP 17882
+and TURN UDP 13478 with relay ports 14000–14031. The production media ports belong to its existing server.
 
 ## Developer workflow
 
@@ -64,8 +68,16 @@ coherent-staging restart
 coherent-staging stop
 coherent-staging start
 coherent-staging rollback
+coherent-staging chat-mode mls
+coherent-staging chat-mode cloud
 journalctl -u coherent-staging-proxy.service -n 50
 ```
+
+The initial chat mode matches production's cloud mode. To test device
+recovery and legacy MLS, close active staging calls and switch staging to
+`chat-mode mls`. Use test accounts with verified addresses. Switch back
+with `chat-mode cloud` when finished. The command edits the policy row in
+`coherent_staging` and preserves existing data.
 
 To deploy an approved SHA, fetch `Gleb_test` locally and create an uncompressed
 archive of the exact reviewed commit:
@@ -83,7 +95,21 @@ records the previous revision. Review DB migrations for compatibility
 with the preceding app before deployment. Rollback switches application
 images and leaves staging database migrations in place.
 
-To withdraw the staging route, disable the refresh timer, remove its state
-marker, then validate and reload the production container's original Caddy
-configuration under the production deployment lock. Staging data remains
+To withdraw the staging route, run the following on the VPS. The refresh
+service stores the original production Caddyfile at
+`/etc/coherent-staging/production.Caddyfile`. The existing production
+container also includes its original configuration.
+
+```sh
+systemctl disable --now coherent-staging-proxy.timer
+flock /run/lock/coherent-deploy.lock bash -c '
+  set -e
+  docker exec coherent-web-1 caddy validate --config /etc/caddy/Caddyfile
+  docker exec coherent-web-1 caddy reload --config /etc/caddy/Caddyfile
+  rm -f /run/coherent-staging-proxy-state
+'
+```
+
+Re-enable the route with `systemctl enable --now coherent-staging-proxy.timer`
+and `systemctl start coherent-staging-proxy.service`. Staging data remains
 on its mounted filesystem for recovery.

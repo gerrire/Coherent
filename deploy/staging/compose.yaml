@@ -3,6 +3,7 @@ name: coherent-staging
 x-limits: &limits
   restart: unless-stopped
   pids_limit: 128
+  security_opt: [no-new-privileges:true]
   logging:
     driver: json-file
     options:
@@ -17,9 +18,8 @@ services:
     read_only: true
     tmpfs: ["/tmp", "/data", "/config"]
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
     mem_limit: 128m
-    ports: ["127.0.0.1:18080:8080"]
+    ports: ["10.205.40.2:18080:8080"]
     volumes: ["./Caddyfile:/etc/caddy/staging:ro"]
     networks: [edge, app]
     depends_on:
@@ -30,7 +30,6 @@ services:
     image: coherent-api:${STAGING_IMAGE_TAG:?}
     read_only: true
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
     tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
     mem_limit: 384m
     networks: [app]
@@ -96,10 +95,13 @@ services:
     image: livekit/livekit-server@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
     read_only: true
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
     mem_limit: 384m
-    networks: [edge, app]
-    ports: ["31.76.77.197:17881:17881/tcp", "31.76.77.197:17882:17882/udp", "31.76.77.197:13478:13478/udp"]
+    networks:
+      edge:
+        interface_name: edge0
+      app:
+        interface_name: app0
+    ports: ["10.205.40.2:17881:17881/tcp", "10.205.40.2:17882:17882/udp", "10.205.40.2:13478:13478/udp", "10.205.40.2:14000-14031:14000-14031/udp"]
     environment:
       LIVEKIT_CONFIG: |
         port: 7880
@@ -108,12 +110,18 @@ services:
           tcp_port: 17881
           udp_port: 17882
           use_external_ip: false
+          use_ice_lite: true
           node_ip: 31.76.77.197
+          interfaces:
+            includes: [edge0]
         turn:
           enabled: true
           domain: dev.coherent-web.ru
           udp_port: 13478
           tls_port: 0
+          relay_range_start: 14000
+          relay_range_end: 14031
+          per_user_relay_allocation_limit: 4
         redis:
           address: redis:6379
         webhook:
@@ -124,7 +132,7 @@ services:
     depends_on: [redis]
   mailpit:
     <<: *limits
-    image: axllent/mailpit:v1.28.0
+    image: axllent/mailpit@sha256:c076638db1e15662150be4fb62b8a6e96ef6ba5bde90c838a0239225854830f7
     mem_limit: 96m
     networks: [app]
     environment:
@@ -142,5 +150,9 @@ networks:
 volumes:
   postgres:
   attachments:
+    external: true
+    name: coherent-staging_attachments
   vapid:
+    external: true
+    name: coherent-staging_vapid
   mailpit:
