@@ -54,6 +54,7 @@ import {
   type MediaPreferences,
 } from "../lib/media";
 import MediaSettingsPanel from "./MediaSettingsPanel";
+import CallTranslationPanel from "./CallTranslationPanel";
 import ParticipantPicker from "./ParticipantPicker";
 import { applyMicrophoneProcessing, browserMicrophoneFallback, enableCallMicrophone, MicrophoneProcessorError, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { NativeScreenAudio } from "../lib/nativeScreenAudio";
@@ -663,6 +664,7 @@ function CallRoom({
         <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
         {header}
         <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
+        <CallTranslationPanel callId={call.id} connected={connected} microphoneEnabled={media.microphoneEnabled} deafened={media.deafened} />
         <div className="call-surface-controls">
           {keyNotice && <span className="call-key-notice" role="status">{keyNotice}</span>}
           <CallConnectionNotice />
