@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { TranslationQueue } from "../src/lib/translation/queue";
 
-const caption = (id: string, receivedAt = 1000) => ({ id, speakerId: "speaker", text: id, receivedAt });
+const caption = (id: string, receivedAt = 1000) => ({ id, speakerId: "speaker", text: id, language: "en" as const, receivedAt });
 
 test("keeps only newest waiting audio and six recent group captions", () => {
   let dropped = 0;

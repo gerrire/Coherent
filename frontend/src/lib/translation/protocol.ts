@@ -1,5 +1,8 @@
-/** All audio inference is local. The shared caption representation is English. */
+/** All inference is local. Captions preserve the speaker's original language. */
+import type { TranslationModelId } from "./models";
+
 export type TranslationLanguage = "en" | "ru" | "de" | "fr" | "es";
+export type TranslationQuality = "light" | "balanced";
 
 export const TRANSLATION_LANGUAGES: ReadonlyArray<{ code: TranslationLanguage; label: string }> = [
   { code: "en", label: "English" },
@@ -16,9 +19,11 @@ export type TranslationWorkerRequest =
       recognize: boolean;
       sourceLanguage: TranslationLanguage;
       targetLanguage: TranslationLanguage;
+      quality?: TranslationQuality;
+      model?: TranslationModelId;
     }
-  | { id: number; type: "recognize"; audio: Float32Array }
-  | { id: number; type: "translate"; text: string };
+  | { id: number; type: "recognize"; audio: Float32Array; sourceLanguage?: TranslationLanguage }
+  | { id: number; type: "translate"; text: string; sourceLanguage: TranslationLanguage };
 
 export interface TranslationWorkerResponse {
   id: number;
@@ -27,6 +32,7 @@ export interface TranslationWorkerResponse {
   message?: string;
   /** Download progress for the current file, from 0 to 100. */
   progress?: number;
+  stage?: "loading" | "inference";
 }
 
 export function isTranslationLanguage(value: unknown): value is TranslationLanguage {

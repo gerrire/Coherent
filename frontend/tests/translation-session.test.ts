@@ -25,6 +25,7 @@ vi.mock("../src/lib/translation/transport", () => ({
 }));
 
 import { startTranslationSession } from "../src/lib/translation/session";
+import { createTranslationMetrics, type TranslationMetrics } from "../src/lib/translation/metrics";
 
 class TestWorker {
   static all: TestWorker[] = [];
@@ -41,11 +42,12 @@ class TestWorker {
   emit(data: TranslationWorkerResponse) { this.onmessage?.({ data } as MessageEvent<TranslationWorkerResponse>); }
 }
 
-function fixture(patch: { recognize?: boolean; targetLanguage?: "en" | "ru" } = {}) {
-  const callbacks = { onCaption: vi.fn(), onStatus: vi.fn(), onError: vi.fn(), onDropped: vi.fn() };
+function fixture(patch: { recognize?: boolean; targetLanguage?: "en" | "ru"; metrics?: TranslationMetrics } = {}) {
+  const callbacks = { onCaption: vi.fn(), onLocalCaption: vi.fn(), onRecognitionReady: vi.fn(), onStatus: vi.fn(), onError: vi.fn(), onDropped: vi.fn() };
   const session = startTranslationSession({
     room: { localParticipant: { identity: "self" } } as Room,
     callId: "call", sourceLanguage: "ru", targetLanguage: "en", recognize: true,
+    getCaptionKeys: () => [],
     ...callbacks, ...patch,
   });
   const track = { enabled: true, muted: false, readyState: "live" } as MediaStreamTrack;
@@ -53,7 +55,7 @@ function fixture(patch: { recognize?: boolean; targetLanguage?: "en" | "ru" } = 
 }
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
-const remote = (): Caption => ({ id: "segment", speakerId: "other", text: "Hello", receivedAt: Date.now() });
+const remote = (): Caption => ({ id: "segment", speakerId: "other", text: "Hello", language: "en", receivedAt: Date.now() });
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -68,6 +70,28 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("local translation session lifecycle", () => {
+  it("keeps detached audio duration for ASR metrics and clears active work when closed", async () => {
+    let clock = 0;
+    const metrics = createTranslationMetrics(() => clock);
+    const { session, track } = fixture({ metrics });
+    session.setMicrophoneTrack(track);
+    await tick();
+    const worker = TestWorker.all[0];
+    clock += 5_000;
+    worker.emit({ type: "ready", id: 0 });
+    await tick();
+    const audio = new Float32Array(16_000 * 4);
+    doubles.captures[0].audio(audio);
+    expect(audio.byteLength).toBe(0);
+    clock += 2_000;
+    worker.emit({ type: "result", id: 1, text: "Привет" });
+    expect(metrics.getSnapshot().recognition).toMatchObject({ completed: 1, lastInferenceMs: 2_000, lastRealtimeFactor: 0.5, lastLoadMs: 5_000 });
+    doubles.captures[0].audio(new Float32Array(16_000));
+    expect(metrics.getSnapshot().recognition.phase).toBe("inference");
+    session.close();
+    expect(metrics.getSnapshot()).toMatchObject({ activeWorkers: 0, recognition: { phase: "idle", completed: 1 } });
+  });
+
   it("can be closed immediately without creating a Worker, capture, or model download", async () => {
     const { session, onStatus } = fixture();
     session.close(); session.close();
@@ -90,16 +114,59 @@ describe("local translation session lifecycle", () => {
     session.close();
   });
 
+  it("keeps Russian captions verbatim without an English round trip or a model allocation", async () => {
+    const { session, onCaption } = fixture({ recognize: false, targetLanguage: "ru" });
+    await tick();
+    const caption: Caption = { ...remote(), language: "ru", text: "Я тебя не слышу. Повтори последнее предложение." };
+    doubles.inbound!(caption);
+    expect(onCaption).toHaveBeenCalledExactlyOnceWith(caption);
+    expect(TestWorker.all).toHaveLength(0);
+    session.close();
+  });
+
+  it("translates Russian to English rather than treating every incoming caption as English", async () => {
+    const { session, onCaption } = fixture({ recognize: false });
+    await tick();
+    doubles.inbound!({ ...remote(), language: "ru", text: "Привет" });
+    const worker = TestWorker.all[0];
+    worker.emit({ type: "ready", id: 0 });
+    expect(worker.requests[1]).toMatchObject({ type: "translate", sourceLanguage: "ru", text: "Привет" });
+    expect(onCaption).not.toHaveBeenCalled();
+    worker.emit({ type: "result", id: 1, text: "Hello" });
+    expect(onCaption).toHaveBeenCalledWith(expect.objectContaining({ speakerId: "other", text: "Hello" }));
+    session.close();
+  });
+
+  it("allows a cold model download, discards the stale first phrase and then delivers fresh remote speech", async () => {
+    const { session, onError, onCaption, onDropped } = fixture({ recognize: false, targetLanguage: "ru" });
+    await tick();
+    doubles.inbound!(remote());
+    const worker = TestWorker.all[0];
+    worker.emit({ type: "ready", id: 0 });
+    worker.emit({ type: "progress", id: 1, stage: "loading", progress: 10 });
+    vi.advanceTimersByTime(90_000);
+    expect(onError).not.toHaveBeenCalled();
+    doubles.inbound!({ ...remote(), id: "new", text: "I can hear you now." });
+    worker.emit({ type: "progress", id: 1, stage: "inference" });
+    worker.emit({ type: "result", id: 1, text: "Устаревшая реплика" });
+    expect(onDropped).toHaveBeenCalledOnce();
+    expect(onCaption).not.toHaveBeenCalled();
+    worker.emit({ type: "result", id: 2, text: "Теперь я тебя слышу." });
+    expect(onCaption).toHaveBeenCalledWith(expect.objectContaining({ id: "new", text: "Теперь я тебя слышу." }));
+    session.close();
+  });
+
   it("waits for initialization before translating queued remote captions", async () => {
     const { session, onCaption } = fixture({ recognize: false, targetLanguage: "ru" });
     await tick();
-    const worker = TestWorker.all[0];
-    expect(worker.requests).toEqual([{ id: 0, type: "init", recognize: false, sourceLanguage: "ru", targetLanguage: "ru" }]);
+    expect(TestWorker.all).toHaveLength(0);
     const caption = remote();
     doubles.inbound!(caption);
+    const worker = TestWorker.all[0];
+    expect(worker.requests[0]).toEqual({ id: 0, type: "init", recognize: false, sourceLanguage: "ru", targetLanguage: "ru", quality: "balanced" });
     expect(worker.requests).toHaveLength(1);
     worker.emit({ type: "ready", id: 0 });
-    expect(worker.requests[1]).toEqual({ id: 1, type: "translate", text: "Hello" });
+    expect(worker.requests[1]).toEqual({ id: 1, type: "translate", text: "Hello", sourceLanguage: "en" });
     worker.emit({ type: "result", id: 1, text: "Привет" });
     expect(onCaption).toHaveBeenCalledWith({ ...caption, text: "Привет" });
     expect(doubles.captures).toHaveLength(0);
@@ -107,7 +174,7 @@ describe("local translation session lifecycle", () => {
   });
 
   it("publishes recognition results after the real PCM transfer has detached the caller buffer", async () => {
-    const { session, track, onCaption } = fixture();
+    const { session, track, onCaption, onLocalCaption } = fixture();
     session.setMicrophoneTrack(track);
     await tick();
     const worker = TestWorker.all[0];
@@ -118,8 +185,9 @@ describe("local translation session lifecycle", () => {
     expect(audio.byteLength).toBe(0);
     expect(worker.requests[1]).toEqual({ id: 1, type: "recognize", audio: expect.any(Float32Array) });
     worker.emit({ type: "result", id: 1, text: "Hello" });
-    expect(doubles.publish).toHaveBeenCalledWith("Hello");
-    expect(onCaption).toHaveBeenCalledWith(expect.objectContaining({ speakerId: "self", text: "Hello" }));
+    expect(doubles.publish).toHaveBeenCalledWith("Hello", "ru");
+    expect(onLocalCaption).toHaveBeenCalledWith(expect.objectContaining({ speakerId: "self", text: "Hello", language: "ru" }));
+    expect(onCaption).not.toHaveBeenCalled();
     session.close();
   });
 
@@ -142,7 +210,7 @@ describe("local translation session lifecycle", () => {
     expect(worker.requests).toHaveLength(2);
     doubles.captures[1].audio(new Float32Array(16_000));
     worker.emit({ type: "result", id: 2, text: "Speech after unmuting" });
-    expect(doubles.publish).toHaveBeenCalledExactlyOnceWith("Speech after unmuting");
+    expect(doubles.publish).toHaveBeenCalledExactlyOnceWith("Speech after unmuting", "ru");
     session.close();
   });
 
@@ -183,9 +251,10 @@ describe("local translation session lifecycle", () => {
   it("ends a stalled job, terminates its Worker, and ignores late results", async () => {
     const { session, onError, onCaption } = fixture({ recognize: false, targetLanguage: "ru" });
     await tick();
+    doubles.inbound!(remote());
     const worker = TestWorker.all[0];
     worker.emit({ type: "ready", id: 0 });
-    doubles.inbound!(remote());
+    worker.emit({ type: "progress", id: 1, stage: "inference" });
     vi.advanceTimersByTime(30_000);
     expect(onError).toHaveBeenCalledOnce();
     expect(worker.terminate).toHaveBeenCalledOnce();
