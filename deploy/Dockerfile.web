@@ -12,7 +12,8 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# Browser inference uses ONNX Runtime Web, so skip the native CUDA download.
+RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 COPY frontend/ ./
 COPY --from=crypto /crypto-assets ./public/crypto/v1
 RUN npm run build

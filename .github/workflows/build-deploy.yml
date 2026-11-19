@@ -57,6 +57,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Check frontend
         working-directory: frontend
+        env:
+          # Browser inference uses ONNX Runtime Web.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         run: |
           npm ci
           npm test

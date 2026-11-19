@@ -102,9 +102,11 @@ docker compose exec database psql -U coherent -d coherent -c "ALTER ROLE coheren
 
 ```bash
 cd frontend
-npm install
+ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 npm run dev
 ```
+
+В PowerShell перед `npm ci` установи `$env:ONNXRUNTIME_NODE_INSTALL_CUDA = 'skip'`. Эта настройка отключает загрузку CUDA-библиотек для Node.js. Перевод звонков использует ONNX Runtime Web в браузере.
 
 Открой адрес, показанный Vite, обычно `http://localhost:5173`. Vite перенаправляет запросы `/api` на локальный backend.
 
