@@ -20,10 +20,15 @@ export interface Caption {
   text: string;
   language: TranslationLanguage;
   receivedAt: number;
+  /** Explicit source-speaker consent, authenticated inside the encrypted payload. */
+  cloudAllowed?: boolean;
+  /** Original language on locally translated display captions; never trusted from the wire. */
+  sourceLanguage?: TranslationLanguage;
 }
 
 export interface CaptionKey { epoch: number; group: string; key: CryptoKey }
-interface CaptionPayload { text: string; language: TranslationLanguage }
+interface CaptionPayload { text: string; language: TranslationLanguage; cloudAllowed?: boolean }
+export interface PublishCaptionOptions { id?: string; cloudAllowed?: boolean }
 interface CaptionEnvelope {
   v: 2; callId: string; epoch: number; group: string; sender: string; id: string;
   iv: string; ciphertext: string;
@@ -67,7 +72,8 @@ function isPayload(value: unknown): value is CaptionPayload {
   const payload = value as Partial<CaptionPayload>;
   return isTranslationLanguage(payload.language) && typeof payload.text === "string"
     && payload.text.length > 0 && payload.text.length <= MAX_CAPTION_CHARACTERS
-    && payload.text.trim() === payload.text && !CONTROL.test(payload.text);
+    && payload.text.trim() === payload.text && !CONTROL.test(payload.text)
+    && (payload.cloudAllowed === undefined || typeof payload.cloudAllowed === "boolean");
 }
 function isEnvelope(value: unknown, callId: string, sender: string): value is CaptionEnvelope {
   if (!value || typeof value !== "object") return false;
@@ -91,7 +97,7 @@ function associatedData(envelope: Pick<CaptionEnvelope, "callId" | "group" | "ep
 export function createCaptionTransport(
   room: Room, callId: string, onCaption: (caption: Caption) => void,
   getKeys: () => readonly CaptionKey[],
-): { publish(text: string, language: TranslationLanguage): Promise<void>; close(): void } {
+): { publish(text: string, language: TranslationLanguage, options?: PublishCaptionOptions): Promise<void>; close(): void } {
   let closed = false;
   const replay = new Map<string, number>();
   const pending = new Set<string>();
@@ -142,7 +148,8 @@ export function createCaptionTransport(
       }
       if (replay.size >= MAX_CAPTION_REPLAY_ENTRIES) replay.delete(replay.keys().next().value!);
       replay.set(replayId, now);
-      onCaption({ id: envelope.id, speakerId: participant.identity, text: payload.text, language: payload.language, receivedAt: now });
+      onCaption({ id: envelope.id, speakerId: participant.identity, text: payload.text, language: payload.language, receivedAt: now,
+        ...(payload.cloudAllowed === true ? { cloudAllowed: true } : {}) });
     } catch {
       // Failed encoding, key lookup or GCM authentication never becomes text.
     } finally {
@@ -160,12 +167,13 @@ export function createCaptionTransport(
   room.on(RoomEvent.DataReceived, receive);
 
   return {
-    async publish(text: string, language: TranslationLanguage): Promise<void> {
+    async publish(text: string, language: TranslationLanguage, options: PublishCaptionOptions = {}): Promise<void> {
       if (!encryptedAndConnected()) throw new Error("Перевод ждёт защищённого соединения со звонком.");
       const captionKey = getKeys()[0];
       if (!captionKey) throw new Error("Согласуем ключ субтитров звонка.");
-      const payload = { text: text.trim(), language };
+      const payload = { text: text.trim(), language, ...(options.cloudAllowed === true ? { cloudAllowed: true } : {}) };
       if (!isPayload(payload)) throw new Error("Недопустимый фрагмент субтитров.");
+      if (options.id !== undefined && !SEGMENT_ID.test(options.id)) throw new Error("Недопустимый идентификатор фразы.");
       const now = Date.now();
       if (now - outgoing.startedAt >= CAPTION_RATE_WINDOW_MS) outgoing = { startedAt: now, count: 0 };
       if (outgoing.count >= MAX_CAPTIONS_PER_WINDOW) throw new Error("Слишком много фрагментов перевода. Подожди немного.");
@@ -173,7 +181,7 @@ export function createCaptionTransport(
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const envelope: CaptionEnvelope = {
         v: 2, callId, epoch: captionKey.epoch, group: captionKey.group,
-        sender: room.localParticipant.identity, id: crypto.randomUUID(), iv: toBase64(iv), ciphertext: "",
+        sender: room.localParticipant.identity, id: options.id ?? crypto.randomUUID(), iv: toBase64(iv), ciphertext: "",
       };
       const ciphertext = await crypto.subtle.encrypt({
         name: "AES-GCM", iv, additionalData: associatedData(envelope), tagLength: 128,

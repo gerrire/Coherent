@@ -56,6 +56,7 @@ import {
 import MediaSettingsPanel from "./MediaSettingsPanel";
 import CallTranslationPanel from "./CallTranslationPanel";
 import { deriveCaptionKey, type CaptionKey } from "../lib/translation/transport";
+import { guardTranslationAudioSubscriptions, watchLanguageAudioPlayback } from "../lib/translation/sharedLanguageAudio";
 import ParticipantPicker from "./ParticipantPicker";
 import { applyMicrophoneProcessing, browserMicrophoneFallback, enableCallMicrophone, MicrophoneProcessorError, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { NativeScreenAudio } from "../lib/nativeScreenAudio";
@@ -939,6 +940,10 @@ function CallConnectionNotice() {
 }
 
 function CallAudioRenderer({ muted, volumes, screenVolumes }: { muted: boolean; volumes: Record<string, number>; screenVolumes: Record<string, number> }) {
+  const room = useRoomContext();
+  useEffect(() => guardTranslationAudioSubscriptions(room), [room]);
+  const [translatedSpeechPlaying, setTranslatedSpeechPlaying] = useState(false);
+  useEffect(() => watchLanguageAudioPlayback(room, setTranslatedSpeechPlaying), [room]);
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio], { onlySubscribed: true });
   return <>{tracks.filter((track) => !track.participant.isLocal).map((track) => (
     <AudioTrack
@@ -946,7 +951,7 @@ function CallAudioRenderer({ muted, volumes, screenVolumes }: { muted: boolean; 
       trackRef={track}
       volume={muted ? 0 : (track.source === Track.Source.ScreenShareAudio
         ? screenVolumes[track.participant.identity] ?? 100
-        : volumes[track.participant.identity] ?? 100) / 100}
+        : (volumes[track.participant.identity] ?? 100) * (translatedSpeechPlaying ? 0.15 : 1)) / 100}
     />
   ))}</>;
 }

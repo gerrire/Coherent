@@ -5,8 +5,10 @@ const runtime = vi.hoisted(() => ({
   env: { backends: { onnx: { wasm: {} } } } as Record<string, any>,
   pipeline: vi.fn(), recognize: vi.fn(), translate: vi.fn(),
   disposeRecognizer: vi.fn(), disposeTranslator: vi.fn(),
+  createVad: vi.fn(), containsSpeech: vi.fn(), closeVad: vi.fn(),
 }));
 vi.mock("@huggingface/transformers", () => ({ env: runtime.env, pipeline: runtime.pipeline }));
+vi.mock("../src/lib/translation/silero", () => ({ createSileroDetector: runtime.createVad }));
 
 let receive: (event: { data: TranslationWorkerRequest }) => void;
 let messages: TranslationWorkerResponse[];
@@ -21,6 +23,9 @@ beforeEach(async () => {
   runtime.translate.mockReset().mockResolvedValue([{ translation_text: " Привет. " }]);
   runtime.disposeRecognizer.mockReset().mockResolvedValue(undefined);
   runtime.disposeTranslator.mockReset().mockResolvedValue(undefined);
+  runtime.containsSpeech.mockReset().mockResolvedValue(true);
+  runtime.closeVad.mockReset().mockResolvedValue(undefined);
+  runtime.createVad.mockReset().mockResolvedValue({ containsSpeech: runtime.containsSpeech, close: runtime.closeVad });
   vi.stubGlobal("self", {
     addEventListener(_type: string, callback: typeof receive) { receive = callback; },
     postMessage(message: TranslationWorkerResponse) { messages.push(message); },
@@ -161,5 +166,28 @@ describe("local translation worker", () => {
       .toEqual({ id: 2, type: "ready" });
     expect(await send({ id: 3, type: "translate", text: "Сохрани оригинал", sourceLanguage: "ru" }))
       .toEqual({ id: 3, type: "result", text: "Сохрани оригинал" });
+  });
+
+  it("uses Silero only when explicitly requested and skips ASR for a noise-only fragment", async () => {
+    await send({ id: 1, type: "init", recognize: true, sourceLanguage: "ru", targetLanguage: "en", vad: "silero" });
+    expect(runtime.createVad).toHaveBeenCalledOnce();
+    runtime.containsSpeech.mockResolvedValueOnce(false);
+    expect(await send({ id: 2, type: "recognize", audio: new Float32Array(16_000) })).toEqual({ id: 2, type: "result", text: "" });
+    expect(runtime.recognize).not.toHaveBeenCalled();
+    await send({ id: 3, type: "recognize", audio: new Float32Array(16_000) });
+    expect(runtime.recognize).toHaveBeenCalledOnce();
+  });
+
+  it("does not download Silero for a receive-only listener", async () => {
+    await send({ id: 1, type: "init", recognize: false, sourceLanguage: "ru", targetLanguage: "en", vad: "silero" });
+    expect(runtime.createVad).not.toHaveBeenCalled();
+  });
+
+  it("reports a useful retryable network error without exposing download URLs", async () => {
+    runtime.pipeline.mockRejectedValueOnce(new TypeError("Failed to fetch https://secret.example/file?token=private"));
+    const response = await send({ id: 1, type: "init", recognize: true, sourceLanguage: "ru", targetLanguage: "en" });
+    expect(response).toMatchObject({ type: "error", code: "network", retryable: true, stage: "loading" });
+    expect(response.message).toContain("Hugging Face");
+    expect(JSON.stringify(response)).not.toMatch(/secret|token=|private/);
   });
 });

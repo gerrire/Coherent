@@ -44,6 +44,10 @@
 .call-translation-hint { margin: 6px 0 0; color: var(--text-muted, #b6a8c7); font-size: 11px; }
 .call-translation-settings { margin-top: 8px; }
 .call-translation-settings summary { cursor: pointer; color: var(--text-muted, #b6a8c7); }
+.call-translation-method { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 10px; }
+.call-translation-method select { max-width: 100%; }
+.call-translation-cloud-notice { margin: 8px 0; padding: 9px 11px; border: 1px solid var(--line, #665276); border-radius: 7px; }
+.call-translation-cloud-notice p { margin: 5px 0; color: var(--text-muted, #b6a8c7); font-size: 11px; }
 .call-translation-language-fields { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
 .call-translation-language-fields label { display: flex; align-items: center; gap: 7px; }
 .call-translation select { min-height: 32px; padding: 4px 7px; border: 1px solid var(--line, #665276); border-radius: 6px; background: var(--bg-panel, #211b2d); color: inherit; font: inherit; }

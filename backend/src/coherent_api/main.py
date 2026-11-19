@@ -17,6 +17,7 @@ from coherent_api.services.attachment_cleanup import attachment_cleanup_loop
 from coherent_api.services.call_cleanup import call_cleanup_loop
 from coherent_api.services.crypto_maintenance import crypto_maintenance_loop
 from coherent_api.services.events import MessageEvents
+from coherent_api.services.gigachat_translation import GigaChatTranslationService
 from coherent_api.services.livekit_media import livekit_ready
 from coherent_api.services.registration import registration_mail_loop
 from coherent_api.services.server_metrics import ServerMetrics
@@ -82,6 +83,7 @@ def create_app(
                     await cleanup
             if engine is not None:
                 await engine.dispose()
+            await application.state.gigachat_translation.close()
 
     app = FastAPI(
         title=app_settings.app_name,
@@ -96,6 +98,7 @@ def create_app(
     app.state.session_factory = session_factory
     app.state.message_events = MessageEvents()
     app.state.server_metrics = ServerMetrics(session_factory)
+    app.state.gigachat_translation = GigaChatTranslationService(app_settings)
 
     app.add_middleware(
         CORSMiddleware,

@@ -7,6 +7,8 @@ import {
 import runtimeModuleUrl from "coherent-ort-runtime-module?url";
 import runtimeWasmUrl from "coherent-ort-runtime-wasm?url";
 import { getModelProfile, isTranslationModelId } from "./models";
+import { evictPinnedModelCache, installModelDownloadFetch, modelLoadError } from "./downloads";
+import { createSileroDetector, type SileroDetector } from "./silero";
 import {
   isTranslationLanguage,
   type TranslationLanguage,
@@ -29,6 +31,7 @@ env.backends.onnx.wasm!.proxy = false;
 // contain ONNX execution code only; neural-network weights stay on the Hub and
 // are downloaded directly to the user's device after enabling translation.
 env.backends.onnx.wasm!.wasmPaths = { mjs: runtimeModuleUrl, wasm: runtimeWasmUrl };
+installModelDownloadFetch();
 
 interface ModelReference { id: string; revision: string }
 const FROM_ENGLISH: Record<Exclude<TranslationLanguage, "en">, ModelReference> = {
@@ -52,11 +55,22 @@ const WHISPER_LANGUAGES: Record<TranslationLanguage, string> = {
 let recognizer: AutomaticSpeechRecognitionPipeline | null = null;
 let translator: TranslationPipeline | null = null;
 let translatorId: string | null = null;
+let vad: SileroDetector | null = null;
 let settings: Extract<TranslationWorkerRequest, { type: "init" }> | null = null;
 let queue = Promise.resolve();
+let stage: "loading" | "inference" = "loading";
 
 function reply(message: TranslationWorkerResponse): void {
+  if (message.stage) stage = message.stage;
   self.postMessage(message);
+}
+
+async function loadPipeline<T>(reference: ModelReference, load: () => Promise<T>): Promise<T> {
+  try { return await load(); }
+  catch (error) {
+    if (modelLoadError(error).code === "invalid-model") await evictPinnedModelCache(reference.id, reference.revision);
+    throw error;
+  }
 }
 
 function progressFor(id: number) {
@@ -85,9 +99,9 @@ async function translateWith(model: ModelReference, text: string, id: number): P
     translator = null;
     translatorId = null;
     if (previous) await previous.dispose();
-    translator = await pipeline<"translation">("translation", model.id, {
+    translator = await loadPipeline(model, () => pipeline<"translation">("translation", model.id, {
       revision: model.revision, device: "wasm", dtype: "q8", progress_callback: progressFor(id),
-    });
+    }));
     translatorId = model.id;
   }
   const options = {
@@ -105,6 +119,7 @@ async function translateWith(model: ModelReference, text: string, id: number): P
 
 async function handle(request: TranslationWorkerRequest): Promise<void> {
   if (request.type === "init") {
+    stage = "loading";
     if (settings) throw new Error("Translation is already initialized. Restart it to change languages.");
     if (!isTranslationLanguage(request.sourceLanguage) || !isTranslationLanguage(request.targetLanguage)) {
       throw new Error("Unsupported translation language.");
@@ -115,14 +130,19 @@ async function handle(request: TranslationWorkerRequest): Promise<void> {
     if (request.model !== undefined && !isTranslationModelId(request.model)) {
       throw new Error("Unsupported recognition model.");
     }
+    if (request.vad !== undefined && request.vad !== "energy" && request.vad !== "silero") throw new Error("Unsupported speech detector.");
     // Translators are selected lazily using the actual incoming language.
     // Same-language captions never download or invoke a translation model.
     try {
       if (request.recognize) {
+        if (request.vad === "silero") {
+          reply({ id: request.id, type: "progress", stage: "loading", message: "Подготавливаем Silero VAD на устройстве" });
+          vad = await createSileroDetector(progress => reply({ id: request.id, type: "progress", stage: "loading", progress, message: "Загружаем Silero VAD на устройство" }));
+        }
         const model = getModelProfile(request.model ?? (request.quality === "light" ? "tiny" : "base"));
-        recognizer = await pipeline<"automatic-speech-recognition">("automatic-speech-recognition", model.repository, {
+        recognizer = await loadPipeline({ id: model.repository, revision: model.revision }, () => pipeline<"automatic-speech-recognition">("automatic-speech-recognition", model.repository, {
           revision: model.revision, device: "wasm", dtype: "q8", progress_callback: progressFor(request.id),
-        });
+        }));
       }
       settings = request;
       reply({ id: request.id, type: "ready" });
@@ -132,6 +152,8 @@ async function handle(request: TranslationWorkerRequest): Promise<void> {
       recognizer = null;
       translator = null;
       translatorId = null;
+      await vad?.close().catch(() => undefined);
+      vad = null;
       throw error;
     }
     return;
@@ -151,6 +173,10 @@ async function handle(request: TranslationWorkerRequest): Promise<void> {
     const sourceLanguage = request.sourceLanguage ?? settings.sourceLanguage;
     if (!isTranslationLanguage(sourceLanguage)) throw new Error("Unsupported speech language.");
     reply({ id: request.id, type: "progress", stage: "inference", message: "Recognizing locally" });
+    if (vad && !await vad.containsSpeech(audio)) {
+      reply({ id: request.id, type: "result", text: "" });
+      return;
+    }
     const output = await recognizer(audio, {
       language: WHISPER_LANGUAGES[sourceLanguage],
       task: "transcribe",
@@ -205,7 +231,8 @@ self.addEventListener("message", (event: MessageEvent<TranslationWorkerRequest>)
       reply({
         id: request.id,
         type: "error",
-        message: error instanceof Error ? error.message : "Local translation failed.",
+        stage,
+        ...modelLoadError(error),
       });
     }
   });

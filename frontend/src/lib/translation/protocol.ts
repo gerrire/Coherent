@@ -1,15 +1,16 @@
 /** All inference is local. Captions preserve the speaker's original language. */
 import type { TranslationModelId } from "./models";
+import type { ModelLoadErrorCode } from "./downloads";
 
 export type TranslationLanguage = "en" | "ru" | "de" | "fr" | "es";
 export type TranslationQuality = "light" | "balanced";
 
 export const TRANSLATION_LANGUAGES: ReadonlyArray<{ code: TranslationLanguage; label: string }> = [
-  { code: "en", label: "English" },
+  { code: "en", label: "Английский" },
   { code: "ru", label: "Русский" },
-  { code: "de", label: "Deutsch" },
-  { code: "fr", label: "Français" },
-  { code: "es", label: "Español" },
+  { code: "de", label: "Немецкий" },
+  { code: "fr", label: "Французский" },
+  { code: "es", label: "Испанский" },
 ];
 
 export type TranslationWorkerRequest =
@@ -21,6 +22,7 @@ export type TranslationWorkerRequest =
       targetLanguage: TranslationLanguage;
       quality?: TranslationQuality;
       model?: TranslationModelId;
+      vad?: "energy" | "silero";
     }
   | { id: number; type: "recognize"; audio: Float32Array; sourceLanguage?: TranslationLanguage }
   | { id: number; type: "translate"; text: string; sourceLanguage: TranslationLanguage };
@@ -33,6 +35,10 @@ export interface TranslationWorkerResponse {
   /** Download progress for the current file, from 0 to 100. */
   progress?: number;
   stage?: "loading" | "inference";
+  code?: ModelLoadErrorCode;
+  retryable?: boolean;
+  file?: string;
+  status?: number;
 }
 
 export function isTranslationLanguage(value: unknown): value is TranslationLanguage {

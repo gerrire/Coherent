@@ -8,6 +8,7 @@ const doubles = vi.hoisted(() => ({
   inbound: undefined as ((caption: Caption) => void) | undefined,
   publish: vi.fn<() => Promise<void>>(),
   transportClose: vi.fn(),
+  cloudTranslate: vi.fn(),
 }));
 
 vi.mock("../src/lib/translation/capture", () => ({
@@ -23,6 +24,7 @@ vi.mock("../src/lib/translation/transport", () => ({
     return { publish: doubles.publish, close: doubles.transportClose };
   }),
 }));
+vi.mock("../src/lib/translation/cloudTranslation", () => ({ translateWithGigaChat: doubles.cloudTranslate }));
 
 import { startTranslationSession } from "../src/lib/translation/session";
 import { createTranslationMetrics, type TranslationMetrics } from "../src/lib/translation/metrics";
@@ -42,8 +44,9 @@ class TestWorker {
   emit(data: TranslationWorkerResponse) { this.onmessage?.({ data } as MessageEvent<TranslationWorkerResponse>); }
 }
 
-function fixture(patch: { recognize?: boolean; targetLanguage?: "en" | "ru"; metrics?: TranslationMetrics } = {}) {
-  const callbacks = { onCaption: vi.fn(), onLocalCaption: vi.fn(), onRecognitionReady: vi.fn(), onStatus: vi.fn(), onError: vi.fn(), onDropped: vi.fn() };
+function fixture(patch: { recognize?: boolean; sourceLanguage?: "en" | "ru"; targetLanguage?: "en" | "ru"; metrics?: TranslationMetrics;
+  method?: "local" | "gigachat"; cloudConsent?: boolean; shouldTranslateLocalCaption?: () => boolean } = {}) {
+  const callbacks = { onCaption: vi.fn(), onLocalCaption: vi.fn(), onRecognitionReady: vi.fn(), onStatus: vi.fn(), onError: vi.fn(), onDropped: vi.fn(), onProviderError: vi.fn(), onTranslatedLocalCaption: vi.fn() };
   const session = startTranslationSession({
     room: { localParticipant: { identity: "self" } } as Room,
     callId: "call", sourceLanguage: "ru", targetLanguage: "en", recognize: true,
@@ -66,8 +69,112 @@ beforeEach(() => {
   doubles.inbound = undefined;
   doubles.publish.mockReset().mockResolvedValue(undefined);
   doubles.transportClose.mockReset();
+  doubles.cloudTranslate.mockReset().mockResolvedValue("Переведённая фраза");
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+const flushCloud = async () => { for (let index = 0; index < 8; index++) await tick(); };
+
+describe("separate GigaChat call method", () => {
+  it("receives translated captions with no local Marian/ASR Worker on a listener", async () => {
+    const { session, onCaption } = fixture({ method: "gigachat", recognize: false, targetLanguage: "ru" });
+    await tick();
+    const caption = { ...remote(), cloudAllowed: true };
+    doubles.inbound!(caption);
+    await flushCloud();
+    expect(TestWorker.all).toHaveLength(0);
+    expect(doubles.cloudTranslate).toHaveBeenCalledWith("call", caption, "ru", expect.any(AbortSignal));
+    expect(onCaption).toHaveBeenCalledWith({ ...caption, text: "Переведённая фраза", language: "ru", sourceLanguage: "en" });
+    session.close();
+  });
+
+  it("does not forward a local-only speaker to GigaChat", async () => {
+    const { session, onCaption, onStatus } = fixture({ method: "gigachat", recognize: false, targetLanguage: "ru" });
+    await tick();
+    const caption = remote();
+    doubles.inbound!(caption);
+    await flushCloud();
+    expect(doubles.cloudTranslate).not.toHaveBeenCalled();
+    expect(onCaption).toHaveBeenCalledWith(caption);
+    expect(onStatus).toHaveBeenLastCalledWith(expect.stringContaining("разрешить GigaChat"));
+    session.close();
+  });
+
+  it("keeps source and listening languages in order and shares one identity for own channel speech", async () => {
+    const { session, track, onLocalCaption, onTranslatedLocalCaption, onCaption } = fixture({
+      method: "gigachat", sourceLanguage: "en", targetLanguage: "ru", cloudConsent: true, shouldTranslateLocalCaption: () => true,
+    });
+    session.setMicrophoneTrack(track);
+    await tick();
+    const worker = TestWorker.all[0];
+    expect(worker.requests[0]).toMatchObject({ sourceLanguage: "en", targetLanguage: "ru", vad: "silero" });
+    worker.emit({ type: "ready", id: 0 });
+    await tick();
+    doubles.captures[0].audio(new Float32Array(16_000));
+    worker.emit({ type: "result", id: 1, text: "Hello" });
+    await flushCloud();
+    const original = onLocalCaption.mock.calls[0][0] as Caption;
+    expect(original).toMatchObject({ text: "Hello", language: "en", cloudAllowed: true });
+    expect(doubles.publish).toHaveBeenCalledWith("Hello", "en", { id: original.id, cloudAllowed: true });
+    expect(doubles.cloudTranslate).toHaveBeenCalledWith("call", original, "ru", expect.any(AbortSignal));
+    expect(onTranslatedLocalCaption).toHaveBeenCalledWith({ ...original, text: "Переведённая фраза", language: "ru", sourceLanguage: "en" });
+    expect(onCaption).not.toHaveBeenCalled();
+    session.close();
+  });
+
+  it("ignores a late provider reply after close and does not stop the call microphone", async () => {
+    let finish!: (text: string) => void;
+    doubles.cloudTranslate.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const metrics = createTranslationMetrics();
+    const { session, onCaption, onProviderError } = fixture({ method: "gigachat", recognize: false, targetLanguage: "ru", metrics });
+    await tick();
+    doubles.inbound!({ ...remote(), cloudAllowed: true });
+    session.close();
+    finish("Late phrase");
+    await flushCloud();
+    expect(onCaption).not.toHaveBeenCalled();
+    expect(onProviderError).not.toHaveBeenCalled();
+    expect(metrics.getSnapshot().translation.phase).toBe("idle");
+  });
+
+  it("keeps recognizing and publishing after a provider failure", async () => {
+    doubles.cloudTranslate.mockRejectedValueOnce(new Error("Лимит GigaChat"));
+    const { session, track, onProviderError, onError } = fixture({ method: "gigachat", targetLanguage: "ru", cloudConsent: true });
+    session.setMicrophoneTrack(track);
+    await tick();
+    const worker = TestWorker.all[0];
+    worker.emit({ type: "ready", id: 0 });
+    await tick();
+    doubles.inbound!({ ...remote(), cloudAllowed: true });
+    await flushCloud();
+    expect(onProviderError).toHaveBeenCalledWith("Лимит GigaChat");
+    expect(onError).not.toHaveBeenCalled();
+    expect(worker.terminate).not.toHaveBeenCalled();
+    doubles.captures[0].audio(new Float32Array(16_000));
+    worker.emit({ type: "result", id: 1, text: "Звонок продолжается" });
+    expect(doubles.publish).toHaveBeenCalledWith("Звонок продолжается", "ru", expect.objectContaining({ cloudAllowed: true }));
+    session.close();
+  });
+
+  it("keeps a language coordinator receiving after its own recognition model fails", async () => {
+    const { session, track, onCaption, onError, onLocalCaption } = fixture({ method: "gigachat", targetLanguage: "ru" });
+    session.setMicrophoneTrack(track);
+    await tick();
+    const worker = TestWorker.all[0];
+    worker.emit({ id: 0, type: "error", message: "Не скачалась модель" });
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining("Приём перевода собеседников продолжается"));
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    doubles.inbound!({ ...remote(), cloudAllowed: true });
+    await flushCloud();
+    expect(onCaption).toHaveBeenCalledWith(expect.objectContaining({ text: "Переведённая фраза", language: "ru" }));
+    session.setMicrophoneTrack({ ...track } as MediaStreamTrack);
+    worker.emit({ id: 0, type: "ready" });
+    await tick();
+    expect(doubles.captures).toHaveLength(0);
+    expect(onLocalCaption).not.toHaveBeenCalled();
+    session.close();
+  });
+});
 
 describe("local translation session lifecycle", () => {
   it("keeps detached audio duration for ASR metrics and clears active work when closed", async () => {
@@ -168,7 +275,7 @@ describe("local translation session lifecycle", () => {
     worker.emit({ type: "ready", id: 0 });
     expect(worker.requests[1]).toEqual({ id: 1, type: "translate", text: "Hello", sourceLanguage: "en" });
     worker.emit({ type: "result", id: 1, text: "Привет" });
-    expect(onCaption).toHaveBeenCalledWith({ ...caption, text: "Привет" });
+    expect(onCaption).toHaveBeenCalledWith({ ...caption, text: "Привет", language: "ru", sourceLanguage: "en" });
     expect(doubles.captures).toHaveLength(0);
     session.close();
   });
@@ -185,7 +292,7 @@ describe("local translation session lifecycle", () => {
     expect(audio.byteLength).toBe(0);
     expect(worker.requests[1]).toEqual({ id: 1, type: "recognize", audio: expect.any(Float32Array) });
     worker.emit({ type: "result", id: 1, text: "Hello" });
-    expect(doubles.publish).toHaveBeenCalledWith("Hello", "ru");
+    expect(doubles.publish).toHaveBeenCalledWith("Hello", "ru", expect.objectContaining({ id: expect.any(String) }));
     expect(onLocalCaption).toHaveBeenCalledWith(expect.objectContaining({ speakerId: "self", text: "Hello", language: "ru" }));
     expect(onCaption).not.toHaveBeenCalled();
     session.close();
@@ -210,7 +317,7 @@ describe("local translation session lifecycle", () => {
     expect(worker.requests).toHaveLength(2);
     doubles.captures[1].audio(new Float32Array(16_000));
     worker.emit({ type: "result", id: 2, text: "Speech after unmuting" });
-    expect(doubles.publish).toHaveBeenCalledExactlyOnceWith("Speech after unmuting", "ru");
+    expect(doubles.publish).toHaveBeenCalledExactlyOnceWith("Speech after unmuting", "ru", expect.objectContaining({ id: expect.any(String) }));
     session.close();
   });
 

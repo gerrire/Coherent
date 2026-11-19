@@ -36,6 +36,14 @@ services:
     environment:
       APP_ENV: staging
       TEST_EMAIL_VERIFICATION_BYPASS: "true"
+      GIGACHAT_ENABLED: ${GIGACHAT_ENABLED:-false}
+      GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-2}
+      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-https://api.giga.chat/v1}
+      GIGACHAT_CA_BUNDLE: ${GIGACHAT_CA_BUNDLE:-}
+      GIGACHAT_MAX_CONCURRENCY: ${GIGACHAT_MAX_CONCURRENCY:-1}
+      GIGACHAT_TIMEOUT_SECONDS: ${GIGACHAT_TIMEOUT_SECONDS:-15}
       SECRET_KEY: ${STAGING_SECRET_KEY:?}
       DATABASE_URL: postgresql+asyncpg://coherent:${STAGING_DB_PASSWORD:?}@postgres:5432/coherent_staging
       CORS_ORIGINS: '["https://dev.coherent-web.ru"]'

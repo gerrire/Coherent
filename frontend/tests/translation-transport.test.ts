@@ -54,6 +54,17 @@ beforeEach(() => { now = 1_000_000; vi.spyOn(Date, "now").mockImplementation(() 
 afterEach(() => vi.restoreAllMocks());
 
 describe("authenticated ephemeral caption transport", () => {
+  it("authenticates explicit cloud consent and preserves the source segment identity", async () => {
+    const f = await fixture();
+    const id = crypto.randomUUID();
+    await f.source.publish("Hello", "en", { id, cloudAllowed: true });
+    const bytes = f.sender.room.localParticipant.publishData.mock.calls.at(-1)![0] as Uint8Array;
+    expect(new TextDecoder().decode(bytes)).not.toContain("cloudAllowed");
+    f.receiver.deliver(bytes);
+    await vi.waitFor(() => expect(f.received).toHaveBeenCalledExactlyOnceWith({ id, speakerId: "alice", text: "Hello", language: "en", receivedAt: now, cloudAllowed: true }));
+    await expect(f.source.publish("Hello", "en", { id: "not-an-id" })).rejects.toThrow("идентификатор");
+  });
+
   it("accepts a real encrypted caption when the pinned SDK reports its default NONE", async () => {
     const f = await fixture();
     // RTCEngine 2.17.2 omits encryptionType while constructing EncryptedPacket.

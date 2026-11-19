@@ -32,6 +32,7 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: /^coherent-recognition-ort$/, replacement: resolve(onnxRuntimeDirectory, "ort.wasm.mjs") },
       { find: /^coherent-ort-runtime-module(?=\?|$)/, replacement: resolve(onnxRuntimeDirectory, "ort-wasm-simd-threaded.jsep.mjs") },
       { find: /^coherent-ort-runtime-wasm(?=\?|$)/, replacement: resolve(onnxRuntimeDirectory, "ort-wasm-simd-threaded.jsep.wasm") },
       { find: /^coherent-speech-ort-module(?=\?|$)/, replacement: resolve(speechRuntimeDirectory, "ort-wasm-simd-threaded.mjs") },

@@ -1,11 +1,25 @@
 import type { TranslationLanguage } from "./protocol";
 import type { TranslationMetrics } from "./metrics";
 import type { SpeechWorkerRequest, SpeechWorkerResponse } from "./speechProtocol";
+import { PIPER_VOICES } from "./voices";
+
+export interface SpeechPlaybackOptions {
+  /** A coordinator can publish speech without playing its own phrase locally. */
+  playLocally?: boolean;
+  /** null overrides the shared audio channel for an explicitly local sound test. */
+  output?: AudioNode | null;
+  beforePlayback?(durationMs: number): void | Promise<void>;
+  afterPlayback?(): void;
+}
 
 export interface LocalSpeechOptions {
   language: TranslationLanguage;
-  /** Choose the downloadable Russian voice even if the OS advertises one. */
+  /** Force the pinned neural voice, including for a shared language channel. */
   downloadedVoice?: boolean;
+  /** The owner closes an injected context. */
+  audioContext?: AudioContext;
+  output?: AudioNode;
+  localOutput?: AudioNode;
   metrics?: TranslationMetrics;
   onStatus(message: string): void;
   onError(message: string): void;
@@ -15,7 +29,7 @@ export interface LocalSpeechOptions {
 export interface LocalSpeech {
   /** Call directly from a user click to unlock audio before awaiting downloads. */
   prepare(): Promise<void>;
-  speak(text: string): void;
+  speak(text: string, playback?: SpeechPlaybackOptions): void;
   cancel(): void;
   close(): void;
 }
@@ -31,15 +45,17 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
   let closed = false;
   let ready = false;
   let preparing: Promise<void> | undefined;
-  let context: AudioContext | undefined;
+  let context: AudioContext | undefined = options.audioContext;
   let worker: Worker | undefined;
   let nativeVoice: SpeechSynthesisVoice | undefined;
   let utterance: SpeechSynthesisUtterance | undefined;
   let source: AudioBufferSourceNode | undefined;
-  let pending: { text: string; receivedAt: number } | undefined;
+  let pending: { text: string; receivedAt: number; playback: SpeechPlaybackOptions } | undefined;
+  let playing: SpeechPlaybackOptions | undefined;
+  let playbackPreparing = false;
   let generation = 0;
   let serial = 0;
-  let inference: { id: number; generation: number } | undefined;
+  let inference: { id: number; generation: number; playback: SpeechPlaybackOptions } | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let playbackDeadline: ReturnType<typeof setTimeout> | undefined;
   let initResolve: (() => void) | undefined;
@@ -58,6 +74,9 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
     clearTimeout(playbackDeadline);
     if (source) { source.onended = null; source.disconnect(); source = undefined; }
     if (utterance) { utterance.onend = null; utterance.onerror = null; utterance = undefined; }
+    const completed = playing;
+    playing = undefined;
+    completed?.afterPlayback?.();
     setSpeaking(false);
     pump();
   }
@@ -73,6 +92,9 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
       utterance = undefined;
       window.speechSynthesis.cancel();
     }
+    const cancelled = playing;
+    playing = undefined;
+    cancelled?.afterPlayback?.();
     setSpeaking(false);
     // An in-flight local calculation finishes in the worker. Its generation is
     // invalid now, and retaining its slot prevents a queue of cancelled jobs.
@@ -97,12 +119,12 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
 
   function onMessage(data: SpeechWorkerResponse): void {
     if (closed) return;
-    if (data.type === "progress") { options.onStatus(`Загружаем русский голос на устройство · ${Math.round(data.progress)}%`); return; }
+    if (data.type === "progress") { options.onStatus(`Загружаем голос ${PIPER_VOICES[options.language].label} · ${Math.round(data.progress)}%`); return; }
     if (data.type === "ready" && data.id === 0) {
       clearTimeout(deadline);
       options.metrics?.finish("speech");
       ready = true;
-      options.onStatus("Русский голос готов · озвучивание на устройстве");
+      options.onStatus(`Голос ${PIPER_VOICES[options.language].label} готов · озвучивание на устройстве`);
       initResolve?.();
       initResolve = initReject = undefined;
       pump();
@@ -113,27 +135,36 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
     clearTimeout(deadline);
     options.metrics?.finish("speech");
     const currentGeneration = inference.generation;
+    const playback = inference.playback;
     inference = undefined;
     if (currentGeneration !== generation) { pump(); return; }
     if (!context || data.sampleRate !== 22_050 || data.pcm.byteLength === 0 || data.pcm.byteLength > 22_050 * 45 * 4) { fail("Не удалось воспроизвести локальный голос."); return; }
-    try {
+    const playbackContext = context;
+    playbackPreparing = true;
+    void (async () => { try {
       const pcm = new Float32Array(data.pcm);
-      const buffer = context.createBuffer(1, pcm.length, data.sampleRate);
+      const buffer = playbackContext.createBuffer(1, pcm.length, data.sampleRate);
       buffer.copyToChannel(pcm, 0);
+      if (playback.beforePlayback) await playback.beforePlayback(pcm.length / data.sampleRate * 1_000);
+      if (closed || currentGeneration !== generation || !context) { playback.afterPlayback?.(); return; }
       source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(context.destination);
+      const output = playback.output === undefined ? options.output : playback.output;
+      if (output) source.connect(output);
+      if (playback.playLocally !== false) source.connect(options.localOutput ?? context.destination);
       source.onended = finishPlayback;
-      setSpeaking(true);
+      playing = playback;
+      setSpeaking(playback.playLocally !== false);
       source.start();
       playbackDeadline = setTimeout(() => { cancel(); options.onError("Озвучивание остановлено: браузер не завершил воспроизведение."); }, 46_000);
     } catch { fail("Браузер не воспроизводит перевод. Нажми «Проверить звук» и проверь звук вкладки."); }
+    finally { playbackPreparing = false; pump(); } })();
   }
 
   function pump(): void {
-    if (closed || !ready || inference || source || utterance || !pending) return;
+    if (closed || !ready || inference || playbackPreparing || source || utterance || !pending) return;
     if (Date.now() - pending.receivedAt > 15_000) { pending = undefined; options.metrics?.drop(); return; }
-    const { text } = pending;
+    const { text, playback } = pending;
     pending = undefined;
     if (nativeVoice) {
       const nextUtterance = new SpeechSynthesisUtterance(text);
@@ -150,11 +181,12 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
           nativeVoice = undefined;
           ready = false;
           preparing = undefined;
-          pending = latest ?? { text, receivedAt: Date.now() };
+          pending = latest ?? { text, receivedAt: Date.now(), playback };
           options.onStatus("Системный голос недоступен · загружаем русский голос на устройство");
           void prepare().catch(() => { /* Reported through onError. */ });
         } else options.onError("Системный голос не смог озвучить перевод. Проверь звук вкладки и нажми «Проверить звук».");
       };
+      playing = playback;
       setSpeaking(true);
       playbackDeadline = setTimeout(() => { cancel(); options.onError("Системный голос не завершил озвучивание вовремя. Проверь звук вкладки."); }, 46_000);
       try { window.speechSynthesis.speak(utterance); }
@@ -163,7 +195,7 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
     }
     if (!worker) return;
     const id = ++serial;
-    inference = { id, generation };
+    inference = { id, generation, playback };
     options.metrics?.begin("speech", "inference");
     deadline = setTimeout(() => fail("Устройство не успевает озвучить перевод. Отключи озвучивание или выбери системный голос."), 30_000);
     const request: SpeechWorkerRequest = { id, type: "speak", text };
@@ -191,8 +223,8 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
       pump();
       return;
     }
-    if (options.language !== "ru") throw new Error("Для этого языка нужен установленный локальный голос. Доступны субтитры; русский голос можно скачать в приложении.");
-    options.onStatus("Подготавливаем русский голос · первая загрузка около 63 МБ");
+    if (options.language !== "ru" && !options.downloadedVoice) throw new Error("Для этого языка нужен установленный локальный голос. В режиме языковых каналов можно использовать нейросетевой голос.");
+    options.onStatus(`Подготавливаем голос ${PIPER_VOICES[options.language].label} · первая загрузка около 63 МБ`);
     options.metrics?.begin("speech", "loading");
     const nextWorker = new Worker(new URL("./speech.worker.ts", import.meta.url), { type: "module" });
     worker = nextWorker;
@@ -204,7 +236,7 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
       initResolve = resolve;
       initReject = reject;
       deadline = setTimeout(() => fail("Загрузка русского голоса заняла слишком много времени. Попробуй включить озвучивание снова."), 300_000);
-      const request: SpeechWorkerRequest = { id: 0, type: "init" };
+      const request: SpeechWorkerRequest = { id: 0, type: "init", ...(options.language !== "ru" ? { language: options.language } : {}) };
       worker!.postMessage(request);
     });
   }
@@ -228,13 +260,13 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
 
   return {
     prepare,
-    speak(text: string): void {
+    speak(text: string, playback: SpeechPlaybackOptions = {}): void {
       if (closed) return;
       const next = text.trim();
       if (!next) return;
       if (next.length > 600) { options.onError("Фраза для озвучивания слишком длинная."); return; }
       if (pending) options.metrics?.drop();
-      pending = { text: next, receivedAt: Date.now() };
+      pending = { text: next, receivedAt: Date.now(), playback };
       pump();
     },
     cancel,
@@ -249,7 +281,7 @@ export function createLocalSpeech(options: LocalSpeechOptions): LocalSpeech {
       options.metrics?.setWorker("speech", false);
       initReject?.(new Error("Озвучивание выключено."));
       initResolve = initReject = undefined;
-      void context?.close().catch(() => undefined);
+      if (!options.audioContext) void context?.close().catch(() => undefined);
       context = undefined;
     },
   };

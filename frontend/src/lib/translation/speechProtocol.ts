@@ -1,5 +1,7 @@
+import type { TranslationLanguage } from "./protocol";
+
 export type SpeechWorkerRequest =
-  | { id: number; type: "init" }
+  | { id: number; type: "init"; language?: TranslationLanguage }
   | { id: number; type: "speak"; text: string };
 
 export type SpeechWorkerResponse =

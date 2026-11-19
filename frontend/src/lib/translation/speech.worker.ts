@@ -5,13 +5,16 @@ import phonemizerDataUrl from "coherent-piper-data?url";
 import runtimeModuleUrl from "coherent-speech-ort-module?url";
 import runtimeWasmUrl from "coherent-speech-ort-wasm?url";
 import type { SpeechWorkerRequest, SpeechWorkerResponse } from "./speechProtocol";
+import { PIPER_VOICES } from "./voices";
+import { isTranslationLanguage, type TranslationLanguage } from "./protocol";
+import { evictModelAsset, fetchModelAsset, isPublicModelUrl, modelLoadError, ModelDownloadError } from "./downloads";
 
 // Runtime code is served by the app; model weights go directly to the browser.
 // The original inference mapping follows Mintplex-Labs/piper-tts-web (MIT).
 // The Denis voice and its rdh training base are CC0, unlike other RU voices
 // whose dataset licences are unknown or non-commercial. See voice model card.
-const MODEL_ROOT = "https://huggingface.co/rhasspy/piper-voices/resolve/2f358b6a560e3a913ebf509b2f3344f20b367f94/ru/ru_RU/denis/medium/ru_RU-denis-medium.onnx";
 const CACHE = "coherent-local-speech-v1";
+const PHONEMIZER_DATA_BYTES = 18_077_249; // @diffusionstudio/piper-wasm@1.0.0
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
 ort.env.wasm.wasmPaths = { mjs: runtimeModuleUrl, wasm: runtimeWasmUrl };
@@ -24,6 +27,7 @@ interface VoiceConfig {
 let session: ort.InferenceSession | undefined;
 let config: VoiceConfig | undefined;
 let phonemizerData: ArrayBuffer | undefined;
+let language: TranslationLanguage = "ru";
 let queue = Promise.resolve();
 
 function reply(message: SpeechWorkerResponse, transfer: Transferable[] = []): void {
@@ -31,12 +35,33 @@ function reply(message: SpeechWorkerResponse, transfer: Transferable[] = []): vo
 }
 
 async function download(url: string, id: number): Promise<ArrayBuffer> {
+  if (isPublicModelUrl(url)) {
+    const weights = url.endsWith(".onnx");
+    let lastProgress = -1;
+    return fetchModelAsset(url, {
+      // Preserve voices already cached by the earlier release under the same pinned URL.
+      cacheName: CACHE,
+      maxBytes: weights ? 80_000_000 : 64_000,
+      onProgress: weights ? progress => {
+        const percent = Math.floor(progress);
+        if (percent === lastProgress) return;
+        lastProgress = percent;
+        reply({ id, type: "progress", progress: percent });
+      } : undefined,
+    });
+  }
   let cache: Cache | undefined;
   try { cache = await caches.open(CACHE); } catch { /* Private browsing may lack cache storage. */ }
-  const stored = await cache?.match(url);
-  if (stored) return stored.arrayBuffer();
+  try {
+    const stored = await cache?.match(url);
+    if (stored?.ok) {
+      const bytes = await stored.arrayBuffer();
+      if (bytes.byteLength === PHONEMIZER_DATA_BYTES) return bytes;
+      await cache?.delete(url);
+    }
+  } catch { /* A broken optional cache must not prevent downloading. */ }
   const response = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
-  if (!response.ok) throw new Error("Не удалось скачать локальный голос.");
+  if (!response.ok) throw new ModelDownloadError("http", `Не удалось скачать данные озвучивания с сайта приложения. Код ${response.status}.`, response.status >= 500, "piper_phonemize.data", response.status);
   const length = Number(response.headers.get("Content-Length")) || 63_221_984;
   const reader = response.body?.getReader();
   if (!reader) return response.arrayBuffer();
@@ -52,18 +77,22 @@ async function download(url: string, id: number): Promise<ArrayBuffer> {
     if (url.endsWith(".onnx")) reply({ id, type: "progress", progress: Math.min(100, received / length * 100) });
   }
   const data = new Uint8Array(received);
+  if (received !== PHONEMIZER_DATA_BYTES) throw new ModelDownloadError("invalid-model", "Данные озвучивания повреждены. Обнови страницу и повтори загрузку.", true, "piper_phonemize.data");
   let offset = 0;
   for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
   try { await cache?.put(url, new Response(data, { headers: { "Content-Type": "application/octet-stream" } })); } catch { /* Caching is optional. */ }
   return data.buffer;
 }
 
-async function initialize(id: number): Promise<void> {
-  const configBytes = await download(`${MODEL_ROOT}.json`, id);
+async function initialize(id: number, selectedLanguage: TranslationLanguage): Promise<void> {
+  if (session) throw new Error("Голос уже загружен. Перезапусти озвучивание для смены языка.");
+  language = selectedLanguage;
+  const voice = PIPER_VOICES[language];
+  const configBytes = await download(`${voice.modelUrl}.json`, id);
   config = JSON.parse(new TextDecoder().decode(configBytes)) as VoiceConfig;
-  if (config.espeak.voice !== "ru" || config.audio.sample_rate !== 22_050) throw new Error("Неподдерживаемый формат локального голоса.");
+  if (config.espeak.voice !== voice.espeak || config.audio.sample_rate !== 22_050) throw new Error("Invalid model configuration");
   phonemizerData = await download(phonemizerDataUrl, id);
-  const weights = await download(MODEL_ROOT, id);
+  const weights = await download(voice.modelUrl, id);
   session = await ort.InferenceSession.create(weights, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
   reply({ id, type: "ready" });
 }
@@ -101,13 +130,23 @@ async function synthesize(text: string): Promise<Float32Array<ArrayBuffer>> {
 self.addEventListener("message", ({ data }: MessageEvent<SpeechWorkerRequest>) => {
   queue = queue.then(async () => {
     try {
-      if (data.type === "init") { await initialize(data.id); return; }
+      if (data.type === "init") {
+        const language = data.language ?? "ru";
+        if (!isTranslationLanguage(language)) throw new Error("Язык озвучивания не поддерживается.");
+        await initialize(data.id, language); return;
+      }
       const text = data.text?.trim();
       if (!text || text.length > 600) throw new Error("Фраза для озвучивания слишком длинная.");
       const pcm = await synthesize(text);
       reply({ id: data.id, type: "audio", pcm: pcm.buffer, sampleRate: 22_050 }, [pcm.buffer]);
     } catch (error) {
-      reply({ id: data.id, type: "error", message: error instanceof Error ? error.message : "Не удалось озвучить перевод." });
+      const safe = modelLoadError(error);
+      if (safe.code === "invalid-model") {
+        // Remove only this voice's own files; other models and app data remain.
+        const voiceUrl = PIPER_VOICES[language].modelUrl;
+        await Promise.all([evictModelAsset(voiceUrl, CACHE), evictModelAsset(`${voiceUrl}.json`, CACHE)]);
+      }
+      reply({ id: data.id, type: "error", message: safe.message });
     }
   });
 });

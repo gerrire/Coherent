@@ -92,6 +92,51 @@ test("unlocks audio immediately, then uses the local Russian worker if no local 
   speech.close();
 });
 
+test("forces the selected non-Russian neural voice for a publishable language channel", async () => {
+  nativeSpeech.getVoices.mockReturnValue([{ lang: "en-US", localService: true } as SpeechSynthesisVoice]);
+  const speech = createLocalSpeech({ language: "en", downloadedVoice: true, onStatus: vi.fn(), onError: vi.fn(), onSpeakingChange: vi.fn() });
+  const preparing = speech.prepare();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(TestWorker.instances[0].requests[0]).toEqual({ id: 0, type: "init", language: "en" });
+  TestWorker.instances[0].reply({ id: 0, type: "ready" });
+  await preparing;
+  expect(nativeSpeech.speak).not.toHaveBeenCalled();
+  speech.close();
+});
+
+test("publishes own translated PCM to the channel output while keeping it inaudible locally", async () => {
+  const context = new TestAudioContext();
+  const output = {} as AudioNode;
+  const localOutput = {} as AudioNode;
+  const onSpeakingChange = vi.fn(), afterPlayback = vi.fn();
+  const speech = createLocalSpeech({ language: "ru", downloadedVoice: true, audioContext: context as unknown as AudioContext,
+    output, localOutput, onStatus: vi.fn(), onError: vi.fn(), onSpeakingChange });
+  const worker = await ready(speech);
+  speech.speak("Моя переведённая фраза", { playLocally: false, afterPlayback });
+  worker.reply({ id: 1, type: "audio", pcm: new Float32Array(2205).buffer, sampleRate: 22050 });
+  expect(context.sources[0].connect).toHaveBeenCalledExactlyOnceWith(output);
+  expect(onSpeakingChange).not.toHaveBeenCalledWith(true);
+  context.sources[0].onended?.();
+  expect(afterPlayback).toHaveBeenCalledOnce();
+  speech.close();
+  expect(context.close).not.toHaveBeenCalled(); // The coordinator owns this context.
+});
+
+test("does not start a cancelled PCM result after awaiting its authenticated channel cue", async () => {
+  const { speech } = create();
+  const worker = await ready(speech);
+  let acknowledge: (() => void) | undefined;
+  const afterPlayback = vi.fn();
+  speech.speak("Запоздалый звук", { beforePlayback: () => new Promise<void>(resolve => { acknowledge = resolve; }), afterPlayback });
+  worker.reply({ id: 1, type: "audio", pcm: new Float32Array(2205).buffer, sampleRate: 22050 });
+  speech.cancel();
+  acknowledge?.();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(TestAudioContext.instances[0].sources).toHaveLength(0);
+  expect(afterPlayback).toHaveBeenCalledOnce();
+  speech.close();
+});
+
 test("does not create a forced voice worker after closing before audio unlock settles", async () => {
   const metrics = createTranslationMetrics();
   const speech = createLocalSpeech({ language: "ru", downloadedVoice: true, metrics, onStatus: vi.fn(), onError: vi.fn(), onSpeakingChange: vi.fn() });

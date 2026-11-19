@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +32,16 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_from: str = "noreply@coherent-web.ru"
     test_email_verification_bypass: bool = False
+    gigachat_enabled: bool = False
+    gigachat_auth_key: SecretStr | None = None
+    gigachat_scope: Literal["GIGACHAT_API_PERS", "GIGACHAT_API_B2B", "GIGACHAT_API_CORP"] = (
+        "GIGACHAT_API_PERS"
+    )
+    gigachat_model: str = Field(default="GigaChat-2", min_length=1, max_length=128)
+    gigachat_base_url: str = "https://api.giga.chat/v1"
+    gigachat_ca_bundle: str | None = None
+    gigachat_max_concurrency: int = Field(default=1, ge=1, le=10)
+    gigachat_timeout_seconds: float = Field(default=15, ge=2, le=20)
     e2ee_setup_enabled: bool = True
     e2ee_messaging_enabled: bool = False
     e2ee_storage_limit_mb: int = Field(default=2048, ge=100, le=10240)
@@ -56,6 +67,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
+        # The browser never chooses an upstream URL or receives its credentials.
+        self.gigachat_base_url = self.gigachat_base_url.rstrip("/")
+        if self.gigachat_base_url not in {
+            "https://api.giga.chat/v1",
+            "https://gigachat.devices.sberbank.ru/api/v1",
+        }:
+            raise ValueError("GIGACHAT_BASE_URL must be an official GigaChat v1 endpoint")
         if self.test_email_verification_bypass and not self.allow_test_email_verification:
             raise ValueError(
                 "TEST_EMAIL_VERIFICATION_BYPASS is only allowed in development, test or staging"

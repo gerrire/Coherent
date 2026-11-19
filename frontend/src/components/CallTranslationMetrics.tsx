@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { readBrowserResources, type TranslationMetrics } from "../lib/translation/metrics";
 import { getModelProfile, type TranslationModelId } from "../lib/translation/models";
+import type { TranslationMethod } from "../lib/translation/cloudTranslation";
 
 interface Props {
   id: string;
   metrics: TranslationMetrics;
   model: TranslationModelId;
   recognize: boolean;
+  method: TranslationMethod;
 }
 
 function seconds(milliseconds: number | null): string {
@@ -18,7 +20,7 @@ function memory(bytes: number | null): string {
 }
 
 /** Browser-visible measurements only; no guesses about whole-PC CPU or RAM. */
-export default function CallTranslationMetrics({ id, metrics, model, recognize }: Props) {
+export default function CallTranslationMetrics({ id, metrics, model, recognize, method }: Props) {
   const sample = () => ({ processing: metrics.getSnapshot(), browser: readBrowserResources() });
   const [snapshot, setSnapshot] = useState(sample);
   useEffect(() => {
@@ -30,7 +32,7 @@ export default function CallTranslationMetrics({ id, metrics, model, recognize }
   const profile = getModelProfile(model);
   const stages = [
     { label: "Распознавание", value: processing.recognition },
-    { label: "Перевод текста", value: processing.translation },
+    { label: method === "gigachat" ? "Запрос GigaChat" : "Перевод текста", value: processing.translation },
     { label: "Синтез голоса", value: processing.speech },
   ];
   const ratio = processing.recognition.lastRealtimeFactor;
@@ -47,7 +49,7 @@ export default function CallTranslationMetrics({ id, metrics, model, recognize }
     </dl>
     <div className="call-translation-metrics-table-wrap">
       <table className="call-translation-metrics-table">
-        <caption>Время локальной обработки фраз</caption>
+        <caption>Время обработки фраз</caption>
         <thead><tr><th scope="col">Этап</th><th scope="col">Сейчас</th><th scope="col">Последняя фраза</th><th scope="col">Готово</th></tr></thead>
         <tbody>{stages.map(({ label, value }) => <tr key={label}>
           <th scope="row">{label}</th>
@@ -60,7 +62,7 @@ export default function CallTranslationMetrics({ id, metrics, model, recognize }
       ? "Последний фрагмент обработан быстрее его длительности."
       : "Последний фрагмент обработан медленнее его длительности. Попробуй модель поменьше."}</p>}
     <p className="call-translation-hint">Пропущено задач при перегрузке или устаревании: {processing.dropped}. Обновление раз в секунду, пока эта панель открыта.</p>
-    <p className="call-translation-hint">Измерения накапливаются за звонок. После смены модели время последней фразы обновится при следующем расчёте.</p>
+    <p className="call-translation-hint">Измерения накапливаются за звонок. Последнее время обновляется при обработке новой фразы.{method === "gigachat" && " Время запроса GigaChat включает ожидание ответа по сети."}</p>
     <p className="call-translation-hint">Браузер не предоставляет общую загрузку CPU и память всего ПК. Память JavaScript не включает всю память моделей и WebAssembly; размер весов — это объём загрузки, а не расход ОЗУ. Системный голос не учитывается как синтез ИИ. Отсутствующие данные показаны как «Недоступно».</p>
   </div>;
 }
