@@ -1,0 +1,12 @@
+[Unit]
+Description=Load verified Coherent staging images from GitHub after CI
+After=network-online.target coherent-staging-network.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u /usr/local/sbin/coherent-staging-auto
+UMask=0077
+MemoryMax=384M
+CPUQuota=30%
+TimeoutStartSec=20min

@@ -189,3 +189,4 @@ systemctl daemon-reload
 systemctl start coherent-staging-proxy.service
 systemctl enable --now coherent-staging-proxy.timer
 compose ps
+bash "$stage_files/install-deployer.sh"

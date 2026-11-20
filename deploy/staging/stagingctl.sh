@@ -14,13 +14,19 @@ flock -w 5 9
 
 as_stage() (
     cd "$home"
-    runuser -u "$account" -- env XDG_RUNTIME_DIR="$runtime" DOCKER_HOST="unix://$runtime/docker.sock" "$@"
+    runuser -u "$account" -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$home" \
+        XDG_RUNTIME_DIR="$runtime" DOCKER_HOST="unix://$runtime/docker.sock" "$@"
 )
 
 compose() {
     local version=$1
     shift
-    as_stage env STAGING_IMAGE_TAG="$version" docker compose --env-file "$home/stack/.env" -f "$home/stack/compose.yaml" "$@"
+    local app_env=production bypass=false
+    if [[ -f $config/email-test-revisions/$version ]]; then
+        app_env=staging
+        bypass=true
+    fi
+    as_stage env STAGING_IMAGE_TAG="$version" STAGING_APP_ENV="$app_env" STAGING_EMAIL_TEST="$bypass" docker compose --env-file "$home/stack/.env" -f "$home/stack/compose.yaml" "$@"
 }
 
 record() {
@@ -32,7 +38,7 @@ activate() {
     compose "$1" up -d --wait --wait-timeout 120 --no-build --pull never
 }
 
-reviewed_ci() {
+check_ci() {
     python3 - "$1" <<'PY'
 import json
 import sys
@@ -85,34 +91,52 @@ case "${1:-}" in
 UPDATE chat_policy SET write_mode = :'mode' WHERE id = 1;
 SQL
         ;;
-    deploy-reviewed)
-        [[ $# == 2 && -f $2 ]] || { echo 'Expected an operator-reviewed, uncompressed git archive' >&2; exit 2; }
-        archive=$2
-        target=$(git get-tar-commit-id <"$archive")
+    deploy-head|deploy-reviewed)
+        [[ $# == 2 ]]
+        if [[ $1 == deploy-head ]]; then
+            target=$2
+        else
+            [[ -f $2 ]] || { echo 'Expected an uncompressed git archive' >&2; exit 2; }
+            target=$(git get-tar-commit-id <"$2")
+        fi
         [[ $target =~ ^[0-9a-f]{40}$ ]]
         [[ $target != "$current" ]] || exit 0
-        reviewed_ci "$target"
+        check_ci "$target"
 
-        source=$(as_stage mktemp -d "$home/build.XXXXXXXX")
-        trap 'as_stage rm -rf -- "$source"' EXIT
-        as_stage tar --extract --no-same-owner --no-same-permissions -C "$source" <"$archive"
-        as_stage docker build -f "$source/deploy/Dockerfile.api" -t "coherent-api:$target" "$source"
-        as_stage docker build -f "$source/deploy/Dockerfile.web" -t "coherent-web:$target" "$source"
+        # Images are built in CI. Downloads, verification and docker load stay
+        # inside the resource-limited staging account; never use production Docker.
+        email_test=$(as_stage python3 /usr/local/lib/coherent-staging/images.py load "$target")
+        if [[ $email_test == true ]]; then
+            install -d -m 0700 "$config/email-test-revisions"
+            touch "$config/email-test-revisions/$target"
+        elif [[ $email_test != false ]]; then
+            echo 'Invalid runtime metadata from image verifier' >&2
+            exit 1
+        fi
 
         # Schema changes are reviewed for backward compatibility before deploy.
         if compose "$target" run --rm --no-deps api alembic upgrade head && activate "$target"; then
             record "$previous_file" "$current"
             record "$current_file" "$target"
+            # Keep the running revision and its rollback image; retire older app tags.
+            as_stage python3 /usr/local/lib/coherent-staging/images.py cleanup "$target" "$current" || true
         else
             activate "$current"
             exit 1
         fi
+        ;;
+    auto-pause)
+        touch "$config/auto-paused"
+        ;;
+    auto-resume)
+        rm -f "$config/auto-paused" "$config/auto-failed-sha"
         ;;
     rollback)
         [[ -s $previous_file ]] || { echo 'No previous staging revision has been deployed' >&2; exit 2; }
         previous=$(<"$previous_file")
         [[ $previous =~ ^[0-9a-f]{40}$ ]]
         if activate "$previous"; then
+            touch "$config/auto-paused"
             record "$previous_file" "$current"
             record "$current_file" "$previous"
         else
@@ -121,7 +145,7 @@ SQL
         fi
         ;;
     *)
-        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-reviewed ARCHIVE|rollback}' >&2
+        echo 'Usage: coherent-staging {status|logs [service]|start|stop|restart|chat-mode cloud|chat-mode mls|deploy-head SHA|deploy-reviewed ARCHIVE|rollback|auto-pause|auto-resume}' >&2
         exit 2
         ;;
 esac

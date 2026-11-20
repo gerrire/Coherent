@@ -35,6 +35,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Test staging image verification
+        run: python -m unittest discover -s deploy/staging/tests -v
       - name: Install backend dependencies
         run: |
           python -m pip install -r backend/requirements.lock
@@ -65,6 +67,7 @@ jobs:
           npm test
           npm run build
   build:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/Gleb_test'
     permissions:
       contents: write
     needs: [test, crypto]
@@ -101,3 +104,48 @@ jobs:
           Path('release/manifest.json').write_text(json.dumps({'commit':sha,'archive_sha256':digest,'images':images}))
           PY
           gh release create "deployment-$DEPLOY_SHA" release/images.tar.gz release/manifest.json --target "$DEPLOY_SHA" --prerelease --latest=false --title "Server build ${DEPLOY_SHA:0:12}" --notes "Immutable server images produced by the successful deployment workflow."
+
+  staging-images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/Gleb_test'
+    permissions:
+      contents: write
+    needs: [test, crypto]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build staging API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.api
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: coherent-api:${{ github.sha }}
+          cache-from: type=gha,scope=staging-api
+          cache-to: type=gha,scope=staging-api,mode=max
+      - name: Build staging website image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.web
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: coherent-web:${{ github.sha }}
+          cache-from: type=gha,scope=staging-web
+          cache-to: type=gha,scope=staging-web,mode=max
+      - name: Publish verified staging images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          tag="staging-deployment-$DEPLOY_SHA"
+          if gh release view "$tag" >/dev/null 2>&1; then exit 0; fi
+          python3 deploy/staging/images.py bundle "$DEPLOY_SHA" staging-release
+          gh release create "$tag" staging-release/images.tar.gz staging-release/manifest.json \
+            --target "$DEPLOY_SHA" --prerelease --latest=false \
+            --title "Staging build ${DEPLOY_SHA:0:12}" \
+            --notes "Prebuilt API and website images for Gleb_test; verified and loaded by the rootless staging deployer."

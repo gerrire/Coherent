@@ -1,13 +1,14 @@
 # Coherent staging
 
-Staging is available at https://dev.coherent-web.ru. Use a separate browser
+Staging is available at https://coherent-stage.31-76-77-197.sslip.io. The
+former dev.coherent-web.ru address redirects there. Use a separate browser
 profile with test accounts. The HTTPS gateway requests the staging access
 credentials before serving the application. The owner can share those
 credentials privately. Access to the test site requires no VPS account.
 
-- Application and API: `https://dev.coherent-web.ru/` and `/api/v1/`.
-- LiveKit signaling: `wss://dev.coherent-web.ru/livekit`.
-- Test mail: `https://dev.coherent-web.ru/__mailpit/`. Mailpit retains up to
+- Application and API: `https://coherent-stage.31-76-77-197.sslip.io/` and `/api/v1/`.
+- LiveKit signaling: `wss://coherent-stage.31-76-77-197.sslip.io/livekit`.
+- Test mail: `https://coherent-stage.31-76-77-197.sslip.io/__mailpit/`. Mailpit retains up to
   100 messages for seven days. SMTP stays on the staging Docker network.
 - Health: `/api/v1/health/ready`.
 
@@ -69,23 +70,26 @@ and TURN UDP 13478 with relay ports 14000–14031. The production media ports be
 
 ## Developer workflow
 
-Use `Gleb_test` in the developer's fork and open a pull request targeting
-`Gleb_test` in Coherent. The owner reviews the code and workflow changes
-before accepting the revision into the shared repository. Check the
-**Build for deployment** run for the accepted commit under GitHub Actions.
-Use the staging site and inbox after the owner deploys that commit. To
-report a failure, include the time, commit SHA and steps to reproduce.
+Push to `Gleb_test` as usual. The server checks the branch every three
+minutes and deploys the current SHA after **Build for deployment** succeeds
+for that exact push. GitHub builds the API and web images with separate BuildKit
+caches and publishes `staging-deployment-FULL_SHA` with `images.tar.gz` and
+`manifest.json`. The staging job does not build the production monitor bot.
+The author can be any contributor who can push to the branch.
+Staging logs are available on the VPS with
+`journalctl -u coherent-staging-auto.service -n 100`.
 
-Automatic deployment from arbitrary pushes is disabled. The shared
-repository still has repository-level desktop signing secrets and the
-developer already has write access. An unreviewed push to this repository
-can modify workflows. The fork workflow is a process boundary until
-the owner removes direct write access or moves signing to a separately
-protected workflow. Staging automation also needs a repository where the
-developer's token cannot change production releases. For unrestricted
-developer-controlled frontend deployments, use a separate registered
-domain so the staging page cannot set cookies for production's parent
-domain.
+The timer uses public read-only GitHub requests. The VPS does not compile code
+or fetch a source tree for updates. Downloads, archive validation, Docker image
+loading and container execution run as the resource-limited staging account.
+The deployer verifies the exact commit, successful push workflow, SHA-256 of the
+archive, its declared size, the two image tags, image config digests and platform.
+It reserves disk space before downloading and uses temporary files on the
+bounded staging filesystem. After a successful deployment it retains the current
+and previous application images and retires older SHA tags. The app
+runs on a different registrable domain from production and the old dev
+hostname serves a redirect. Repository write access and repository-level
+Actions secrets remain a separate GitHub permission issue.
 
 ## Owner operations
 
@@ -99,6 +103,8 @@ coherent-staging restart
 coherent-staging stop
 coherent-staging start
 coherent-staging rollback
+coherent-staging auto-pause
+coherent-staging auto-resume
 coherent-staging chat-mode mls
 coherent-staging chat-mode cloud
 journalctl -u coherent-staging-proxy.service -n 50
@@ -110,21 +116,37 @@ recovery and legacy MLS, close active staging calls and switch staging to
 with `chat-mode cloud` when finished. The command edits the policy row in
 `coherent_staging` and preserves existing data.
 
-To deploy an approved SHA, fetch `Gleb_test` locally and create an uncompressed
-archive of the exact reviewed commit:
+To install or upgrade the deployer on an existing staging VPS, copy the reviewed
+`deploy/staging` directory to the owner's private directory and run:
 
 ```sh
-git fetch origin Gleb_test
-git archive --format=tar --output=coherent-reviewed.tar REVIEWED_SHA
+bash /root/reviewed-staging/install-deployer.sh
 ```
 
-Transfer it to the owner's private VPS directory and run
-`coherent-staging deploy-reviewed /root/coherent-reviewed.tar`. The command
-requires successful branch CI for the exact commit, builds under the
-resource-limited rootless account, applies Alembic, checks readiness and
-records the previous revision. Review DB migrations for compatibility
-with the preceding app before deployment. Rollback switches application
-images and leaves staging database migrations in place.
+The installer backs up the existing tools, stops the old deployment loop,
+installs root-owned scripts and enables the polling timer. It preserves the
+installed Compose configuration, secrets, resource limits and data volumes.
+Code pushed to GitHub cannot replace these privileged scripts automatically.
+
+To deploy a reviewed SHA manually after its CI images have been published:
+
+```sh
+coherent-staging deploy-head FULL_COMMIT_SHA
+```
+
+No source archive or VPS build is needed. The legacy command
+`coherent-staging deploy-reviewed /root/coherent-reviewed.tar` reads only the
+commit ID from that archive and loads the same verified GitHub images; it never
+extracts or builds the supplied sources. Commits predating prebuilt staging
+releases need a new push with the updated workflow before they can be deployed.
+The command requires successful branch CI for the exact commit, loads its
+verified images, applies Alembic, checks readiness and records the previous
+revision. Review DB migrations for compatibility with the preceding app before
+deployment. Rollback switches application images, pauses automatic deployments and
+leaves staging database migrations in place. Run `coherent-staging auto-resume`
+when ready to resume deployment. Failed revisions retry after a 30-minute
+cooldown. The owner can also disable the timer with
+`systemctl disable --now coherent-staging-auto.timer`.
 
 To withdraw the staging route, run the following on the VPS. The refresh
 service stores the original production Caddyfile at
