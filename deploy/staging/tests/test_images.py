@@ -1,4 +1,5 @@
 import copy
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -48,6 +49,30 @@ def successful_run():
 
 
 class ImageVerificationTests(unittest.TestCase):
+    def test_disk_budget_counts_decompressed_layers_and_shared_layers_once(self):
+        compressed = b"highly compressible layer content" * 2048
+        plain = b"uncompressed layer content" * 40
+        payload = json.dumps(
+            [
+                {"Layers": ["shared", "plain"]},
+                {"Layers": ["shared"]},
+            ]
+        ).encode()
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "archive.tar.gz"
+            with tarfile.open(path, "w:gz") as archive:
+                for name, data in (
+                    ("shared", gzip.compress(compressed)),
+                    ("plain", plain),
+                    ("manifest.json", payload),
+                ):
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+            self.assertEqual(images.image_size_in_archive(path), len(compressed) + len(plain))
+            with patch.object(images, "MAX_UNPACKED", 1000), self.assertRaises(ValueError):
+                images.image_size_in_archive(path)
+
     def test_accepts_exact_successful_push_and_manifest(self):
         images.validate_run(successful_run(), COMMIT)
         images.validate_manifest(manifest(), COMMIT)

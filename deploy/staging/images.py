@@ -4,6 +4,7 @@
 import argparse
 import gzip
 import hashlib
+import io
 import json
 import os
 import re
@@ -101,17 +102,38 @@ def validate_manifest(manifest, sha):
         raise ValueError("Invalid staging image manifest or commit mismatch")
 
 
+def image_size_in_archive(path):
+    # With containerd, image inspect .Size reports compressed blob sizes. Count
+    # decompressed layer bytes in CI so the VPS reserves room for snapshots too.
+    with tarfile.open(path, "r:gz") as archive:
+        manifest = json.load(archive.extractfile("manifest.json"))
+        layers = {layer for image in manifest for layer in image["Layers"]}
+        total = 0
+        for member in sorted(
+            (archive.getmember(name) for name in layers), key=lambda item: item.offset_data
+        ):
+            with io.BufferedReader(archive.extractfile(member)) as source:
+                magic = source.peek(4)[:4]
+                if magic[:2] == b"\x1f\x8b":
+                    with gzip.GzipFile(fileobj=source) as decoded:
+                        while chunk := decoded.read(1024 * 1024):
+                            total += len(chunk)
+                            if total > MAX_UNPACKED:
+                                raise ValueError("Uncompressed image layers exceed staging limit")
+                elif magic == b"\x28\xb5\x2f\xfd":
+                    raise ValueError("Staging layers must use gzip or uncompressed tar")
+                else:
+                    total += member.size
+                if total > MAX_UNPACKED:
+                    raise ValueError("Uncompressed image layers exceed staging limit")
+    return total
+
+
 def bundle(sha, destination):
     if os.environ.get("GITHUB_REF") != f"refs/heads/{BRANCH}":
         raise ValueError("Staging images must be published from Gleb_test")
     destination.mkdir(parents=True, exist_ok=True)
     references = [f"{name}:{sha}" for name in sorted(IMAGES)]
-    image_size = sum(
-        json.loads(subprocess.check_output(["docker", "image", "inspect", ref], text=True))[0][
-            "Size"
-        ]
-        for ref in references
-    )
     digests = {name: image_digest(f"{name}:{sha}") for name in sorted(IMAGES)}
     archive = destination / "images.tar.gz"
     with archive.open("wb") as output:
@@ -154,7 +176,7 @@ def bundle(sha, destination):
         "archive_sha256": archive_digest,
         "archive_size": archive.stat().st_size,
         "unpacked_size": unpacked_size,
-        "image_size": image_size,
+        "image_size": image_size_in_archive(archive),
     }
     validate_manifest(manifest, sha)
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -212,7 +234,7 @@ def load(sha):
     validate_manifest(manifest, sha)
     validate_run(github(f"/actions/runs/{manifest['run_id']}"), sha)
     # Account for the downloaded archive, Docker content store and extracted layers.
-    # Summing image sizes overestimates shared layers, which is safe for this quota.
+    # Layer bytes include files removed by later layers, giving a safe upper bound.
     required = (
         manifest["archive_size"] + manifest["unpacked_size"] + manifest["image_size"] + RESERVE
     )
