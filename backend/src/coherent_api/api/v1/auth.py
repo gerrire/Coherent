@@ -40,6 +40,7 @@ from coherent_api.services.auth_security import (
     token_digest,
 )
 from coherent_api.services.email_verification import (
+    TEST_CODE_DIGEST,
     EmailCodeError,
     EmailRateError,
     confirm_code,
@@ -62,7 +63,10 @@ def user_response(user: User, request: Request) -> UserResponse:
     return UserResponse.model_validate(user).model_copy(
         update={
             "is_admin": user.username == request.app.state.settings.admin_username,
-            "email_delivery_available": bool(request.app.state.settings.smtp_host),
+            "email_delivery_available": bool(
+                request.app.state.settings.smtp_host
+                or request.app.state.settings.allow_test_email_verification
+            ),
             "email": user.email or user.pending_email,
         }
     )
@@ -133,7 +137,7 @@ async def registration_email_code(
     background: BackgroundTasks,
 ) -> dict:
     settings = request.app.state.settings
-    if not settings.smtp_host:
+    if not settings.smtp_host and not settings.allow_test_email_verification:
         raise HTTPException(
             status_code=503,
             detail="Регистрация временно недоступна: отправка писем ещё настраивается",
@@ -148,18 +152,22 @@ async def registration_email_code(
             detail="Подожди перед новой отправкой кода",
             headers={"Retry-After": "60"},
         ) from error
-    background.add_task(
-        deliver_registration_code, request.app.state.session_factory, settings, challenge.id
-    )
+    if not settings.allow_test_email_verification:
+        background.add_task(
+            deliver_registration_code, request.app.state.session_factory, settings, challenge.id
+        )
     return {
         "verification_id": str(challenge.id),
         "expires_in_seconds": 600,
         "retry_after_seconds": 60,
+        "test_mode": settings.allow_test_email_verification,
     }
 
 
 @router.get("/registration/{verification_id}")
-async def registration_delivery(verification_id: UUID, session: SessionDep) -> dict:
+async def registration_delivery(
+    verification_id: UUID, request: Request, session: SessionDep
+) -> dict:
     challenge = await session.get(RegistrationChallenge, verification_id)
     if (
         challenge is None
@@ -167,12 +175,17 @@ async def registration_delivery(verification_id: UUID, session: SessionDep) -> d
         or challenge.expires_at.replace(tzinfo=UTC) <= datetime.now(UTC)
     ):
         raise HTTPException(status_code=404, detail="Запрос подтверждения истёк")
+    if (
+        request.app.state.settings.allow_test_email_verification
+        and challenge.code_digest == TEST_CODE_DIGEST
+    ):
+        return {"delivery": "test", "test_mode": True}
     delivery = (
         "sent"
         if challenge.delivered_at
         else ("failed" if challenge.code_ciphertext is None else "pending")
     )
-    return {"delivery": delivery}
+    return {"delivery": delivery, "test_mode": False}
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -312,7 +325,8 @@ async def update_profile(
 async def request_email_code(
     body: EmailCodeRequest, request: Request, user: CurrentUser, session: SessionDep
 ) -> dict:
-    if not request.app.state.settings.smtp_host:
+    settings = request.app.state.settings
+    if not settings.smtp_host and not settings.allow_test_email_verification:
         raise HTTPException(status_code=503, detail="Отправка писем ещё настраивается")
     if not await verify_password_async(body.current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Текущий пароль указан неверно")
@@ -329,7 +343,11 @@ async def request_email_code(
         raise HTTPException(
             status_code=503, detail="Не удалось отправить письмо. Попробуй позже."
         ) from error
-    return {"expires_in_seconds": 600, "retry_after_seconds": 60}
+    return {
+        "expires_in_seconds": 600,
+        "retry_after_seconds": 60,
+        "test_mode": settings.allow_test_email_verification,
+    }
 
 
 @router.post("/email/confirm", response_model=UserResponse)

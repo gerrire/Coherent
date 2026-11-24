@@ -170,7 +170,7 @@ def set_cloud_body(session: AsyncSession, message: Message, body: str) -> None:
     if (
         not cipher.enabled
         and settings
-        and (settings.app_env == "production" or settings.cloud_encryption_required)
+        and (settings.is_production_like or settings.cloud_encryption_required)
     ):
         raise RuntimeError("Cloud encryption is required; refusing plaintext storage")
     message.body = "" if cipher.enabled else body

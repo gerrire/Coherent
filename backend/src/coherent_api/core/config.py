@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     access_token_ttl_minutes: int = 60 * 24 * 7
     livekit_url: str | None = None
+    livekit_internal_url: str | None = None
     livekit_api_key: str | None = None
     livekit_api_secret: SecretStr | None = None
     attachment_dir: str = "/tmp/coherent-attachments"
@@ -29,6 +31,17 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: SecretStr | None = None
     smtp_from: str = "noreply@coherent-web.ru"
+    test_email_verification_bypass: bool = False
+    gigachat_enabled: bool = False
+    gigachat_auth_key: SecretStr | None = None
+    gigachat_scope: Literal["GIGACHAT_API_PERS", "GIGACHAT_API_B2B", "GIGACHAT_API_CORP"] = (
+        "GIGACHAT_API_PERS"
+    )
+    gigachat_model: str = Field(default="GigaChat-2", min_length=1, max_length=128)
+    gigachat_base_url: str = "https://api.giga.chat/v1"
+    gigachat_ca_bundle: str | None = None
+    gigachat_max_concurrency: int = Field(default=1, ge=1, le=10)
+    gigachat_timeout_seconds: float = Field(default=15, ge=2, le=20)
     e2ee_setup_enabled: bool = True
     e2ee_messaging_enabled: bool = False
     e2ee_storage_limit_mb: int = Field(default=2048, ge=100, le=10240)
@@ -38,8 +51,33 @@ class Settings(BaseSettings):
     vapid_key_path: str = "/tmp/coherent-vapid/private.pem"
     vapid_subject: str = "https://coherent-web.ru"
 
+    @property
+    def is_production_like(self) -> bool:
+        return self.app_env in {"production", "staging"}
+
+    @property
+    def allow_test_email_verification(self) -> bool:
+        # Check the environment at use time too: a copied or mutated Settings
+        # object must never turn the test shortcut on in production.
+        return self.test_email_verification_bypass and self.app_env in {
+            "development",
+            "test",
+            "staging",
+        }
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
+        # The browser never chooses an upstream URL or receives its credentials.
+        self.gigachat_base_url = self.gigachat_base_url.rstrip("/")
+        if self.gigachat_base_url not in {
+            "https://api.giga.chat/v1",
+            "https://gigachat.devices.sberbank.ru/api/v1",
+        }:
+            raise ValueError("GIGACHAT_BASE_URL must be an official GigaChat v1 endpoint")
+        if self.test_email_verification_bypass and not self.allow_test_email_verification:
+            raise ValueError(
+                "TEST_EMAIL_VERIFICATION_BYPASS is only allowed in development, test or staging"
+            )
         if self.access_token_ttl_minutes < 1:
             raise ValueError("ACCESS_TOKEN_TTL_MINUTES must be a positive value")
 
@@ -51,7 +89,12 @@ class Settings(BaseSettings):
         if self.livekit_url and not self.livekit_url.startswith(("ws://", "wss://")):
             raise ValueError("LIVEKIT_URL must use ws:// or wss://")
 
-        if self.app_env == "production":
+        if self.livekit_internal_url and not self.livekit_internal_url.startswith(
+            ("http://", "https://")
+        ):
+            raise ValueError("LIVEKIT_INTERNAL_URL must use http:// or https://")
+
+        if self.is_production_like:
             if not self.cloud_encryption_required or not self.chat_master_key_path:
                 raise ValueError(
                     "Production requires cloud encryption and an existing master key file"

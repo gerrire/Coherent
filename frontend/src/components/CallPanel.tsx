@@ -54,6 +54,9 @@ import {
   type MediaPreferences,
 } from "../lib/media";
 import MediaSettingsPanel from "./MediaSettingsPanel";
+import CallTranslationPanel from "./CallTranslationPanel";
+import { deriveCaptionKey, type CaptionKey } from "../lib/translation/transport";
+import { guardTranslationAudioSubscriptions, watchLanguageAudioPlayback } from "../lib/translation/sharedLanguageAudio";
 import ParticipantPicker from "./ParticipantPicker";
 import { applyMicrophoneProcessing, browserMicrophoneFallback, enableCallMicrophone, MicrophoneProcessorError, restartCallMicrophone } from "../lib/microphoneProcessor";
 import { NativeScreenAudio } from "../lib/nativeScreenAudio";
@@ -395,7 +398,7 @@ function CallRoom({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [participantVolumes, setParticipantVolumes] = useState(loadParticipantVolumes);
   const [screenVolumes, setScreenVolumes] = useState(loadScreenVolumes);
-  const [encryptedRoom, setEncryptedRoom] = useState<{ callId: string; room: Room; fingerprint: { emoji: string; code: string } } | null>(null);
+  const [encryptedRoom, setEncryptedRoom] = useState<{ callId: string; room: Room; fingerprint: { emoji: string; code: string }; captionKeys: CaptionKey[] } | null>(null);
   const roomOptions = useMemo(() => ({
     adaptiveStream: { pixelDensity: 2 },
     dynacast: true,
@@ -471,7 +474,12 @@ function CallRoom({
       if (!previousKey) await room.setE2EEEnabled(true);
       previousKey = next.key;
       const fingerprint = await keyFingerprint(next.key);
-      if (active) setEncryptedRoom({ callId: call.id, room, fingerprint });
+      const captionKey = await deriveCaptionKey(next.key, call.id, next.epoch, next.group);
+      if (active) setEncryptedRoom(previous => ({
+        callId: call.id, room: room!, fingerprint,
+        captionKeys: [captionKey, ...(previous && previous.room === room ? previous.captionKeys : [])
+          .filter(key => key.group !== captionKey.group || key.epoch !== captionKey.epoch)].slice(0, 2),
+      }));
     }
     function refreshKey() {
       if (!active || !previousKey) return;
@@ -663,6 +671,7 @@ function CallRoom({
         <CallAudioRenderer muted={media.deafened} volumes={participantVolumes} screenVolumes={screenVolumes} />
         {header}
         <CallStage call={call} mode={viewMode} onModeChange={onModeChange} density={tileDensity} volumes={participantVolumes} onVolumeChange={changeParticipantVolume} screenVolumes={screenVolumes} onScreenVolumeChange={changeScreenVolume} media={media} />
+        <CallTranslationPanel callId={call.id} connected={connected} microphoneEnabled={media.microphoneEnabled} deafened={media.deafened} captionKeys={encryptedRoom.captionKeys} />
         <div className="call-surface-controls">
           {keyNotice && <span className="call-key-notice" role="status">{keyNotice}</span>}
           <CallConnectionNotice />
@@ -931,6 +940,10 @@ function CallConnectionNotice() {
 }
 
 function CallAudioRenderer({ muted, volumes, screenVolumes }: { muted: boolean; volumes: Record<string, number>; screenVolumes: Record<string, number> }) {
+  const room = useRoomContext();
+  useEffect(() => guardTranslationAudioSubscriptions(room), [room]);
+  const [translatedSpeechPlaying, setTranslatedSpeechPlaying] = useState(false);
+  useEffect(() => watchLanguageAudioPlayback(room, setTranslatedSpeechPlaying), [room]);
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio], { onlySubscribed: true });
   return <>{tracks.filter((track) => !track.participant.isLocal).map((track) => (
     <AudioTrack
@@ -938,7 +951,7 @@ function CallAudioRenderer({ muted, volumes, screenVolumes }: { muted: boolean; 
       trackRef={track}
       volume={muted ? 0 : (track.source === Track.Source.ScreenShareAudio
         ? screenVolumes[track.participant.identity] ?? 100
-        : volumes[track.participant.identity] ?? 100) / 100}
+        : (volumes[track.participant.identity] ?? 100) * (translatedSpeechPlaying ? 0.15 : 1)) / 100}
     />
   ))}</>;
 }

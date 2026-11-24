@@ -20,6 +20,7 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
   const [emailPassword, setEmailPassword] = useState("");
   const [emailCode, setEmailCode] = useState("");
   const [emailSent, setEmailSent] = useState(false);
+  const [emailTestMode, setEmailTestMode] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [emailWait, setEmailWait] = useState(0);
@@ -82,7 +83,7 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
     setEmailBusy(true); setEmailError("");
     try {
       const result = await api.requestEmailCode(email.trim(), emailPassword);
-      setEmailSent(true); setEmailWait(result.retry_after_seconds); setEmailCode(""); setEmailPassword("");
+      setEmailSent(true); setEmailTestMode(result.test_mode === true); setEmailWait(result.retry_after_seconds); setEmailCode(""); setEmailPassword("");
     } catch (reason) { setEmailError(reason instanceof Error ? reason.message : "Не удалось отправить код"); }
     finally { setEmailBusy(false); }
   }
@@ -91,7 +92,7 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
     event.preventDefault();
     if (emailBusy || !/^\d{6}$/.test(emailCode)) return;
     setEmailBusy(true); setEmailError("");
-    try { onUpdated(await api.confirmEmailCode(emailCode)); setEmailSent(false); setEmailCode(""); }
+    try { onUpdated(await api.confirmEmailCode(emailCode)); setEmailSent(false); setEmailTestMode(false); setEmailCode(""); }
     catch (reason) { setEmailError(reason instanceof Error ? reason.message : "Не удалось подтвердить почту"); }
     finally { setEmailBusy(false); }
   }
@@ -150,14 +151,14 @@ export default function ProfileSettingsDialog({ user, onClose, onUpdated }: Prof
 
           <section className="profile-settings-card" aria-label="Почта">
             <div className="profile-settings-section-heading"><Mail size={18} /><h3>Электронная почта</h3></div>
-            <p>{user.email_verified ? `Подтверждённый адрес: ${user.email}` : "Привяжи и подтверди адрес кодом из письма."}</p>
+            <p>{user.email_verified ? `Подтверждённый адрес: ${user.email}` : emailTestMode ? "Тестовая привязка адреса без отправки письма." : "Привяжи и подтверди адрес кодом из письма."}</p>
             {!user.email_delivery_available && <p className="profile-mail-note">Отправка писем на сервере ещё настраивается.</p>}
             <form className="profile-password-form" onSubmit={(event) => void sendEmailCode(event)}>
-              <label htmlFor="profile-email">Адрес почты</label><div className="profile-password-field"><Mail size={18} /><input id="profile-email" type="email" autoComplete="email" value={email} maxLength={320} onChange={(event) => { setEmail(event.target.value); setEmailSent(false); }} required /></div>
+              <label htmlFor="profile-email">Адрес почты</label><div className="profile-password-field"><Mail size={18} /><input id="profile-email" type="email" autoComplete="email" value={email} maxLength={320} onChange={(event) => { setEmail(event.target.value); setEmailSent(false); setEmailTestMode(false); setEmailCode(""); }} required /></div>
               <label htmlFor="profile-email-password">Текущий пароль для привязки адреса</label><div className="profile-password-field"><KeyRound size={18} /><input id="profile-email-password" type="password" autoComplete="current-password" value={emailPassword} onChange={(event) => setEmailPassword(event.target.value)} maxLength={128} required /></div>
-              <div className="profile-password-actions"><span>Код действует 10 минут.</span><button type="submit" disabled={!user.email_delivery_available || emailBusy || emailWait > 0 || !emailPassword || !email.trim()}>{emailWait ? `Повторить через ${emailWait} с` : "Отправить код"}</button></div>
+              <div className="profile-password-actions"><span>Код действует 10 минут.</span><button type="submit" disabled={!user.email_delivery_available || emailBusy || emailWait > 0 || !emailPassword || !email.trim()}>{emailWait ? `Повторить через ${emailWait} с` : emailTestMode ? "Новый тестовый запрос" : "Отправить код"}</button></div>
             </form>
-            {emailSent && <form className="profile-password-form" onSubmit={(event) => void confirmEmail(event)}><label htmlFor="profile-email-code">Код из письма</label><div className="profile-password-field"><input ref={emailCodeRef} id="profile-email-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="000000" required /></div><div className="profile-password-actions"><span>Письмо отправлено на {email}.</span><button type="submit" disabled={emailBusy || emailCode.length !== 6}>Подтвердить адрес</button></div></form>}
+            {emailSent && <form className="profile-password-form" onSubmit={(event) => void confirmEmail(event)}><label htmlFor="profile-email-code">{emailTestMode ? "Любые 6 цифр" : "Код из письма"}</label><div className="profile-password-field"><input ref={emailCodeRef} id="profile-email-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="000000" required /></div><div className="profile-password-actions"><span>{emailTestMode ? "Тестовый режим: письмо не отправляется. Введи любые 6 цифр." : `Письмо отправлено на ${email}.`}</span><button type="submit" disabled={emailBusy || emailCode.length !== 6}>Подтвердить адрес</button></div></form>}
             {emailError && <p className="profile-settings-error" role="alert">{emailError}</p>}
           </section>
           <SecurityRecoveryCard user={user} />
