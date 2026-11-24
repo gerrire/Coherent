@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from coherent_api.api.v1 import (
     admin,
     auth,
+    call_translation,
     calls,
     device_links,
     e2ee,
@@ -27,4 +28,5 @@ api_router.include_router(messages.router)
 api_router.include_router(realtime.router)
 api_router.include_router(push.router)
 api_router.include_router(calls.router)
+api_router.include_router(call_translation.router)
 api_router.include_router(servers.router)

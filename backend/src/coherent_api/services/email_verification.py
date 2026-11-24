@@ -16,6 +16,8 @@ from coherent_api.core.config import Settings
 from coherent_api.models.email_verification import EmailVerification
 from coherent_api.models.user import User
 
+TEST_CODE_DIGEST = "test-only-email-verification"
+
 
 class EmailRateError(Exception):
     pass
@@ -127,7 +129,8 @@ async def request_code(session: AsyncSession, settings: Settings, user: User, em
     )
     if deliveries >= 5:
         raise EmailRateError
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    test_mode = settings.allow_test_email_verification
+    code = "" if test_mode else f"{secrets.randbelow(1_000_000):06d}"
     if challenge is None:
         challenge = EmailVerification(user_id=user.id, window_start=now, sent_count=0)
         session.add(challenge)
@@ -135,7 +138,7 @@ async def request_code(session: AsyncSession, settings: Settings, user: User, em
         challenge.window_start = now
         challenge.sent_count = 0
     challenge.email = email
-    challenge.code_digest = digest(settings, user, email, code)
+    challenge.code_digest = TEST_CODE_DIGEST if test_mode else digest(settings, user, email, code)
     challenge.created_at = now
     challenge.expires_at = now + timedelta(minutes=10)
     challenge.attempts = 0
@@ -143,7 +146,8 @@ async def request_code(session: AsyncSession, settings: Settings, user: User, em
     challenge.session_version = user.session_version
     challenge.sent_count += 1
     await session.flush()
-    await asyncio.to_thread(send_code, settings, email, code)
+    if not test_mode:
+        await asyncio.to_thread(send_code, settings, email, code)
     await session.commit()
 
 
@@ -167,9 +171,20 @@ async def confirm_code(session: AsyncSession, settings: Settings, user: User, co
     ):
         raise EmailCodeError
     challenge.attempts += 1
-    if not hmac.compare_digest(
-        challenge.code_digest, digest(settings, user, challenge.email, code)
-    ):
+    # Only challenges created explicitly in the test mode accept arbitrary
+    # codes. Enabling the mode never weakens an already-issued real challenge,
+    # and disabling it invalidates outstanding test challenges.
+    valid_code = (
+        settings.allow_test_email_verification
+        and len(code) == 6
+        and code.isascii()
+        and code.isdigit()
+        if challenge.code_digest == TEST_CODE_DIGEST
+        else hmac.compare_digest(
+            challenge.code_digest, digest(settings, user, challenge.email, code)
+        )
+    )
+    if not valid_code:
         await session.commit()
         raise EmailCodeError
     existing = await session.scalar(

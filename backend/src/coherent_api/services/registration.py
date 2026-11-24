@@ -90,18 +90,26 @@ async def begin_registration(
     identity = uuid4()
     code = f"{secrets.randbelow(1_000_000):06d}"
     nonce = os.urandom(12)
-    encrypted = outbox_cipher(settings).encrypt(nonce, code.encode(), identity.bytes)
+    test_mode = settings.allow_test_email_verification
+    encrypted = (
+        None if test_mode else outbox_cipher(settings).encrypt(nonce, code.encode(), identity.bytes)
+    )
     challenge = RegistrationChallenge(
         id=identity,
         email=email,
         ip_digest=ip_digest,
-        code_digest=code_digest(settings, identity, email, code),
-        code_ciphertext=base64.b64encode(nonce + encrypted).decode(),
+        code_digest=(
+            email_verification.TEST_CODE_DIGEST
+            if test_mode
+            else code_digest(settings, identity, email, code)
+        ),
+        code_ciphertext=base64.b64encode(nonce + encrypted).decode() if encrypted else None,
         created_at=now,
         expires_at=now + timedelta(minutes=10),
         attempts=0,
         delivery_attempts=0,
         next_delivery_at=now,
+        delivered_at=now if test_mode else None,
     )
     session.add(challenge)
     await session.commit()
@@ -123,9 +131,18 @@ async def claim_registration(
     ):
         raise RegistrationCodeError
     challenge.attempts += 1
-    if challenge.email != email or not hmac.compare_digest(
-        challenge.code_digest, code_digest(settings, identity, email, code)
-    ):
+    test_challenge = challenge.code_digest == email_verification.TEST_CODE_DIGEST
+    valid_code = (
+        settings.allow_test_email_verification
+        and len(code) == 6
+        and code.isascii()
+        and code.isdigit()
+        if test_challenge
+        else hmac.compare_digest(
+            challenge.code_digest, code_digest(settings, identity, email, code)
+        )
+    )
+    if challenge.email != email or not valid_code:
         await session.commit()
         raise RegistrationCodeError
     return challenge
